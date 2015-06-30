@@ -1,0 +1,78 @@
+What do we do for sfs?
+
+First, import an Andersens analysis
+  Can do from Andersens.cpp in neongoby
+
+Cool, now?
+  Identify variables:
+  	Pull code from Andersens.cpp in neongoby
+
+Do I also encorporate bdds?
+  Yeah, go ahead and take that from sfs
+
+So, we do the following:
+
+1) Extract values (obj_cons_id equivalent)
+2) Optimize graph (HU/HRE/HCD)
+3) Run Andersens (AUX)
+4) Compute ICFG (Interprocedural info) from AUX
+-  Do more optimizations here before SFS edges?
+5) Compute SSA info for top lvl variables
+  	Need to figure out exactly what this means... probably has to do w/ the seg
+  	operation in SFS
+  	NOTE: Phi -> copy statements
+6) Partition address taken statements into equivalence classes
+7) For each partion, use AUX to create u and x nodes between partitions
+8) Compute SSA of paritions
+9) Compute DUG by creating a node for each ptr related instruction and phi
+   function from step 8 -- And other rules (see paper tep 5)
+10) Run solve on DUG using rules from paper
+
+
+
+MORE DETAIL
+
+Read in values:
+  Use same operation set as Andersens, to construct nodes, but custom nodes for
+    our analysis
+  Read nodes into SEG -- Sparse Evaluation Graph
+
+Optimize 1:
+  Run HU/HRU/HCD on nodes like Andersens does, to help minimize graph size
+
+  NOTE: it appears that SFS only runs HU, then cleans the graph accordingly
+  It also appears that HU is run only on top level variables, ignoring any
+    address-taken links
+
+Run Andersens:
+  Run Andersens AA to get basic AA info
+  Map out our CFG info given Andersens
+
+Now compute SSA for top lvl variables:
+  This is done via Ramalingam's algorithm (On Sparse Evaluation Representation)
+  
+  After applying the optimizations T4+T2+T7+T6+T5 we will have an SSA form of
+    the graph
+
+  Now we can trim deleted/rep'd nodes and update our def/use info for addr taken
+    variables
+
+Compute partions:
+  For all addr taken variables (v), compute access equivalence partitions
+    for all v s.t. x E ptsto(v) <=> y E ptsto(v)
+
+  We use AUX here to get ptsto (note the ptsto from aux is conservative, so we
+    need to maintain separate ptsto for each var in a partition)
+
+For each partition, use AUX to create edges between partiitons (u and x nodes)
+  use AUX to determine which set of nodes the partition may access
+
+Compute the SSA of each partition
+  Re-run Ramalingam's algorithm on each partition to compute a minimal graph
+
+Transfer minimal info into DUG, with a node per partition, and a ptsto set per
+  variable in each node
+
+  Iterate over the elements of each node in "solve" phase
+
+
