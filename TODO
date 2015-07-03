@@ -75,4 +75,3 @@ Transfer minimal info into DUG, with a node per partition, and a ptsto set per
 
   Iterate over the elements of each node in "solve" phase
 
-
