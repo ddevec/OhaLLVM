@@ -8,6 +8,7 @@
 #include <cstdint>
 
 #include <list>
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -32,6 +33,12 @@ class Constraint {
 
     Constraint(Type t, ObjectMap::ObjID d, ObjectMap::ObjID s);
     Constraint(Type t, ObjectMap::ObjID d, ObjectMap::ObjID s, int32_t o);
+
+    Constraint(const Constraint &) = delete;
+    Constraint &operator=(const Constraint&) = delete;
+
+    Constraint(Constraint &&) = default;
+    Constraint &operator=(Constraint&&) = default;
 
     Type type() const {
       return type_;
@@ -84,7 +91,8 @@ class Constraint {
 class DUG {
   //{{{
  public:
-    struct dug_id { };
+    struct pe_id { };
+    typedef ID<pe_id, int32_t, -1> PEid;
     typedef ObjectMap::ObjID ObjID;
 
     DUG() = default;
@@ -114,16 +122,90 @@ class DUG {
       return nodes_[node.val()].value();
     }
 
-    // Iterate?
+    void setupPE(const std::map<ObjID, PEid> &mapping) {
+      objToPE_.clear();
+      objToPE_.insert(std::begin(mapping), std::end(mapping));
+    }
+
+    PEid getPE(ObjID id) const {
+      PEid ret;
+      auto it = objToPE_.find(id);
+      if (it != std::end(objToPE_)) {
+        ret = it->second;
+      }
+
+      return ret;
+    }
+
+    // Iterator helper {{{
+    // Iterates an iter itype, returning a std::pair<ObjID(id), outp>
+    template<typename itype, typename outp>
+    struct pair_iter {
+      //{{{
+     public:
+        typedef std::pair<ObjID, outp &> value_type;
+
+        explicit pair_iter(itype iter) :
+            iter_(iter) { }
+
+        value_type operator*() {
+          return std::make_pair(ObjID(pos_),
+              std::ref(*iter_));
+        }
+
+        pair_iter &operator++() {
+          ++pos_;
+          ++iter_;
+
+          return *this;
+        }
+
+        pair_iter &operator--() {
+          --pos_;
+          --iter_;
+
+          return *this;
+        }
+
+        bool operator==(const pair_iter &it) {
+          return it.iter_ == iter_;
+        }
+
+        bool operator!=(const pair_iter &it) {
+          return it.iter_ != iter_;
+        }
+
+        bool operator<(const pair_iter &it) {
+          return it.iter_ < iter_;
+        }
+
+     private:
+        itype iter_;
+        size_t pos_ = 0;
+      //}}}
+    };
+    //}}}
+
+    // Constraint iterators {{{
+    /*
+    typedef pair_iter<std::vector<Constraint>::iterator, Constraint>
+      constraint_iterator;
+    typedef pair_iter<std::vector<Constraint>::const_iterator, const Constraint>
+      const_constraint_iterator;
+    */
     typedef std::vector<Constraint>::iterator constraint_iterator;
     typedef std::vector<Constraint>::const_iterator const_constraint_iterator;
+
+    size_t constraintSize() const {
+      return constraints_.size();
+    }
 
     constraint_iterator constraint_begin() {
       return std::begin(constraints_);
     }
 
     constraint_iterator constraint_end() {
-      return std::end(constraints_);
+      return std::begin(constraints_);
     }
 
     const_constraint_iterator constraint_begin() const {
@@ -134,12 +216,22 @@ class DUG {
       return std::end(constraints_);
     }
 
-    // DFS Iterate?
+    const_constraint_iterator constraint_cbegin() const {
+      return constraints_.cbegin();
+    }
 
+    const_constraint_iterator constraint_cend() const {
+      return constraints_.cend();
+    }
+    //}}}
 
-    // For debugging
+    // For debugging {{{
     void printDotConstraintGraph(const std::string &graphname,
         const ObjectMap &omap) const;
+
+    void printDotPEGraph(const std::string &graphname,
+        const ObjectMap &omap) const;
+    //}}}
 
  private:
     // An individual node within the DUG
@@ -174,6 +266,9 @@ class DUG {
     // Our vector of nodes
     std::vector<DUGNode> nodes_;
     std::vector<Constraint> constraints_;
+
+    // The PE equivalent for each obj in the graph
+    std::map<ObjID, PEid> objToPE_;
 
     std::vector<std::pair<const llvm::Value *, ObjID>> indirectCalls_;
   //}}}

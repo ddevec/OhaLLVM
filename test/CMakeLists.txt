@@ -15,8 +15,13 @@ set(CMAKE_C_COMPILER "clang")
 set(CMAKE_C_FLAGS "-Wno-format-security -O0 -emit-llvm")
 set(CMAKE_C_LINK_EXECUTABLE "llvm-ld -disable-opt <LINK_FLAGS> <OBJECTS> -o <TARGET>")
 
+
 add_executable(simple_fcn
   simple_fcn.c)
 
+add_executable(simple_fcn2
+  simple_fcn2.c)
+
 create_dis(simple_fcn)
+create_dis(simple_fcn2)
 

@@ -103,6 +103,9 @@ class ObjectMap {
     ObjID getObject(const llvm::Value *val) const {
       return __do_get(val, objToID_);
     }
+    bool isObject(const ObjID id) const {
+      return (idToObj_.find(id) != std::end(idToObj_));
+    }
 
     static constexpr ObjID getOffsID(ObjID id, int32_t offs) {
       return ObjID(id.val() + offs);

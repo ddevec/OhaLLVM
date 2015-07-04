@@ -49,6 +49,7 @@ set(SOURCES
   src/ObjectMap.cpp
   src/DUG.cpp
   src/IdentifyObjects.cpp
+  src/Optimize.cpp
   )
 
 set(HEADERS

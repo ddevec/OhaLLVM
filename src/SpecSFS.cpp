@@ -94,14 +94,17 @@ bool SpecSFS::runOnModule(Module &M) {
 
   graph.printDotConstraintGraph("graph.dot", omap);
 
-#if 0
   // Initial optimization pass
   // Runs HU on the graph as it stands, w/ only top level info filled in
   // Removes any nodes deemed to be non-ptr (definitely null), and merges nodes
   //   with statically equivalent ptsto sets
-  if (optimizeConstraints(graph)) {
+  if (optimizeConstraints(graph, omap)) {
     error("OptimizeConstraints failure!");
   }
+
+  graph.printDotPEGraph("graphPE.dot", omap);
+
+#if 0
 
   // Get AUX info, in this instance we choose Andersens
   Andersens aux;

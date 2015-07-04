@@ -21,166 +21,265 @@ using namespace llvm;  // NOLINT
 
 // Anon namespace
 namespace {
-  // General Helper fcns {{{
-  const DUG::ObjID::base_type obj_id(DUG::ObjID id) {
-    return id.val();
-  }
-  //}}}
+// General Helper fcns {{{
+const DUG::ObjID::base_type obj_id(DUG::ObjID id) {
+  return id.val();
+}
+//}}}
 
-  // Support for printing {{{
-  static std::string idToString(DUG::ObjID id) {
-    auto val = id.val();
+// Support for printing {{{
+template<typename idT>
+static std::string idToString(idT id) {
+  auto val = id.val();
 
-    if (val == 0) {
-      return "a";
-    }
-
-    int len = 0;
-
-    auto val_bkp = val;
-    while (val_bkp != 0) {
-      ++len;
-      val_bkp /= 10;
-    }
-
-    std::string ret(len, 'a');
-
-    for (int i = 0; i < len; i++) {
-      char digit = val % 10;
-      val /= 10;
-
-      ret.replace(i, 1, 1, 'a' + digit);
-    }
-
-    return ret;
+  if (val == 0) {
+    return "a";
   }
 
-  static void printVal(raw_ostream &ofil, const Value *val) {
-    if (auto GV = dyn_cast<const GlobalValue>(val)) {
-      ofil << GV->getName();
-    } else if (auto F = dyn_cast<const Function>(val)) {
-      ofil << F->getName();
+  int len = 0;
+
+  auto val_bkp = val;
+  while (val_bkp != 0) {
+    ++len;
+    val_bkp /= 10;
+  }
+
+  std::string ret(len, 'a');
+
+  for (int i = 0; i < len; i++) {
+    char digit = val % 10;
+    val /= 10;
+
+    ret.replace(i, 1, 1, 'a' + digit);
+  }
+
+  return ret;
+}
+
+static void printVal(raw_ostream &ofil, const Value *val) {
+  if (auto GV = dyn_cast<const GlobalValue>(val)) {
+    ofil << GV->getName();
+  } else if (auto F = dyn_cast<const Function>(val)) {
+    ofil << F->getName();
+  } else {
+    ofil << *val;
+  }
+}
+
+static std::string getFormatStr(DUG::PEid pid) {
+  return " shape=box";
+}
+
+static std::string getFormatStr(ObjectMap::Type type) {
+  switch (type) {
+    case ObjectMap::Type::Special:
+      return " shape=box color=red";
+    case ObjectMap::Type::Value:
+      return "";
+    case ObjectMap::Type::Object:
+      return " shape=box";
+    case ObjectMap::Type::Return:
+      return " color=blue";
+    case ObjectMap::Type::VarArg:
+      return " color=red";
+    default:
+      llvm_unreachable("Shouldn't have uncovered format case");
+  }
+}
+
+static void printSpecial(raw_ostream &ofil, DUG::ObjID id) {
+  if (id == ObjectMap::NullValue) {
+    ofil << "NullValue";
+  } else if (id == ObjectMap::NullObjectValue) {
+    ofil << "NullObjectValue";
+  } else if (id == ObjectMap::IntValue) {
+    ofil << "IntValue";
+  } else if (id == ObjectMap::UniversalValue) {
+    ofil << "UniversalValue";
+  } else if (id == ObjectMap::UniversalValue) {
+    ofil << "PthreadSpecificValue";
+  } else {
+    llvm_unreachable("Shouldn't have unknown value here!");
+  }
+}
+
+static const std::string getConsStr(const Constraint &cons) {
+  switch (cons.type()) {
+    case Constraint::Type::Copy:
+      return "copy";
+    case Constraint::Type::AddressOf:
+      return "addr_of";
+    case Constraint::Type::Load:
+      return "load";
+    case Constraint::Type::Store:
+      return "store";
+    default:
+      assert(0 && "illegal constraint type");
+      return "BLEH";
+  }
+}
+
+template<typename idT>
+static void printHeader(raw_ostream &ofil, idT id,
+    const DUG &graph, const ObjectMap &omap) {
+  auto pr = omap.getValueInfo(id);
+
+  std::string idNode = idToString(id);
+
+  // Need a raw_os_ostream to print a value...
+  ofil << "  " << idNode << " [label=\"";
+  if (pr.first != ObjectMap::Type::Special) {
+    printVal(ofil, pr.second);
+  } else {
+    printSpecial(ofil, id);
+  }
+  ofil << "\"" << getFormatStr(pr.first) << "];\n";
+}
+
+static void printMultiHeader(raw_ostream &ofil,
+    DUG::PEid peid, const std::set<DUG::ObjID> &ids,
+    const DUG &graph, const ObjectMap &omap) {
+  std::string idNode = idToString(peid);
+
+  // Need a raw_os_ostream to print a value...
+  ofil << "  " << idNode << " [label=\"";
+  // Make an iterator from the start, then another indicating the next
+  for (auto nit = std::begin(ids), en = std::end(ids), it = nit++; it != en;
+      ++it) {
+    auto pr = omap.getValueInfo(*it);
+    if (pr.first != ObjectMap::Type::Special) {
+      printVal(ofil, pr.second);
     } else {
-      ofil << *val;
+      printSpecial(ofil, *it);
+    }
+    // Print a newline after each value, except the last
+    if (nit != en) {
+      ofil << "\n";
+      ++nit;
     }
   }
 
-  static std::string getFormatStr(ObjectMap::Type type) {
-    switch (type) {
-      case ObjectMap::Type::Special:
-        return " shape=box color=red";
-      case ObjectMap::Type::Value:
-        return "";
-      case ObjectMap::Type::Object:
-        return " shape=box";
-      case ObjectMap::Type::Return:
-        return " color=blue";
-      case ObjectMap::Type::VarArg:
-        return " color=red";
-      default:
-        llvm_unreachable("Shouldn't have uncovered format case");
-    }
+  ofil << "\"" << getFormatStr(peid) << "];\n";
+}
+
+static void printDotHeader(raw_ostream &ofil) {
+  ofil << "digraph graphname {\n";
+}
+
+static void printDotFooter(raw_ostream &ofil) {
+  // We use endl here, so the file will force flush
+  ofil << "}" << "\n";
+}
+
+static DUG::PEid getPEid(DUG::ObjID id, const DUG &graph) {
+  DUG::PEid ret = DUG::PEid(id.val() + 1<<30);
+  auto pe = graph.getPE(id);
+  if (pe.valid()) {
+    ret = pe;
+    assert(pe.val() < 1<<30 &&
+        "Fetched PE larger than expected");
   }
 
-  static void printSpecial(raw_ostream &ofil, DUG::ObjID id) {
-    if (id == ObjectMap::NullValue) {
-      ofil << "NullValue";
-    } else if (id == ObjectMap::NullObjectValue) {
-      ofil << "NullObjectValue";
-    } else if (id == ObjectMap::IntValue) {
-      ofil << "IntValue";
-    } else if (id == ObjectMap::UniversalValue) {
-      ofil << "UniversalValue";
-    } else if (id == ObjectMap::UniversalValue) {
-      ofil << "PthreadSpecificValue";
-    } else {
-      llvm_unreachable("Shouldn't have unknown value here!");
-    }
+  return ret;
+}
+
+static void printPENodeHeader(raw_ostream &ofil, const DUG &graph,
+    DUG::PEid peid, const std::set<DUG::ObjID> &ids, const ObjectMap &omap) {
+  printMultiHeader(ofil, peid, ids, graph, omap);
+}
+
+
+static void printConstraintNodeHeader(raw_ostream &ofil, const DUG &graph,
+    const Constraint &con, const ObjectMap &omap,
+    std::set<DUG::ObjID> &seen) {
+  auto id = con.getTarget();
+  auto id2 = con.targetIsDest() ? con.src() : con.dest();
+  if (seen.count(id) == 0) {
+    seen.insert(id);
+
+    printHeader(ofil, id, graph, omap);
   }
 
-  static const std::string getConsStr(const Constraint &cons) {
-    switch (cons.type()) {
-      case Constraint::Type::Copy:
-        return "copy";
-      case Constraint::Type::AddressOf:
-        return "addr_of";
-      case Constraint::Type::Load:
-        return "load";
-      case Constraint::Type::Store:
-        return "store";
-      default:
-        assert(0 && "illegal constraint type");
-        return "BLEH";
-    }
+  if (seen.count(id2) == 0) {
+    seen.insert(id2);
+    printHeader(ofil, id2, graph, omap);
   }
+}
 
-  static void printHeader(raw_ostream &ofil, DUG::ObjID id,
-      const DUG &graph, const ObjectMap &omap) {
-      auto pr = omap.getValueInfo(id);
-
-      std::string idNode = idToString(id);
-
-      // Need a raw_os_ostream to print a value...
-      ofil << "  " << idNode << " [label=\"";
-      if (pr.first != ObjectMap::Type::Special) {
-        printVal(ofil, pr.second);
-      } else {
-        printSpecial(ofil, id);
-      }
-      ofil << "\"" << getFormatStr(pr.first) << "];\n";
+static DUG::ObjID getTarget(const Constraint &con) {
+  switch (con.type()) {
+    case Constraint::Type::Copy:
+      return con.dest();
+    case Constraint::Type::AddressOf:
+      return con.src();
+    case Constraint::Type::Load:
+      return con.dest();
+    case Constraint::Type::Store:
+      return con.dest();
+    default:
+      llvm_unreachable("Unhandled constraint");
   }
+}
 
-  static void printDotHeader(raw_ostream &ofil) {
-    ofil << "digraph graphname {\n";
+static DUG::ObjID getOrigin(const Constraint &con) {
+  switch (con.type()) {
+    case Constraint::Type::Copy:
+      return con.src();
+    case Constraint::Type::AddressOf:
+      return con.dest();
+    case Constraint::Type::Load:
+      return con.src();
+    case Constraint::Type::Store:
+      return con.src();
+    default:
+      llvm_unreachable("Unhandled constraint");
   }
+}
 
-  static void printDotFooter(raw_ostream &ofil) {
-    // We use endl here, so the file will force flush
-    ofil << "}" << "\n";
-  }
+static void printConstraintNodeLinks(raw_ostream &ofil, const DUG &graph,
+    const Constraint &con, const ObjectMap &omap) {
+  // Okay... now we print the links...
+  // This is to decide on the logical arrow direction
+  auto id = getTarget(con);
+  std::string idNode(idToString(id));
 
+  // This is to decide on the logical arrow direction
+  auto id2 = getOrigin(con);
+  std::string idNode2(idToString(id2));
 
-  static void printConstraintNodeHeader(raw_ostream &ofil, const DUG &graph,
-      const Constraint &con, const ObjectMap &omap,
-      std::set<DUG::ObjID> &seen) {
-    auto id = con.getTarget();
-    auto id2 = con.targetIsDest() ? con.src() : con.dest();
-    if (seen.count(id) == 0) {
-      seen.insert(id);
+  auto consStr = getConsStr(con);
 
-      printHeader(ofil, id, graph, omap);
-    }
+  ofil << "  " << idNode2 << " -> " << idNode <<
+    " [label=\"" << consStr << "\"];\n";
+}
 
-    if (seen.count(id2) == 0) {
-      seen.insert(id2);
-      printHeader(ofil, id2, graph, omap);
-    }
-  }
+static void printPENodeLinks(raw_ostream &ofil, const DUG &graph,
+    const Constraint &con, const ObjectMap &omap) {
+  // Okay... now we print the links...
+  // This is to decide on the logical arrow direction
+  auto id = getPEid(getTarget(con), graph);
+  std::string idNode(idToString(id));
 
-  static void printConstraintNodeLinks(raw_ostream &ofil, const DUG &graph,
-      const Constraint &con, const ObjectMap &omap) {
-    // Okay... now we print the links...
-    // auto id = con.getTarget();
-    auto id = con.dest();
-    std::string idNode(idToString(id));
+  // This is to decide on the logical arrow direction
+  auto id2 = getPEid(getOrigin(con), graph);
+  std::string idNode2(idToString(id2));
 
-    // auto id2 = con.targetIsDest() ? con.src() : con.dest();
-    auto id2 = con.src();
-    std::string idNode2(idToString(id2));
+  auto consStr = getConsStr(con);
 
-    auto consStr = getConsStr(con);
-
-    ofil << "  " << idNode << " -> " << idNode2 <<
-      " [label=\"" << consStr << "\"];\n";
-  }
-  //}}}
+  ofil << "  " << idNode2 << " -> " << idNode <<
+    " [label=\"" << consStr << "\"];\n";
+}
+//}}}
 }  // end anon. namespace
 
+// Constraint {{{
 Constraint::Constraint(Type t, ObjectMap::ObjID d, ObjectMap::ObjID s) :
   Constraint(t, d, s, 0) { }
 
 Constraint::Constraint(Type t, ObjectMap::ObjID d, ObjectMap::ObjID s,
     int32_t o) : type_(t), dest_(d), src_(s), offs_(o) { }
+//}}}
+
 
 void DUG::prepare(const ObjectMap &omap) {
   // Create a node per constraint (initially)
@@ -221,6 +320,7 @@ void DUG::associateNode(ObjID id, const Value *val) {
   node.setValue(val);
 }
 
+// Debug Printing functions {{{
 void DUG::printDotConstraintGraph(const std::string &graphname,
     const ObjectMap &omap) const {
   // Okay, we need to print out some dot nodes
@@ -232,17 +332,54 @@ void DUG::printDotConstraintGraph(const std::string &graphname,
 
   std::set<ObjID> seen;
   std::for_each(constraint_begin(), constraint_end(),
-      [this, &ofil, &omap, &seen](const Constraint &con) {
+      [this, &ofil, &omap, &seen] (const Constraint &con) {
     printConstraintNodeHeader(ofil, *this, con, omap, seen);
   });
 
   ofil << "\n";
 
   std::for_each(constraint_begin(), constraint_end(),
-      [this, &ofil, &omap](const Constraint &con) {
+      [this, &ofil, &omap] (const Constraint &con) {
     printConstraintNodeLinks(ofil, *this, con, omap);
   });
 
   printDotFooter(ofil);
 }
+
+void DUG::printDotPEGraph(const std::string &graphname,
+    const ObjectMap &omap) const {
+  // Okay, we need to print out some dot nodes
+  std::ofstream ostr(graphname, std::ofstream::out);
+  // We'll use an llvm raw_ostream adapter
+  raw_os_ostream ofil(ostr);
+
+  printDotHeader(ofil);
+
+  // Collect all of the nodes grouped together
+  std::map<PEid, std::set<ObjID>> id_map;
+  std::for_each(constraint_begin(), constraint_end(),
+      [this, &ofil, &omap, &id_map] (const Constraint &con) {
+    // Okay, get each constraint part, and make up our id list
+    auto id1 = con.src();
+    auto id2 = con.dest();
+
+    id_map[getPEid(id1, *this)].insert(id1);
+    id_map[getPEid(id2, *this)].insert(id2);
+  });
+
+  std::set<PEid> seen;
+  std::for_each(std::begin(id_map), std::end(id_map),
+      [this, &ofil, &omap, &seen]
+      (const std::pair<PEid, const std::set<ObjID>&> &pr) {
+    printPENodeHeader(ofil, *this, pr.first, pr.second, omap);
+  });
+
+  std::for_each(constraint_begin(), constraint_end(),
+      [this, &ofil, &omap] (const Constraint &con) {
+    printPENodeLinks(ofil, *this, con, omap);
+  });
+
+  printDotFooter(ofil);
+}
+//}}}
 

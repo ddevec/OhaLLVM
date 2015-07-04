@@ -37,7 +37,9 @@ class SpecSFS : public llvm::ModulePass {
       const llvm::Module &M);
 
   // Optimizes the top-level constraints in the DUG
-  bool optimizeConstraints(DUG &graph) { return false; }
+  // This requires the omap, so it knows which ids are objects, and doesn't
+  //   group them
+  bool optimizeConstraints(DUG &graph, const ObjectMap &omap);
 
   // Adds additional indirect call info, given an AUX analysis
   //   (in this case, Andersens analysis)
