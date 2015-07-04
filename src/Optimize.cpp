@@ -59,24 +59,23 @@ static std::string idToString(idT id) {
 
 
 // Okay, we're going to need a graph of some kind...
-// Unique ID maintainers {{{
-static int32_t nextHuNodeNum = 0;
-static int32_t nextDfsNum = 0;
-static int32_t nextPENum = 0;
-
+// Helper Functions {{{
 static DUG::PEid getNextPE() {
+  static int32_t nextPENum = 0;
   return DUG::PEid(nextPENum++);
 }
 
-static int32_t getNextDfsNum() {
-  return nextDfsNum++;
-}
-
 static int32_t getNextHuNodeNum() {
+  static int32_t nextHuNodeNum = 0;
   return nextHuNodeNum++;
 }
 
+static int getIdx(DUG::ObjID id) {
+  return id.val();
+}
+
 //}}}
+
 
 class HUNode {
   //{{{
@@ -111,7 +110,7 @@ class HUNode {
     }
 
     void addPtsTo(DUG::ObjID id) {
-      ptsto_.set(id.val());
+      ptsto_.set(getIdx(id));
     }
 
     const Bitmap &ptsto() const {
@@ -227,16 +226,12 @@ class HUNode {
   //}}}
 };
 
-// Helper Functions {{{
-static int getIdx(DUG::ObjID id) {
-  return id.val();
-}
-
+// Helpers requiring HUNodes {{{
 static HUNode &getNode(DUG::ObjID id, NodeMapping &nodes) {
   return nodes[id];
 }
 
-static int createGraph(const Constraint &con,
+static void createGraph(const Constraint &con,
     NodeMapping &nodes, const ObjectMap &omap) {
   HUNode &src = getNode(con.src(), nodes);
   HUNode &dest = getNode(con.dest(), nodes);

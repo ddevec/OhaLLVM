@@ -112,20 +112,20 @@ class ObjectMap {
     }
 
     ObjID getReturn(const llvm::Value *val) const {
-      auto id = __do_get(val, valToID_);
+      return __do_get(val, valToID_);
     }
 
     ObjID getVarArg(const llvm::Value *val) const {
-      auto id = __do_get(val, vargToID_);
+      return __do_get(val, vargToID_);
     }
 
     // ddevec -- FIXME: Does this really belong here?
     ObjID getConstValue(const llvm::Constant *C) const {
-      __const_node_helper(C, &ObjectMap::getValue, NullValue);
+      return __const_node_helper(C, &ObjectMap::getValue, NullValue);
     }
 
     ObjID getConstValueTarget(const llvm::Constant *C) const {
-      __const_node_helper(C, &ObjectMap::getObject, NullObjectValue);
+      return __const_node_helper(C, &ObjectMap::getObject, NullObjectValue);
     }
 
     std::pair<Type, const llvm::Value *>

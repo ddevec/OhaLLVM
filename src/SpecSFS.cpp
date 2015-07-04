@@ -139,7 +139,7 @@ bool SpecSFS::runOnModule(Module &M) {
   }
 
   // We do not modify code, ever!
-  return false;
 #endif
+  return false;
 }
 

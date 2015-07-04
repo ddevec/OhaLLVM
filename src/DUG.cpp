@@ -22,7 +22,7 @@ using namespace llvm;  // NOLINT
 // Anon namespace
 namespace {
 // General Helper fcns {{{
-const DUG::ObjID::base_type obj_id(DUG::ObjID id) {
+DUG::ObjID::base_type obj_id(DUG::ObjID id) {
   return id.val();
 }
 //}}}
@@ -66,7 +66,7 @@ static void printVal(raw_ostream &ofil, const Value *val) {
   }
 }
 
-static std::string getFormatStr(DUG::PEid pid) {
+static std::string getFormatStr(DUG::PEid) {
   return " shape=box";
 }
 
@@ -121,7 +121,7 @@ static const std::string getConsStr(const Constraint &cons) {
 
 template<typename idT>
 static void printHeader(raw_ostream &ofil, idT id,
-    const DUG &graph, const ObjectMap &omap) {
+    const DUG &, const ObjectMap &omap) {
   auto pr = omap.getValueInfo(id);
 
   std::string idNode = idToString(id);
@@ -138,7 +138,7 @@ static void printHeader(raw_ostream &ofil, idT id,
 
 static void printMultiHeader(raw_ostream &ofil,
     DUG::PEid peid, const std::set<DUG::ObjID> &ids,
-    const DUG &graph, const ObjectMap &omap) {
+    const DUG &, const ObjectMap &omap) {
   std::string idNode = idToString(peid);
 
   // Need a raw_os_ostream to print a value...
@@ -172,7 +172,7 @@ static void printDotFooter(raw_ostream &ofil) {
 }
 
 static DUG::PEid getPEid(DUG::ObjID id, const DUG &graph) {
-  DUG::PEid ret = DUG::PEid(id.val() + 1<<30);
+  DUG::PEid ret = DUG::PEid(id.val() + (1<<30));
   auto pe = graph.getPE(id);
   if (pe.valid()) {
     ret = pe;
@@ -236,8 +236,8 @@ static DUG::ObjID getOrigin(const Constraint &con) {
   }
 }
 
-static void printConstraintNodeLinks(raw_ostream &ofil, const DUG &graph,
-    const Constraint &con, const ObjectMap &omap) {
+static void printConstraintNodeLinks(raw_ostream &ofil, const DUG &,
+    const Constraint &con, const ObjectMap &) {
   // Okay... now we print the links...
   // This is to decide on the logical arrow direction
   auto id = getTarget(con);
@@ -254,7 +254,7 @@ static void printConstraintNodeLinks(raw_ostream &ofil, const DUG &graph,
 }
 
 static void printPENodeLinks(raw_ostream &ofil, const DUG &graph,
-    const Constraint &con, const ObjectMap &omap) {
+    const Constraint &con, const ObjectMap &) {
   // Okay... now we print the links...
   // This is to decide on the logical arrow direction
   auto id = getPEid(getTarget(con), graph);
@@ -314,7 +314,7 @@ void DUG::addIndirect(const Value *val, Constraint::Type type,
 }
 
 void DUG::associateNode(ObjID id, const Value *val) {
-  assert(obj_id(id) < nodes_.size());
+  assert(static_cast<size_t>(obj_id(id)) < nodes_.size());
   DUGNode &node = nodes_[obj_id(id)];
 
   node.setValue(val);

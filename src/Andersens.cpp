@@ -61,9 +61,6 @@
 
 #define DEBUG_TYPE "anders-aa"
 
-#define __STDC_LIMIT_MACROS
-#define __STDC_CONSTANT_MACROS
-
 #include "include/Andersens.h"
 
 #include <algorithm>
@@ -197,7 +194,7 @@ void Andersens::getMustAliases(Value *P, std::vector<Value*> &RetVals) {
 /// pointer can only point to constant globals, functions, or the null pointer,
 /// return true.
 ///
-bool Andersens::pointsToConstantMemory(const Location &Loc, bool OrLocal) {
+bool Andersens::pointsToConstantMemory(const Location &Loc, bool) {
   Node *N = &GraphNodes[FindNode(getNode(const_cast<Value*>(Loc.Ptr)))];
   unsigned i;
 
@@ -919,7 +916,7 @@ void Andersens::AddConstraintForConstantPointer(Value *V) {
   }
 }
 
-void Andersens::visitVAArg(VAArgInst &I) {
+void Andersens::visitVAArg(VAArgInst &) {
   llvm_unreachable("vaarg not handled yet!");
 }
 

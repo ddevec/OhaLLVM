@@ -257,10 +257,13 @@ namespace {
       });
     }
   }
+
+  /*
   static void addGlobalInitializerConstraints(DUG &graph, ObjectMap &omap,
       ObjectMap::ObjID id, const Value *V) {
     addGlobalInitializerConstraints(graph, omap, id, cast<const Constant>(V));
   }
+  */
 
   static void addConstraintForConstPtr(DUG &graph, ObjectMap &omap,
       const GlobalValue &glbl) {
@@ -288,6 +291,7 @@ namespace {
     }
   }
 
+  /*
   static void addConstraintsForNonInternalLinakge(DUG &graph, ObjectMap &omap,
       const Function &fcn) {
     std::for_each(fcn.arg_begin(), fcn.arg_end(),
@@ -296,6 +300,7 @@ namespace {
         ObjectMap::UniversalValue);
     });
   }
+  */
 
   // Look at the uses of this function, if they are "complex" like address
   // escapes, return true
@@ -336,7 +341,7 @@ namespace {
         } else {
           return true;;
         }
-      } else if (auto ICI = dyn_cast<ICmpInst>(*UI)) {
+      } else if (dyn_cast<ICmpInst>(*UI) != nullptr) {
         return true;
       } else {
         return true;
@@ -459,7 +464,7 @@ namespace {
 
   static void addConstraintsForCall(DUG &graph, ObjectMap &omap,
       CallSite &CS, Function *F) {
-    bool isIndirect = (F == NULL);
+    // bool isIndirect = (F == NULL);
 
     // Try to recover the function from a bitcast (taken from sfs code)
     // If this function was just cast to a function pointer from the prior
@@ -664,13 +669,13 @@ namespace {
     }
   }
 
-  static void idVAArgInst(DUG &graph, ObjectMap &omap,
-      const Instruction &inst) {
+  static void idVAArgInst(DUG &, ObjectMap &,
+      const Instruction &) {
     llvm_unreachable("Vaarg not handled yet");
   }
 
-  static void idExtractInst(DUG &graph, ObjectMap &omap,
-      const Instruction &inst) {
+  static void idExtractInst(DUG &, ObjectMap &,
+      const Instruction &) {
     llvm_unreachable("ExtractValue not handled yet");
   }
   //}}}

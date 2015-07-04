@@ -43,25 +43,25 @@ class SpecSFS : public llvm::ModulePass {
 
   // Adds additional indirect call info, given an AUX analysis
   //   (in this case, Andersens analysis)
-  bool addIndirectCalls(DUG &graph, const Andersens &aux) { return false; }
+  bool addIndirectCalls(DUG &, const Andersens &) { return false; }
 
   // Computes SSA form of the DUG, given its current edge set
   //   Used to compute SSA for top lvl
-  bool computeSSA(DUG &graph) { return false; }
+  bool computeSSA(DUG &) { return false; }
 
   // Fills in conservative address-taken given an conservative AUX
-  bool fillAddressTaken(DUG &graph, const Andersens &aux) { return false; }
+  bool fillAddressTaken(DUG &, const Andersens &) { return false; }
 
   // Computes partitons based on the conservative address-taken info, the
   // partitions are based on "access-equivalence"
-  bool computePartitions(DUG &graph) { return false; }
+  bool computePartitions(DUG &) { return false; }
 
   // Computes the SSA form of each partition
-  bool computePartSSA(DUG &graph) { return false; }
+  bool computePartSSA(DUG &) { return false; }
 
   // Solves the remaining graph, providing full flow-sensitive inclusion-based
   // points-to analysis
-  bool solve(DUG &graph) { return false; }
+  bool solve(DUG &) { return false; }
 };
 
 #endif  // INCLUDE_SPECSFS_H_

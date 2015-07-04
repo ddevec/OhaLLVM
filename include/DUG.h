@@ -81,8 +81,8 @@ class Constraint {
  private:
     Type type_;
 
-    ObjectMap::ObjID src_;
     ObjectMap::ObjID dest_;
+    ObjectMap::ObjID src_;
 
     int32_t offs_ = 0;
   //}}}

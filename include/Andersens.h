@@ -53,7 +53,7 @@ struct BitmapKeyInfo {
   static inline SparseBitVector<> *getTombstoneKey() {
     return reinterpret_cast<SparseBitVector<> *>(-2);
   }
-  static unsigned getHashValue(const SparseBitVector<> *bitmap) {
+  static unsigned getHashValue(const SparseBitVector<> *) {
     return 0;
   }
   static bool isEqual(const SparseBitVector<> *LHS,
@@ -239,7 +239,7 @@ class Andersens : public ModulePass,
     }
 
     bool isRep() const {
-      return (static_cast<int>(NodeRep < 0));
+      return (static_cast<int>(NodeRep) < 0);
     }
   };
 
@@ -594,8 +594,8 @@ class Andersens : public ModulePass,
   void visitGetElementPtrInst(GetElementPtrInst &GEP);
   void visitPHINode(PHINode &PN);
   void visitCastInst(CastInst &CI);
-  void visitICmpInst(ICmpInst &ICI) {}  // NOOP!
-  void visitFCmpInst(FCmpInst &ICI) {}  // NOOP!
+  void visitICmpInst(ICmpInst &) {}  // NOOP!
+  void visitFCmpInst(FCmpInst &) {}  // NOOP!
   void visitSelectInst(SelectInst &SI);
   void visitVAArg(VAArgInst &I);
   void visitIntToPtrInst(IntToPtrInst &I);
@@ -607,7 +607,7 @@ class Andersens : public ModulePass,
   //===------------------------------------------------------------------===//
   // Implement Analyize interface
   //
-  void print(llvm::raw_ostream &O, const Module* M) const {
+  void print(llvm::raw_ostream &, const Module *) const {
     PrintPointsToGraph();
   }
 };
