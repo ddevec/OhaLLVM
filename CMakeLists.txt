@@ -50,12 +50,14 @@ set(SOURCES
   src/DUG.cpp
   src/IdentifyObjects.cpp
   src/Optimize.cpp
+  src/Andersens.cpp
   )
 
 set(HEADERS
   include/SpecSFS.h
   include/ObjectMap.h
   include/DUG.h
+  include/Andersens.h
   )
 
 add_llvm_loadable_module(SpecSFS

@@ -14,20 +14,12 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Debug.h"
 
+#include "include/Andersens.h"
 #include "include/ObjectMap.h"
-
 
 using namespace llvm; // NOLINT
 
 using std::swap;
-
-// FIXME: Put real analysis
-/*{{{*/
-class Andersens {
- public:
-    bool runOnModule(Module &M) { } // NOLINT
-};
-/*}}}*/
 
 // Error handling functions
 /*{{{*/
@@ -104,12 +96,13 @@ bool SpecSFS::runOnModule(Module &M) {
 
   graph.printDotPEGraph("graphPE.dot", omap);
 
-#if 0
 
   // Get AUX info, in this instance we choose Andersens
+  dbgs() << "Running Andersens\n";
   Andersens aux;
   bool ret = aux.runOnModule(M);
   // Andersens had better not change M!
+  dbgs() << "Andersens done\n";
   assert(ret == false);
 
   // Now, fill in the indirect function calls
@@ -117,6 +110,7 @@ bool SpecSFS::runOnModule(Module &M) {
     error("AddIndirectCalls failure!");
   }
 
+#if 0
   // Now, compute the SSA form for the top-level variables
   // We translate any PHI nodes into copy nodes... b/c the paper says so
   if (computeSSA(graph)) {

@@ -5,6 +5,8 @@
 #ifndef INCLUDE_SPECSFS_H_
 #define INCLUDE_SPECSFS_H_
 
+#include "include/Andersens.h"
+#include "include/SpecSFS.h"
 #include "include/DUG.h"
 #include "include/ObjectMap.h"
 
@@ -15,8 +17,6 @@
 #include "llvm/Support/Debug.h"
 
 // Ugh, need to export andersens header... yeeeesh
-class Andersens;
-
 class SpecSFS : public llvm::ModulePass {
                 // public llvm::AliasAnalysis {
  public:

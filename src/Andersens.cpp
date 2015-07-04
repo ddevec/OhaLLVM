@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2015 David Devecsery
+ *
+ * FIXME: This is just to make cpplint happy
+ */
 // vim: sw=2
 //===- Andersens.cpp - Andersen's Interprocedural Alias Analysis ----------===//
 //
@@ -55,6 +60,21 @@
 //===----------------------------------------------------------------------===//
 
 #define DEBUG_TYPE "anders-aa"
+
+#define __STDC_LIMIT_MACROS
+#define __STDC_CONSTANT_MACROS
+
+#include "include/Andersens.h"
+
+#include <algorithm>
+#include <list>
+#include <map>
+#include <queue>
+#include <set>
+#include <stack>
+#include <utility>
+#include <vector>
+
 #include "llvm/Constants.h"
 #include "llvm/DerivedTypes.h"
 #include "llvm/Instructions.h"
@@ -73,599 +93,18 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/IntrinsicInst.h"
 
-#include "rcs/Version.h"
-
-#include <algorithm>
-#include <set>
-#include <list>
-#include <map>
-#include <stack>
-#include <vector>
-#include <queue>
-
 // Determining the actual set of nodes the universal set can consist of is very
 // expensive because it means propagating around very large sets.  We rely on
 // other analysis being able to determine which nodes can never be pointed to in
 // order to disambiguate further than "points-to anything".
 #define FULL_UNIVERSAL 0
 
-using namespace llvm;
+using namespace llvm;  // NOLINT
 STATISTIC(NumIters      , "Number of iterations to reach convergence");
 STATISTIC(NumConstraints, "Number of constraints");
 STATISTIC(NumNodes      , "Number of nodes");
 STATISTIC(NumUnified    , "Number of variables unified");
 STATISTIC(NumErased     , "Number of redundant constraints erased");
-
-static const unsigned SelfRep = (unsigned)-1;
-static const unsigned Unvisited = (unsigned)-1;
-// Position of the function return node relative to the function node.
-static const unsigned CallReturnPos = 1;
-// Position of the function call node relative to the function node.
-static const unsigned CallFirstArgPos = 2;
-
-namespace {
-struct BitmapKeyInfo {
-  static inline SparseBitVector<> *getEmptyKey() {
-    return reinterpret_cast<SparseBitVector<> *>(-1);
-  }
-  static inline SparseBitVector<> *getTombstoneKey() {
-    return reinterpret_cast<SparseBitVector<> *>(-2);
-  }
-  static unsigned getHashValue(const SparseBitVector<> *bitmap) {
-#if LLVM_VERSION_CODE < LLVM_VERSION(3, 1)
-    return bitmap->getHashValue();
-#else
-    return 0;
-#endif
-  }
-  static bool isEqual(const SparseBitVector<> *LHS,
-                      const SparseBitVector<> *RHS) {
-    if (LHS == RHS)
-      return true;
-    else if (LHS == getEmptyKey() || RHS == getEmptyKey()
-             || LHS == getTombstoneKey() || RHS == getTombstoneKey())
-      return false;
-
-    return *LHS == *RHS;
-  }
-
-  static bool isPod() { return true; }
-};
-
-
-class Andersens: public ModulePass,
-                 public AliasAnalysis,
-                 private InstVisitor<Andersens> {
-  struct Node;
-
-  /// Constraint - Objects of this structure are used to represent the various
-  /// constraints identified by the algorithm.  The constraints are 'copy',
-  /// for statements like "A = B", 'load' for statements like "A = *B",
-  /// 'store' for statements like "*A = B", and AddressOf for statements like
-  /// A = alloca;  The Offset is applied as *(A + K) = B for stores,
-  /// A = *(B + K) for loads, and A = B + K for copies.  It is
-  /// illegal on addressof constraints (because it is statically
-  /// resolvable to A = &C where C = B + K)
-
-  struct Constraint {
-    enum ConstraintType { Copy, Load, Store, AddressOf } Type;
-    unsigned Dest;
-    unsigned Src;
-    unsigned Offset;
-
-    Constraint(ConstraintType Ty, unsigned D, unsigned S, unsigned O = 0)
-        : Type(Ty), Dest(D), Src(S), Offset(O) {
-          assert((Offset == 0 || Ty != AddressOf) &&
-                 "Offset is illegal on addressof constraints");
-        }
-
-    bool operator==(const Constraint &RHS) const {
-      return RHS.Type == Type
-          && RHS.Dest == Dest
-          && RHS.Src == Src
-          && RHS.Offset == Offset;
-    }
-
-    bool operator!=(const Constraint &RHS) const {
-      return !(*this == RHS);
-    }
-
-    bool operator<(const Constraint &RHS) const {
-      if (RHS.Type != Type)
-        return RHS.Type < Type;
-      else if (RHS.Dest != Dest)
-        return RHS.Dest < Dest;
-      else if (RHS.Src != Src)
-        return RHS.Src < Src;
-      return RHS.Offset < Offset;
-    }
-  };
-
-  // Information DenseSet requires implemented in order to be able to do
-  // it's thing
-  struct PairKeyInfo {
-    static inline std::pair<unsigned, unsigned> getEmptyKey() {
-      return std::make_pair(~0U, ~0U);
-    }
-    static inline std::pair<unsigned, unsigned> getTombstoneKey() {
-      return std::make_pair(~0U - 1, ~0U - 1);
-    }
-    static unsigned getHashValue(const std::pair<unsigned, unsigned> &P) {
-      return P.first ^ P.second;
-    }
-    static unsigned isEqual(const std::pair<unsigned, unsigned> &LHS,
-                            const std::pair<unsigned, unsigned> &RHS) {
-      return LHS == RHS;
-    }
-  };
-
-  struct ConstraintKeyInfo {
-    static inline Constraint getEmptyKey() {
-      return Constraint(Constraint::Copy, ~0U, ~0U, ~0U);
-    }
-    static inline Constraint getTombstoneKey() {
-      return Constraint(Constraint::Copy, ~0U - 1, ~0U - 1, ~0U - 1);
-    }
-    static unsigned getHashValue(const Constraint &C) {
-      return C.Src ^ C.Dest ^ C.Type ^ C.Offset;
-    }
-    static bool isEqual(const Constraint &LHS,
-                        const Constraint &RHS) {
-      return LHS.Type == RHS.Type && LHS.Dest == RHS.Dest
-          && LHS.Src == RHS.Src && LHS.Offset == RHS.Offset;
-    }
-  };
-
-  // Node class - This class is used to represent a node in the constraint
-  // graph.  Due to various optimizations, it is not always the case that
-  // there is a mapping from a Node to a Value.  In particular, we add
-  // artificial Node's that represent the set of pointed-to variables shared
-  // for each location equivalent Node.
-  struct Node {
-   private:
-    static volatile sys::cas_flag Counter;
-
-   public:
-    Value *Val;
-    SparseBitVector<> *Edges;
-    SparseBitVector<> *PointsTo;
-    SparseBitVector<> *OldPointsTo;
-    std::list<Constraint> Constraints;
-
-    // Pointer and location equivalence labels
-    unsigned PointerEquivLabel;
-    unsigned LocationEquivLabel;
-    // Predecessor edges, both real and implicit
-    SparseBitVector<> *PredEdges;
-    SparseBitVector<> *ImplicitPredEdges;
-    // Set of nodes that point to us, only use for location equivalence.
-    SparseBitVector<> *PointedToBy;
-    // Number of incoming edges, used during variable substitution to early
-    // free the points-to sets
-    unsigned NumInEdges;
-    // True if our points-to set is in the Set2PEClass map
-    bool StoredInHash;
-    // True if our node has no indirect constraints (complex or otherwise)
-    bool Direct;
-    // True if the node is address taken, *or* it is part of a group of nodes
-    // that must be kept together.  This is set to true for functions and
-    // their arg nodes, which must be kept at the same position relative to
-    // their base function node.
-    bool AddressTaken;
-
-    // Nodes in cycles (or in equivalence classes) are united together using a
-    // standard union-find representation with path compression.  NodeRep
-    // gives the index into GraphNodes for the representative Node.
-    unsigned NodeRep;
-
-    // Modification timestamp.  Assigned from Counter.
-    // Used for work list prioritization.
-    unsigned Timestamp;
-
-    explicit Node(bool direct = true) :
-        Val(0), Edges(0), PointsTo(0), OldPointsTo(0),
-        PointerEquivLabel(0), LocationEquivLabel(0), PredEdges(0),
-        ImplicitPredEdges(0), PointedToBy(0), NumInEdges(0),
-        StoredInHash(false), Direct(direct), AddressTaken(false),
-        NodeRep(SelfRep), Timestamp(0) { }
-
-    Node *setValue(Value *V) {
-      assert(Val == 0 && "Value already set for this node!");
-      Val = V;
-      return this;
-    }
-
-    /// getValue - Return the LLVM value corresponding to this node.
-    ///
-    Value *getValue() const { return Val; }
-
-    /// addPointerTo - Add a pointer to the list of pointees of this node,
-    /// returning true if this caused a new pointer to be added, or false if
-    /// we already knew about the points-to relation.
-    bool addPointerTo(unsigned Node) {
-      return PointsTo->test_and_set(Node);
-    }
-
-    /// intersects - Return true if the points-to set of this node intersects
-    /// with the points-to set of the specified node.
-    bool intersects(Node *N) const;
-
-    /// intersectsIgnoring - Return true if the points-to set of this node
-    /// intersects with the points-to set of the specified node on any nodes
-    /// except for the specified node to ignore.
-    bool intersectsIgnoring(Node *N, unsigned) const;
-
-    // Timestamp a node (used for work list prioritization)
-    void Stamp() {
-      Timestamp = sys::AtomicIncrement(&Counter);
-      --Timestamp;
-    }
-
-    bool isRep() const {
-      return( (int) NodeRep < 0 );
-    }
-  };
-
-  struct WorkListElement {
-    Node* node;
-    unsigned Timestamp;
-    WorkListElement(Node* n, unsigned t) : node(n), Timestamp(t) {}
-
-    // Note that we reverse the sense of the comparison because we
-    // actually want to give low timestamps the priority over high,
-    // whereas priority is typically interpreted as a greater value is
-    // given high priority.
-    bool operator<(const WorkListElement& that) const {
-      return( this->Timestamp > that.Timestamp );
-    }
-  };
-
-  // Priority-queue based work list specialized for Nodes.
-  class WorkList {
-    std::priority_queue<WorkListElement> Q;
-
-   public:
-    void insert(Node* n) {
-      Q.push( WorkListElement(n, n->Timestamp) );
-    }
-
-    // We automatically discard non-representative nodes and nodes
-    // that were in the work list twice (we keep a copy of the
-    // timestamp in the work list so we can detect this situation by
-    // comparing against the node's current timestamp).
-    Node* pop() {
-      while( !Q.empty() ) {
-        WorkListElement x = Q.top(); Q.pop();
-        Node* INode = x.node;
-
-        if( INode->isRep() &&
-           INode->Timestamp == x.Timestamp ) {
-          return(x.node);
-        }
-      }
-      return(0);
-    }
-
-    bool empty() {
-      return Q.empty();
-    }
-  };
-
-  /// GraphNodes - This vector is populated as part of the object
-  /// identification stage of the analysis, which populates this vector with a
-  /// node for each memory object and fills in the ValueNodes map.
-  std::vector<Node> GraphNodes;
-
-  /// ValueNodes - This map indicates the Node that a particular Value* is
-  /// represented by.  This contains entries for all pointers.
-  DenseMap<Value*, unsigned> ValueNodes;
-
-  /// ObjectNodes - This map contains entries for each memory object in the
-  /// program: globals, alloca's and mallocs.
-  DenseMap<Value*, unsigned> ObjectNodes;
-
-  /// ReturnNodes - This map contains an entry for each function in the
-  /// program that returns a value.
-  DenseMap<Function*, unsigned> ReturnNodes;
-
-  /// VarargNodes - This map contains the entry used to represent all pointers
-  /// passed through the varargs portion of a function call for a particular
-  /// function.  An entry is not present in this map for functions that do not
-  /// take variable arguments.
-  DenseMap<Function*, unsigned> VarargNodes;
-
-
-  /// Constraints - This vector contains a list of all of the constraints
-  /// identified by the program.
-  std::vector<Constraint> Constraints;
-
-  // Map from graph node to maximum K value that is allowed (for functions,
-  // this is equivalent to the number of arguments + CallFirstArgPos)
-  std::map<unsigned, unsigned> MaxK;
-
-  /// This enum defines the GraphNodes indices that correspond to important
-  /// fixed sets.
-  enum {
-    UniversalSet = 0,
-    NullPtr      = 1,
-    NullObject   = 2,
-    NumberSpecialNodes
-  };
-
-  unsigned IntNode;
-  unsigned AggregateNode; // for extractvalue and insertvalue
-  unsigned PthreadSpecificNode;
-  // Stack for Tarjan's
-  std::stack<unsigned> SCCStack;
-  // Map from Graph Node to DFS number
-  std::vector<unsigned> Node2DFS;
-  // Map from Graph Node to Deleted from graph.
-  std::vector<bool> Node2Deleted;
-  // Same as Node Maps, but implemented as std::map because it is faster to
-  // clear
-  std::map<unsigned, unsigned> Tarjan2DFS;
-  std::map<unsigned, bool> Tarjan2Deleted;
-  // Current DFS number
-  unsigned DFSNumber;
-
-  // Work lists.
-  WorkList w1, w2;
-  WorkList *CurrWL, *NextWL; // "current" and "next" work lists
-
-  // Offline variable substitution related things
-
-  // Temporary rep storage, used because we can't collapse SCC's in the
-  // predecessor graph by uniting the variables permanently, we can only do so
-  // for the successor graph.
-  std::vector<unsigned> VSSCCRep;
-  // Mapping from node to whether we have visited it during SCC finding yet.
-  std::vector<bool> Node2Visited;
-  std::vector<bool> Node3Visited;
-  // During variable substitution, we create unknowns to represent the unknown
-  // value that is a dereference of a variable.  These nodes are known as
-  // "ref" nodes (since they represent the value of dereferences).
-  unsigned FirstRefNode;
-  // During HVN, we create represent address taken nodes as if they were
-  // unknown (since HVN, unlike HU, does not evaluate unions).
-  unsigned FirstAdrNode;
-  // Current pointer equivalence class number
-  unsigned PEClass;
-  // Mapping from points-to sets to equivalence classes
-  typedef DenseMap<SparseBitVector<> *, unsigned, BitmapKeyInfo> BitVectorMap;
-  BitVectorMap Set2PEClass;
-  // Mapping from pointer equivalences to the representative node.  -1 if we
-  // have no representative node for this pointer equivalence class yet.
-  std::vector<int> PEClass2Node;
-  // Mapping from pointer equivalences to representative node.  This includes
-  // pointer equivalent but not location equivalent variables. -1 if we have
-  // no representative node for this pointer equivalence class yet.
-  std::vector<int> PENLEClass2Node;
-  // Union/Find for HCD
-  std::vector<unsigned> HCDSCCRep;
-  // HCD's offline-detected cycles; "Statically DeTected"
-  // -1 if not part of such a cycle, otherwise a representative node.
-  std::vector<int> SDT;
-  // Whether to use SDT (UniteNodes can use it during solving, but not before)
-  bool SDTActive;
-
- public:
-  static char ID;
-  Andersens() : ModulePass(ID) {}
-
-  virtual void *getAdjustedAnalysisPointer(AnalysisID PI) {
-    if (PI == &AliasAnalysis::ID)
-      return (AliasAnalysis *)this;
-    return this;
-  }
-
-  static bool isMallocCall(const Value *V) {
-    const CallInst *CI = dyn_cast<CallInst>(V);
-    if (!CI)
-      return false;
-
-    Function *Callee = CI->getCalledFunction();
-    if (Callee == 0 || !Callee->isDeclaration())
-      return false;
-    if (Callee->getName() != "malloc" &&
-        Callee->getName() != "calloc" &&
-        Callee->getName() != "valloc" &&
-        Callee->getName() != "realloc" &&
-        Callee->getName() != "memalign" &&
-        Callee->getName() != "fopen" &&
-        Callee->getName() != "_Znwj" && // operator new(unsigned int)
-        Callee->getName() != "_Znwm" && // operator new(unsigned long)
-        Callee->getName() != "_Znaj" && // operator new[](unsigned int)
-        Callee->getName() != "_Znam")   // operator new[](unsigned long)
-      return false;
-
-    // TODO: check prototype
-    return true;
-  }
-
-  bool runOnModule(Module &M) {
-    InitializeAliasAnalysis(this);
-    IdentifyObjects(M);
-    CollectConstraints(M);
-#undef DEBUG_TYPE
-#define DEBUG_TYPE "anders-aa-constraints"
-    DEBUG(PrintConstraints());
-#undef DEBUG_TYPE
-#define DEBUG_TYPE "anders-aa"
-    SolveConstraints();
-    DEBUG(PrintPointsToGraph());
-
-    // Free the constraints list, as we don't need it to respond to alias
-    // requests.
-    std::vector<Constraint>().swap(Constraints);
-    //These are needed for Print() (-analyze in opt)
-    //ObjectNodes.clear();
-    //ReturnNodes.clear();
-    //VarargNodes.clear();
-    return false;
-  }
-
-  void releaseMemory() {
-    // FIXME: Until we have transitively required passes working correctly,
-    // this cannot be enabled!  Otherwise, using -count-aa with the pass
-    // causes memory to be freed too early. :(
-#if 0
-    // The memory objects and ValueNodes data structures at the only ones that
-    // are still live after construction.
-    std::vector<Node>().swap(GraphNodes);
-    ValueNodes.clear();
-#endif
-  }
-
-  virtual void getAnalysisUsage(AnalysisUsage &AU) const {
-    AliasAnalysis::getAnalysisUsage(AU);
-    AU.setPreservesAll();                         // Does not transform code
-  }
-
-  //------------------------------------------------
-  // Implement the AliasAnalysis API
-  //
-  AliasResult alias(const Location &L1, const Location &L2);
-  virtual ModRefResult getModRefInfo(ImmutableCallSite CS,
-                                     const Location &Loc);
-  virtual ModRefResult getModRefInfo(ImmutableCallSite CS1,
-                                     ImmutableCallSite CS2);
-  void getMustAliases(Value *P, std::vector<Value*> &RetVals);
-  // Do not use it.
-  bool pointsToConstantMemory(const Location &Loc, bool OrLocal = false);
-
-  virtual void deleteValue(Value *V) {
-    ValueNodes.erase(V);
-    getAnalysis<AliasAnalysis>().deleteValue(V);
-  }
-
-  virtual void copyValue(Value *From, Value *To) {
-    ValueNodes[To] = ValueNodes[From];
-    getAnalysis<AliasAnalysis>().copyValue(From, To);
-  }
-
- private:
-  /// getNode - Return the node corresponding to the specified pointer scalar.
-  ///
-  unsigned getNode(Value *V) const {
-    if (Constant *C = dyn_cast<Constant>(V))
-      if (!isa<GlobalValue>(C))
-        return getNodeForConstantPointer(C);
-
-    DenseMap<Value*, unsigned>::const_iterator I = ValueNodes.find(V);
-    if (I == ValueNodes.end()) {
-#ifndef NDEBUG
-      V->dump();
-#endif
-      llvm_unreachable("Value does not have a node in the points-to graph!");
-    }
-    return I->second;
-  }
-
-  /// getObject - Return the node corresponding to the memory object for the
-  /// specified global or allocation instruction.
-  unsigned getObject(Value *V) const {
-    DenseMap<Value*, unsigned>::const_iterator I = ObjectNodes.find(V);
-    assert(I != ObjectNodes.end() &&
-           "Value does not have an object in the points-to graph!");
-    return I->second;
-  }
-
-  /// getReturnNode - Return the node representing the return value for the
-  /// specified function.
-  unsigned getReturnNode(Function *F) const {
-    DenseMap<Function*, unsigned>::const_iterator I = ReturnNodes.find(F);
-    assert(I != ReturnNodes.end() && "Function does not return a value!");
-    return I->second;
-  }
-
-  /// getVarargNode - Return the node representing the variable arguments
-  /// formal for the specified function.
-  unsigned getVarargNode(Function *F) const {
-    DenseMap<Function*, unsigned>::const_iterator I = VarargNodes.find(F);
-    assert(I != VarargNodes.end() && "Function does not take var args!");
-    return I->second;
-  }
-
-  /// getNodeValue - Get the node for the specified LLVM value and set the
-  /// value for it to be the specified value.
-  unsigned getNodeValue(Value &V) {
-    unsigned Index = getNode(&V);
-    GraphNodes[Index].setValue(&V);
-    return Index;
-  }
-
-  unsigned UniteNodes(unsigned First, unsigned Second,
-                      bool UnionByRank = true);
-  unsigned FindNode(unsigned Node);
-  unsigned FindNode(unsigned Node) const;
-
-  void IdentifyObjects(Module &M);
-  void CollectConstraints(Module &M);
-  bool AnalyzeUsesOfFunction(Value *);
-  void CreateConstraintGraph();
-  void OptimizeConstraints();
-  unsigned FindEquivalentNode(unsigned, unsigned);
-  void ClumpAddressTaken();
-  void RewriteConstraints();
-  void HU();
-  void HVN();
-  void HCD();
-  void Search(unsigned Node);
-  void UnitePointerEquivalences();
-  void SolveConstraints();
-  bool QueryNode(unsigned Node);
-  void Condense(unsigned Node);
-  void HUValNum(unsigned Node);
-  void HVNValNum(unsigned Node);
-  unsigned getNodeForConstantPointer(Constant *C) const;
-  unsigned getNodeForConstantPointerTarget(Constant *C);
-  void AddGlobalInitializerConstraints(unsigned, Constant *C);
-
-  void AddConstraintsForNonInternalLinkage(Function *F);
-  void AddConstraintsForCall(CallSite CS, Function *F);
-  bool AddConstraintsForExternalCall(CallSite CS, Function *F);
-  void AddConstraintForStruct(Value *V);
-  void AddConstraintForConstantPointer(Value *V);
-
-
-  void PrintNode(const Node *N) const;
-  void PrintConstraints() const ;
-  void PrintConstraint(const Constraint &) const;
-  void PrintLabels() const;
-  void PrintPointsToGraph() const;
-
-  //===------------------------------------------------------------------===//
-  // Instruction visitation methods for adding constraints
-  //
-  friend class InstVisitor<Andersens>;
-  void visitReturnInst(ReturnInst &RI);
-  void visitInvokeInst(InvokeInst &II) { visitCallSite(CallSite(&II)); }
-  void visitCallInst(CallInst &CI) { visitCallSite(CallSite(&CI)); }
-  void visitCallSite(CallSite CS);
-  void visitAllocaInst(AllocaInst &AI);
-  void visitLoadInst(LoadInst &LI);
-  void visitStoreInst(StoreInst &SI);
-  void visitGetElementPtrInst(GetElementPtrInst &GEP);
-  void visitPHINode(PHINode &PN);
-  void visitCastInst(CastInst &CI);
-  void visitICmpInst(ICmpInst &ICI) {} // NOOP!
-  void visitFCmpInst(FCmpInst &ICI) {} // NOOP!
-  void visitSelectInst(SelectInst &SI);
-  void visitVAArg(VAArgInst &I);
-  void visitIntToPtrInst(IntToPtrInst &I);
-  void visitPtrToIntInst(PtrToIntInst &I);
-  void visitExtractValue(ExtractValueInst &I);
-  void visitInsertValue(InsertValueInst &I);
-  void visitInstruction(Instruction &I);
-
-  //===------------------------------------------------------------------===//
-  // Implement Analyize interface
-  //
-  void print(llvm::raw_ostream &O, const Module* M) const {
-    PrintPointsToGraph();
-  }
-};
-}
 
 char Andersens::ID = 0;
 static RegisterPass<Andersens>
@@ -686,10 +125,9 @@ AliasAnalysis::AliasResult Andersens::alias(const Location &L1,
 
   // Check to see if the two pointers are known to not alias.  They don't alias
   // if their points-to sets do not intersect.
-//  if (!N1->PointsTo->test(UniversalSet) && !N2->PointsTo->test(UniversalSet)) {
-  if (!N1->intersectsIgnoring(N2, NullObject))
+  if (!N1->intersectsIgnoring(N2, NullObject)) {
     return NoAlias;
-//  }
+  }
 
   return AliasAnalysis::alias(L1, L2);
 }
@@ -724,7 +162,7 @@ Andersens::getModRefInfo(ImmutableCallSite CS, const Location &Loc) {
 
 AliasAnalysis::ModRefResult
 Andersens::getModRefInfo(ImmutableCallSite CS1, ImmutableCallSite CS2) {
-  return AliasAnalysis::getModRefInfo(CS1,CS2);
+  return AliasAnalysis::getModRefInfo(CS1, CS2);
 }
 
 /// getMustAlias - We can provide must alias information if we know that a
@@ -846,10 +284,10 @@ void Andersens::IdentifyObjects(Module &M) {
 
     // Add nodes for all of the incoming pointer arguments.
     for (Function::arg_iterator I = F->arg_begin(), E = F->arg_end();
-         I != E; ++I)
-    {
-      if (isa<PointerType>(I->getType()))
+         I != E; ++I) {
+      if (isa<PointerType>(I->getType())) {
         ValueNodes[I] = NumObjects++;
+      }
     }
     DEBUG(errs() << "Function info: " << F->getName() << " ObjectNode: " <<
       ObjectNodes[F] << " ValueNode: " << ValueNodes[F] << "\n");
@@ -894,11 +332,11 @@ void Andersens::IdentifyObjects(Module &M) {
 unsigned Andersens::getNodeForConstantPointer(Constant *C) const {
   assert(isa<PointerType>(C->getType()) && "Not a constant pointer!");
 
-  if (isa<ConstantPointerNull>(C) || isa<UndefValue>(C))
+  if (isa<ConstantPointerNull>(C) || isa<UndefValue>(C)) {
     return NullPtr;
-  else if (GlobalValue *GV = dyn_cast<GlobalValue>(C))
+  } else if (GlobalValue *GV = dyn_cast<GlobalValue>(C)) {
     return getNode(GV);
-  else if (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
+  } else if (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
     switch (CE->getOpcode()) {
       case Instruction::GetElementPtr:
         return getNodeForConstantPointer(CE->getOperand(0));
@@ -923,11 +361,11 @@ unsigned Andersens::getNodeForConstantPointer(Constant *C) const {
 unsigned Andersens::getNodeForConstantPointerTarget(Constant *C) {
   assert(isa<PointerType>(C->getType()) && "Not a constant pointer!");
 
-  if (isa<ConstantPointerNull>(C))
+  if (isa<ConstantPointerNull>(C)) {
     return NullObject;
-  else if (GlobalValue *GV = dyn_cast<GlobalValue>(C))
+  } else if (GlobalValue *GV = dyn_cast<GlobalValue>(C)) {
     return getObject(GV);
-  else if (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
+  } else if (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
     switch (CE->getOpcode()) {
       case Instruction::GetElementPtr:
         return getNodeForConstantPointerTarget(CE->getOperand(0));
@@ -961,12 +399,8 @@ void Andersens::AddGlobalInitializerConstraints(unsigned NodeIndex,
     return;
   } else if (!isa<UndefValue>(C)) {
     // If this is an array or struct, include constraints for each element.
-#if LLVM_VERSION_CODE < LLVM_VERSION(3, 1)
-    assert(isa<ConstantArray>(C) || isa<ConstantStruct>(C));
-#else
     assert(isa<ConstantArray>(C) || isa<ConstantStruct>(C) ||
            isa<ConstantDataSequential>(C));
-#endif
     for (unsigned i = 0, e = C->getNumOperands(); i != e; ++i)
       AddGlobalInitializerConstraints(NodeIndex,
                                       cast<Constant>(C->getOperand(i)));
@@ -1036,12 +470,10 @@ bool Andersens::AddConstraintsForExternalCall(CallSite CS, Function *F) {
   if (F->getName().find("llvm.memcpy") == 0 ||
       F->getName().find("llvm.memmove") == 0 ||
       F->getName().find("memmove") == 0) {
-
     const FunctionType *FTy = F->getFunctionType();
     if (FTy->getNumParams() > 1 &&
         isa<PointerType>(FTy->getParamType(0)) &&
         isa<PointerType>(FTy->getParamType(1))) {
-
       // *Dest = *Src, which requires an artificial graph node to represent the
       // constraint.  It is broken up into *Dest = temp, temp = *Src
       unsigned FirstArg = getNode(CS.getArgument(0));
@@ -1147,9 +579,8 @@ bool Andersens::AddConstraintsForExternalCall(CallSite CS, Function *F) {
   } else if (F->getName() == "pthread_setspecific") {
     const FunctionType *FTy = F->getFunctionType();
     if (FTy->getNumParams() == 2 && isa<PointerType>(FTy->getParamType(1))) {
-      Constraints.push_back(Constraint(Constraint::Copy,
-                                       PthreadSpecificNode,
-                                       getNode(CS.getInstruction()->getOperand(1))));
+      Constraints.push_back(Constraint(Constraint::Copy, PthreadSpecificNode,
+          getNode(CS.getInstruction()->getOperand(1))));
       return true;
     }
   }
@@ -1163,8 +594,9 @@ bool Andersens::AddConstraintsForExternalCall(CallSite CS, Function *F) {
 /// If this is used by anything complex (i.e., the address escapes), return
 /// true.
 bool Andersens::AnalyzeUsesOfFunction(Value *V) {
-
-  if (!isa<PointerType>(V->getType())) return true;
+  if (!isa<PointerType>(V->getType())) {
+    return true;
+  }
 
   for (Value::use_iterator UI = V->use_begin(), E = V->use_end(); UI != E; ++UI)
     if (isa<LoadInst>(*UI)) {
@@ -1340,10 +772,8 @@ void Andersens::visitInstruction(Instruction &I) {
     case Instruction::ExtractValue:
     case Instruction::InsertValue:
     case Instruction::LandingPad:
-#if LLVM_VERSION_CODE >= LLVM_VERSION(3, 1)
     case Instruction::AtomicRMW:
     case Instruction::AtomicCmpXchg:
-#endif
       return;
     default:
       // Is this something we aren't handling yet?
@@ -1368,11 +798,11 @@ void Andersens::visitReturnInst(ReturnInst &RI) {
 }
 
 void Andersens::visitLoadInst(LoadInst &LI) {
-  if (isa<PointerType>(LI.getType()))
+  if (isa<PointerType>(LI.getType())) {
     // P1 = load P2  -->  <Load/P1/P2>
     Constraints.push_back(Constraint(Constraint::Load, getNodeValue(LI),
                                      getNode(LI.getOperand(0))));
-  else if (isa<PointerType>(LI.getOperand(0)->getType()) &&
+  } else if (isa<PointerType>(LI.getOperand(0)->getType()) &&
       isa<IntegerType>(LI.getType())) {
     Constraints.push_back(Constraint(Constraint::Load, IntNode,
                                      getNode(LI.getOperand(0))));
@@ -1383,12 +813,12 @@ void Andersens::visitLoadInst(LoadInst &LI) {
 }
 
 void Andersens::visitStoreInst(StoreInst &SI) {
-  if (isa<PointerType>(SI.getOperand(0)->getType()))
+  if (isa<PointerType>(SI.getOperand(0)->getType())) {
     // store P1, P2  -->  <Store/P2/P1>
     Constraints.push_back(Constraint(Constraint::Store,
-                                     getNode(SI.getOperand(1)),
-                                     getNode(SI.getOperand(0))));
-  else if (ConstantExpr *CE = dyn_cast<ConstantExpr>(SI.getOperand(0))) {
+        getNode(SI.getOperand(1)),
+        getNode(SI.getOperand(0))));
+  } else if (ConstantExpr *CE = dyn_cast<ConstantExpr>(SI.getOperand(0))) {
     if (CE->getOpcode() == Instruction::PtrToInt) {
       Constraints.push_back(Constraint(Constraint::Store,
             getNode(SI.getOperand(1)), getNode(CE->getOperand(0))));
@@ -1397,9 +827,10 @@ void Andersens::visitStoreInst(StoreInst &SI) {
       isa<PointerType>(SI.getOperand(1)->getType())) {
     Constraints.push_back(Constraint(Constraint::Store,
           getNode(SI.getOperand(1)), IntNode));
-  } else if (isa<StructType>(SI.getOperand(0)->getType()))
+  } else if (isa<StructType>(SI.getOperand(0)->getType())) {
     Constraints.push_back(Constraint(Constraint::Store,
           getNode(SI.getOperand(1)), AggregateNode));
+  }
 }
 
 void Andersens::visitGetElementPtrInst(GetElementPtrInst &GEP) {
@@ -1480,7 +911,8 @@ void Andersens::AddConstraintForConstantPointer(Value *V) {
     if (ConstantExpr *CE = dyn_cast<ConstantExpr>(*UI)) {
       if (CE->getOpcode() == Instruction::PtrToInt) {
         DEBUG(errs() << V->getName() << " has been converted to int.\n");
-        Constraints.push_back(Constraint(Constraint::Copy, IntNode, getNode(V)));
+        Constraints.push_back(Constraint(Constraint::Copy,
+              IntNode, getNode(V)));
         break;
       }
     }
@@ -1530,8 +962,6 @@ void Andersens::AddConstraintsForCall(CallSite CS, Function *F) {
                                      getNode(CallValue) + CallReturnPos,
                                      UniversalSet));
 #endif
-
-
   }
 
   CallSite::arg_iterator ArgI = CS.arg_begin(), ArgE = CS.arg_end();
@@ -1539,11 +969,9 @@ void Andersens::AddConstraintsForCall(CallSite CS, Function *F) {
   if (F) {
     // Direct Call
     Function::arg_iterator AI = F->arg_begin(), AE = F->arg_end();
-    for (; AI != AE && ArgI != ArgE; ++AI, ++ArgI)
-    {
+    for (; AI != AE && ArgI != ArgE; ++AI, ++ArgI) {
 #if !FULL_UNIVERSAL
-      if (external && isa<PointerType>((*ArgI)->getType()))
-      {
+      if (external && isa<PointerType>((*ArgI)->getType())) {
         // Add constraint that ArgI can now point to anything due to
         // escaping, as can everything it points to. The second portion of
         // this should be taken care of by universal = *universal
@@ -1574,27 +1002,28 @@ void Andersens::AddConstraintsForCall(CallSite CS, Function *F) {
       }
     }
   } else {
-    //Indirect Call
+    // Indirect Call
     unsigned ArgPos = CallFirstArgPos;
     for (; ArgI != ArgE; ++ArgI) {
       if (isa<PointerType>((*ArgI)->getType())) {
         // Copy the actual argument into the formal argument.
         Constraints.push_back(Constraint(Constraint::Store,
-                                         getNode(CallValue),
-                                         getNode(*ArgI), ArgPos++));
+            getNode(CallValue), getNode(*ArgI), ArgPos++));
       } else {
         Constraints.push_back(Constraint(Constraint::Store,
-                                         getNode (CallValue),
-                                         UniversalSet, ArgPos++));
+            getNode(CallValue), UniversalSet, ArgPos++));
       }
     }
   }
   // Copy all pointers passed through the varargs section to the varargs node.
-  if (F && F->getFunctionType()->isVarArg())
-    for (; ArgI != ArgE; ++ArgI)
-      if (isa<PointerType>((*ArgI)->getType()))
+  if (F && F->getFunctionType()->isVarArg()) {
+    for (; ArgI != ArgE; ++ArgI) {
+      if (isa<PointerType>((*ArgI)->getType())) {
         Constraints.push_back(Constraint(Constraint::Copy, getVarargNode(F),
                                          getNode(*ArgI)));
+      }
+    }
+  }
   // If more arguments are passed in than we track, just drop them on the floor.
 }
 
@@ -1646,10 +1075,10 @@ void Andersens::visitInsertValue(InsertValueInst &I) {
   if (isa<PointerType>(I.getOperand(1)->getType())) {
     Constraints.push_back(Constraint(Constraint::Copy,
           AggregateNode, getNode(I.getOperand(1))));
-  }
-  else if (isa<IntegerType>(I.getOperand(1)->getType()))
+  } else if (isa<IntegerType>(I.getOperand(1)->getType())) {
     Constraints.push_back(Constraint(Constraint::Copy,
           AggregateNode, IntNode));
+  }
 }
 
 //===----------------------------------------------------------------------===//
@@ -1666,7 +1095,8 @@ bool Andersens::Node::intersects(Node *N) const {
 /// intersects with the points-to set of the specified node on any nodes
 /// except for the specified node to ignore.
 bool Andersens::Node::intersectsIgnoring(Node *N, unsigned Ignoring) const {
-  // TODO: If we are only going to call this with the same value for Ignoring,
+  // noone -- TODO: If we are only going to call this with the
+  //     same value for Ignoring,
   // we should move the special values out of the points-to bitmap.
   bool WeHadIt = PointsTo->test(Ignoring);
   bool NHadIt = N->PointsTo->test(Ignoring);
@@ -1881,7 +1311,6 @@ void Andersens::HVN() {
   Node2Deleted.clear();
   Node2Visited.clear();
   errs() << "Finished HVN\n";
-
 }
 
 /// This is the workhorse of HVN value numbering. We combine SCC finding at the
@@ -1893,21 +1322,25 @@ void Andersens::HVNValNum(unsigned NodeIndex) {
   Node2DFS[NodeIndex] = MyDFS;
 
   // First process all our explicit edges
-  if (N->PredEdges)
+  if (N->PredEdges) {
     for (SparseBitVector<>::iterator Iter = N->PredEdges->begin();
          Iter != N->PredEdges->end();
          ++Iter) {
       unsigned j = VSSCCRep[*Iter];
       if (!Node2Deleted[j]) {
-        if (!Node2Visited[j])
+        if (!Node2Visited[j]) {
           HVNValNum(j);
-        if (Node2DFS[NodeIndex] > Node2DFS[j])
+        }
+
+        if (Node2DFS[NodeIndex] > Node2DFS[j]) {
           Node2DFS[NodeIndex] = Node2DFS[j];
+        }
       }
     }
+  }
 
   // Now process all the implicit edges
-  if (N->ImplicitPredEdges)
+  if (N->ImplicitPredEdges) {
     for (SparseBitVector<>::iterator Iter = N->ImplicitPredEdges->begin();
          Iter != N->ImplicitPredEdges->end();
          ++Iter) {
@@ -1919,6 +1352,7 @@ void Andersens::HVNValNum(unsigned NodeIndex) {
           Node2DFS[NodeIndex] = Node2DFS[j];
       }
     }
+  }
 
   // See if we found any cycles
   if (MyDFS == Node2DFS[NodeIndex]) {
@@ -1960,7 +1394,7 @@ void Andersens::HVNValNum(unsigned NodeIndex) {
     SparseBitVector<> *Labels = new SparseBitVector<>;
     bool Used = false;
 
-    if (N->PredEdges)
+    if (N->PredEdges) {
       for (SparseBitVector<>::iterator Iter = N->PredEdges->begin();
            Iter != N->PredEdges->end();
            ++Iter) {
@@ -1975,6 +1409,7 @@ void Andersens::HVNValNum(unsigned NodeIndex) {
           AllSame = false;
         Labels->set(Label);
       }
+    }
 
     // We either have a non-pointer, a copy of an existing node, or a new node.
     // Assign the appropriate pointer equivalence label.
@@ -2101,7 +1536,7 @@ void Andersens::Condense(unsigned NodeIndex) {
   Node2DFS[NodeIndex] = MyDFS;
 
   // First process all our explicit edges
-  if (N->PredEdges)
+  if (N->PredEdges) {
     for (SparseBitVector<>::iterator Iter = N->PredEdges->begin();
          Iter != N->PredEdges->end();
          ++Iter) {
@@ -2113,9 +1548,10 @@ void Andersens::Condense(unsigned NodeIndex) {
           Node2DFS[NodeIndex] = Node2DFS[j];
       }
     }
+  }
 
   // Now process all the implicit edges
-  if (N->ImplicitPredEdges)
+  if (N->ImplicitPredEdges) {
     for (SparseBitVector<>::iterator Iter = N->ImplicitPredEdges->begin();
          Iter != N->ImplicitPredEdges->end();
          ++Iter) {
@@ -2127,6 +1563,7 @@ void Andersens::Condense(unsigned NodeIndex) {
           Node2DFS[NodeIndex] = Node2DFS[j];
       }
     }
+  }
 
   // See if we found any cycles
   if (MyDFS == Node2DFS[NodeIndex]) {
@@ -2160,11 +1597,13 @@ void Andersens::Condense(unsigned NodeIndex) {
     Node2Deleted[NodeIndex] = true;
 
     // Set up number of incoming edges for other nodes
-    if (N->PredEdges)
+    if (N->PredEdges) {
       for (SparseBitVector<>::iterator Iter = N->PredEdges->begin();
            Iter != N->PredEdges->end();
-           ++Iter)
+           ++Iter) {
         ++GraphNodes[VSSCCRep[*Iter]].NumInEdges;
+      }
+    }
   } else {
     SCCStack.push(NodeIndex);
   }
@@ -2185,13 +1624,13 @@ void Andersens::HUValNum(unsigned NodeIndex) {
     unsigned j = VSSCCRep[FindNode(NodeIndex - FirstRefNode)];
     if ((Node3Visited[j] && !GraphNodes[j].PointerEquivLabel)
         || (GraphNodes[j].Direct && !GraphNodes[j].PredEdges
-            && GraphNodes[j].PointsTo->empty())){
+            && GraphNodes[j].PointsTo->empty())) {
       Node3Visited[NodeIndex] = true;
       return;
     }
   }
   // Process all our explicit edges
-  if (N->PredEdges)
+  if (N->PredEdges) {
     for (SparseBitVector<>::iterator Iter = N->PredEdges->begin();
          Iter != N->PredEdges->end();
          ++Iter) {
@@ -2217,6 +1656,7 @@ void Andersens::HUValNum(unsigned NodeIndex) {
         GraphNodes[j].PointsTo = NULL;
       }
     }
+  }
   // If this isn't a direct node, generate a fresh variable.
   if (!N->Direct) {
     N->PointsTo->set(FirstRefNode + NodeIndex);
@@ -2358,15 +1798,17 @@ void Andersens::HCD() {
 
   for (unsigned i = 0, e = Constraints.size(); i != e; ++i) {
     Constraint &C = Constraints[i];
-    assert (C.Src < GraphNodes.size() && C.Dest < GraphNodes.size());
+    assert(C.Src < GraphNodes.size() && C.Dest < GraphNodes.size());
     if (C.Type == Constraint::AddressOf) {
       continue;
     } else if (C.Type == Constraint::Load) {
-      if( C.Offset == 0 )
+      if (C.Offset == 0) {
         GraphNodes[C.Dest].Edges->set(C.Src + FirstRefNode);
+      }
     } else if (C.Type == Constraint::Store) {
-      if( C.Offset == 0 )
+      if (C.Offset == 0) {
         GraphNodes[C.Dest + FirstRefNode].Edges->set(C.Src);
+      }
     } else {
       GraphNodes[C.Dest].Edges->set(C.Src);
     }
@@ -2390,8 +1832,9 @@ void Andersens::HCD() {
       GraphNodes[i].Edges = NULL;
     }
 
-  while( !SCCStack.empty() )
+  while (!SCCStack.empty()) {
     SCCStack.pop();
+  }
 
   Node2DFS.clear();
   Node2Visited.clear();
@@ -2424,7 +1867,7 @@ void Andersens::Search(unsigned Node) {
     }
   }
 
-  if( MyDFS != Node2DFS[Node] ) {
+  if (MyDFS != Node2DFS[Node]) {
     SCCStack.push(Node);
     return;
   }
@@ -2456,11 +1899,13 @@ void Andersens::Search(unsigned Node) {
       SparseBitVector<>::iterator i = SCC.begin();
 
       // Skip over the non-ref nodes
-      while( *i < FirstRefNode )
+      while (*i < FirstRefNode) {
         ++i;
+      }
 
-      while( i != SCC.end() )
-        SDT[ (*i++) - FirstRefNode ] = Rep;
+      while (i != SCC.end()) {
+        SDT[((*i++) - FirstRefNode)] = Rep;
+      }
     }
   }
 }
@@ -2579,7 +2024,7 @@ void Andersens::UnitePointerEquivalences() {
 void Andersens::CreateConstraintGraph() {
   for (unsigned i = 0, e = Constraints.size(); i != e; ++i) {
     Constraint &C = Constraints[i];
-    assert (C.Src < GraphNodes.size() && C.Dest < GraphNodes.size());
+    assert(C.Src < GraphNodes.size() && C.Dest < GraphNodes.size());
     if (C.Type == Constraint::AddressOf)
       GraphNodes[C.Dest].PointsTo->set(C.Src);
     else if (C.Type == Constraint::Load)
@@ -2612,13 +2057,13 @@ bool Andersens::QueryNode(unsigned Node) {
     // If this edge points to a non-representative node but we are
     // already planning to add an edge to its representative, we have no
     // need for this edge anymore.
-    if (RepNode != *bi && NewEdges.test(RepNode)){
+    if (RepNode != *bi && NewEdges.test(RepNode)) {
       ToErase.set(*bi);
       continue;
     }
 
     // Continue about our DFS.
-    if (!Tarjan2Deleted[RepNode]){
+    if (!Tarjan2Deleted[RepNode]) {
       if (Tarjan2DFS[RepNode] == 0) {
         Changed |= QueryNode(RepNode);
         // May have been changed by QueryNode
@@ -2702,7 +2147,7 @@ void Andersens::SolveConstraints() {
   Node2Deleted.insert(Node2Deleted.begin(), GraphNodes.size(), false);
   DFSNumber = 0;
   DenseSet<Constraint, ConstraintKeyInfo> Seen;
-  DenseSet<std::pair<unsigned,unsigned>, PairKeyInfo> EdgesChecked;
+  DenseSet<std::pair<unsigned, unsigned>, PairKeyInfo> EdgesChecked;
 
   // Order graph and add initial nodes to work list.
   for (unsigned i = 0; i < GraphNodes.size(); ++i) {
@@ -2725,7 +2170,7 @@ void Andersens::SolveConstraints() {
   // *to* the special nodes.
   std::vector<unsigned int> RSV;
 #endif
-  while( !CurrWL->empty() ) {
+  while (!CurrWL->empty()) {
     errs() << "Starting iteration #" << ++NumIters << "\n";
 
     Node* CurrNode;
@@ -2750,7 +2195,7 @@ void Andersens::SolveConstraints() {
 
     // Add to work list if it's a representative and can contribute to the
     // calculation right now.
-    while( (CurrNode = CurrWL->pop()) != NULL ) {
+    while ((CurrNode = CurrWL->pop()) != NULL) {
       CurrNodeIndex = CurrNode - &GraphNodes[0];
       CurrNode->Stamp();
 
@@ -2784,7 +2229,7 @@ void Andersens::SolveConstraints() {
             continue;
           }
 #endif
-          Rep = UniteNodes(Rep,Node);
+          Rep = UniteNodes(Rep, Node);
         }
 #if !FULL_UNIVERSAL
         RSV.push_back(Rep);
@@ -2792,8 +2237,9 @@ void Andersens::SolveConstraints() {
 
         NextWL->insert(&GraphNodes[Rep]);
 
-        if ( ! CurrNode->isRep() )
+        if (!CurrNode->isRep()) {
           continue;
+        }
       }
 
       Seen.clear();
@@ -2805,7 +2251,7 @@ void Andersens::SolveConstraints() {
         li->Dest = FindNode(li->Dest);
 
         // Delete redundant constraints
-        if( Seen.count(*li) ) {
+        if (Seen.count(*li)) {
           std::list<Constraint>::iterator lk = li; li++;
 
           CurrNode->Constraints.erase(lk);
@@ -2834,7 +2280,7 @@ void Andersens::SolveConstraints() {
           Src = &li->Src;
           Dest = &CurrMember;
         } else {
-          // TODO Handle offseted copy constraint
+          // noone - TODO Handle offseted copy constraint
           li++;
           continue;
         }
@@ -2842,7 +2288,7 @@ void Andersens::SolveConstraints() {
         // See if we can use Hybrid Cycle Detection (that is, check
         // if it was a statically detected offline equivalence that
         // involves pointers; if so, remove the redundant constraints).
-        if( SCC && K == 0 ) {
+        if (SCC && K == 0) {
 #if FULL_UNIVERSAL
           CurrMember = Rep;
 
@@ -2872,7 +2318,7 @@ void Andersens::SolveConstraints() {
           // constraint). This is because if another special variable is
           // put into the points-to set later, we still need to add the
           // new edge from that special variable.
-          if( lk->Type != Constraint::Load)
+          if (lk->Type != Constraint::Load)
 #endif
             GraphNodes[CurrNodeIndex].Constraints.erase(lk);
         } else {
@@ -2895,7 +2341,8 @@ void Andersens::SolveConstraints() {
                 Function *F = dyn_cast<Function>(V);
                 if (F) {
                   DEBUG(PrintConstraint(*li));
-                  DEBUG(errs() << "For " << CurrMember << ", should look at: " << getNode(F) << ", K = " << K << "\n");
+                  DEBUG(errs() << "For " << CurrMember << ", should look at: "
+                      << getNode(F) << ", K = " << K << "\n");
                   CurrMember = getNode(F);
                   if (K >= CallFirstArgPos) {
                     int NArg = K - CallFirstArgPos;
@@ -2908,8 +2355,10 @@ void Andersens::SolveConstraints() {
                       K++;
                     }
                     Function::arg_iterator AI = F->arg_begin();
-                    for (int i=0; i<NArg; i++, AI++) {
-                      if (!isa<PointerType>(AI->getType())) K--;
+                    for (int i = 0; i < NArg; i++, AI++) {
+                      if (!isa<PointerType>(AI->getType())) {
+                        K--;
+                      }
                     }
                     DEBUG(errs() << "    new K: " << K << "\n");
                   }
@@ -2931,10 +2380,12 @@ void Andersens::SolveConstraints() {
             if (*Dest < NumberSpecialNodes)
               continue;
 #endif
-            if (GraphNodes[*Src].Edges->test_and_set(*Dest))
-              if ((GraphNodes[*Dest].PointsTo |= *(GraphNodes[*Src].PointsTo)))
+            if (GraphNodes[*Src].Edges->test_and_set(*Dest)) {
+              if ((GraphNodes[*Dest].PointsTo
+                    |= *(GraphNodes[*Src].PointsTo))) {
                 NextWL->insert(&GraphNodes[*Dest]);
-
+              }
+            }
           }
           li++;
         }
@@ -2947,7 +2398,6 @@ void Andersens::SolveConstraints() {
       for (SparseBitVector<>::iterator bi = CurrNode->Edges->begin();
            bi != CurrNode->Edges->end();
            ++bi) {
-
         unsigned DestVar = *bi;
         unsigned Rep = FindNode(DestVar);
 
@@ -2959,7 +2409,7 @@ void Andersens::SolveConstraints() {
           continue;
         }
 
-        std::pair<unsigned,unsigned> edge(CurrNodeIndex,Rep);
+        std::pair<unsigned, unsigned> edge(CurrNodeIndex, Rep);
 
         // This is where we do lazy cycle detection.
         // If this is a cycle candidate (equal points-to sets and this
@@ -2972,7 +2422,7 @@ void Andersens::SolveConstraints() {
         }
         // Union the points-to sets into the dest
 #if !FULL_UNIVERSAL
-        if (Rep >= NumberSpecialNodes)
+        if (Rep >= NumberSpecialNodes)  // NOLINT
 #endif
           if ((GraphNodes[Rep].PointsTo |= CurrPointsTo)) {
             NextWL->insert(&GraphNodes[Rep]);
@@ -3011,20 +2461,20 @@ void Andersens::SolveConstraints() {
 // representative node.  First and Second are indexes into GraphNodes
 unsigned Andersens::UniteNodes(unsigned First, unsigned Second,
                                bool UnionByRank) {
-  assert (First < GraphNodes.size() && Second < GraphNodes.size() &&
+  assert(First < GraphNodes.size() && Second < GraphNodes.size() &&
           "Attempting to merge nodes that don't exist");
 
   Node *FirstNode = &GraphNodes[First];
   Node *SecondNode = &GraphNodes[Second];
 
-  assert (SecondNode->isRep() && FirstNode->isRep() &&
+  assert(SecondNode->isRep() && FirstNode->isRep() &&
           "Trying to unite two non-representative nodes!");
   if (First == Second)
     return First;
 
   if (UnionByRank) {
-    int RankFirst  = (int) FirstNode ->NodeRep;
-    int RankSecond = (int) SecondNode->NodeRep;
+    int RankFirst  = static_cast<int>(FirstNode->NodeRep);
+    int RankSecond = static_cast<int>(SecondNode->NodeRep);
 
     // Rank starts at -1 and gets decremented as it increases.
     // Translation: higher rank, lower NodeRep value, which is always negative.
@@ -3067,15 +2517,16 @@ unsigned Andersens::UniteNodes(unsigned First, unsigned Second,
   DEBUG(PrintNode(SecondNode));
   DEBUG(errs() << "\n");
 
-  if (SDTActive)
+  if (SDTActive) {
     if (SDT[Second] >= 0) {
-      if (SDT[First] < 0)
+      if (SDT[First] < 0) {
         SDT[First] = SDT[Second];
-      else {
-        UniteNodes( FindNode(SDT[First]), FindNode(SDT[Second]) );
+      } else {
+        UniteNodes(FindNode(SDT[First]), FindNode(SDT[Second]));
         First = FindNode(First);
       }
     }
+  }
 
   return First;
 }
@@ -3083,7 +2534,7 @@ unsigned Andersens::UniteNodes(unsigned First, unsigned Second,
 // Find the index into GraphNodes of the node representing Node, performing
 // path compression along the way
 unsigned Andersens::FindNode(unsigned NodeIndex) {
-  assert (NodeIndex < GraphNodes.size()
+  assert(NodeIndex < GraphNodes.size()
           && "Attempting to find a node that can't exist");
   Node *N = &GraphNodes[NodeIndex];
   if (N->isRep())
@@ -3095,7 +2546,7 @@ unsigned Andersens::FindNode(unsigned NodeIndex) {
 // Find the index into GraphNodes of the node representing Node,
 // don't perform path compression along the way (for Print)
 unsigned Andersens::FindNode(unsigned NodeIndex) const {
-  assert (NodeIndex < GraphNodes.size()
+  assert(NodeIndex < GraphNodes.size()
           && "Attempting to find a node that can't exist");
   const Node *N = &GraphNodes[NodeIndex];
   if (N->isRep())
@@ -3136,16 +2587,22 @@ void Andersens::PrintNode(const Node *N) const {
   assert(N->getValue() != 0 && "Never set node label!");
 
   Value *V = N->getValue();
-  if (ObjectNodes.find(V) != ObjectNodes.end() && N == &GraphNodes[getObject(V)])
+  if (ObjectNodes.find(V) != ObjectNodes.end() &&
+      N == &GraphNodes[getObject(V)]) {
     errs() << "O" << getObject(N->getValue()) << " ";
-  else if (Function *F = dyn_cast<Function>(V)) {
-    if (isa<PointerType>(F->getFunctionType()->getReturnType()) && N == &GraphNodes[getReturnNode(F)]) {
+  } else if (Function *F = dyn_cast<Function>(V)) {
+    if (isa<PointerType>(F->getFunctionType()->getReturnType()) &&
+        N == &GraphNodes[getReturnNode(F)]) {
       errs() << "R" << getReturnNode(F) << " ";
-    } else if (F->getFunctionType()->isVarArg() && N == &GraphNodes[getVarargNode(F)]) {
+    } else if (F->getFunctionType()->isVarArg() &&
+        N == &GraphNodes[getVarargNode(F)]) {
       errs() << "V" << getVarargNode(F) << " ";
-    } else errs() << "F" << getNode(V) << " ";
-  } else
+    } else {
+      errs() << "F" << getNode(V) << " ";
+    }
+  } else {
     errs() << "V" << getNode(V) << " ";
+  }
 
   if (Function *F = dyn_cast<Function>(V)) {
     if (isa<PointerType>(F->getFunctionType()->getReturnType()) &&
@@ -3188,14 +2645,17 @@ void Andersens::PrintConstraint(const Constraint &C) const {
     errs() << "*";
     if (C.Offset != 0)
       errs() << "(";
-  }
-  else if (C.Type == Constraint::AddressOf)
+  } else if (C.Type == Constraint::AddressOf) {
     errs() << "&";
+  }
+
   PrintNode(&GraphNodes[C.Src]);
-  if (C.Offset != 0 && C.Type != Constraint::Store)
+  if (C.Offset != 0 && C.Type != Constraint::Store) {
     errs() << " + " << C.Offset;
-  if (C.Type == Constraint::Load && C.Offset != 0)
+  }
+  if (C.Type == Constraint::Load && C.Offset != 0) {
     errs() << ")";
+  }
   errs() << "\n";
 }
 

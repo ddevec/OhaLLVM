@@ -117,11 +117,25 @@ class DUG {
 
     void associateNode(ObjID node, const llvm::Value *val);
 
-    // ddevec - FIXME: this is sloppy, should clean up
-    const llvm::Value *getValue(ObjID node) const {
-      return nodes_[node.val()].value();
+    // Use/def tracking {{{
+    void addUse(ObjID id) {
+      uses_.push_back(id);
     }
 
+    void addDef(ObjID id) {
+      defs_.push_back(id);
+    }
+
+    const std::vector<ObjID> &uses() const {
+      return uses_;
+    }
+
+    const std::vector<ObjID> &defs() const {
+      return defs_;
+    }
+    //}}}
+
+    // PE (Pointer Equivalence class) ids {{{
     void setupPE(const std::map<ObjID, PEid> &mapping) {
       objToPE_.clear();
       objToPE_.insert(std::begin(mapping), std::end(mapping));
@@ -136,6 +150,7 @@ class DUG {
 
       return ret;
     }
+    //}}}
 
     // Iterator helper {{{
     // Iterates an iter itype, returning a std::pair<ObjID(id), outp>
@@ -271,6 +286,9 @@ class DUG {
     std::map<ObjID, PEid> objToPE_;
 
     std::vector<std::pair<const llvm::Value *, ObjID>> indirectCalls_;
+
+    std::vector<ObjID> defs_;
+    std::vector<ObjID> uses_;
   //}}}
 };
 

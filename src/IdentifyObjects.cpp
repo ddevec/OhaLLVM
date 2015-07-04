@@ -363,7 +363,7 @@ namespace {
     auto &called_val = *CS.getCalledValue();
 
     if (isa<InlineAsm>(&called_val)) {
-      dbgs() << "Ignoring inline asm!\n";
+      errs() << "Ignoring inline asm!\n";
       return;
     }
 
@@ -554,11 +554,13 @@ namespace {
     if (isa<PointerType>(ld.getType())) {
       graph.add(Constraint::Type::Load, getValueUpdate(graph, omap, &ld),
           omap.getValue(ld.getOperand(0)));
+      // Add this to the uses
+      graph.addUse(omap.getValue(&ld));
     } else if (isa<PointerType>(ld.getOperand(0)->getType()) &&
         isa<IntegerType>(ld.getType())) {
-      dbgs() << "FIXME: Unhandled load info!\n";
+      errs() << "FIXME: Unhandled load info!\n";
     } else if (isa<StructType>(ld.getType())) {
-      dbgs() << "FIXME: Unhandled struct load!\n";
+      errs() << "FIXME: Unhandled struct load!\n";
     }
   }
 
@@ -570,20 +572,25 @@ namespace {
       // Store from ptr
       graph.add(Constraint::Type::Store, omap.getValue(st.getOperand(1)),
           omap.getValue(st.getOperand(0)));
+      graph.addDef(omap.getValue(st.getOperand(1)));
     } else if (ConstantExpr *ce = dyn_cast<ConstantExpr>(st.getOperand(0))) {
       // If we just cast a ptr to an int then stored it.. we can keep info on it
       if (ce->getOpcode() == Instruction::PtrToInt) {
         graph.add(Constraint::Type::Store, omap.getValue(st.getOperand(1)),
             omap.getValue(ce->getOperand(0)));
+        graph.addDef(omap.getValue(st.getOperand(1)));
+      // Uhh, dunno what to do now
+      } else {
+        errs() << "FIXME: Unhandled constexpr case!\n";
       }
-    // Ignore int values?
+    // put int value into the int pool
     } else if (isa<IntegerType>(st.getOperand(0)->getType()) &&
         isa<PointerType>(st.getOperand(1)->getType())) {
       graph.add(Constraint::Type::Store, omap.getValue(st.getOperand(1)),
           ObjectMap::IntValue);
     // Poop... structs
     } else if (isa<StructType>(st.getOperand(0)->getType())) {
-      dbgs() << "FIXME: Ignoring struct store\n";
+      errs() << "FIXME: Ignoring struct store\n";
       /*
       graph.add(Constraint::Type::Store, omap.getValue(st.getOperand(1)),
           ObjectMap::AgregateNode);
@@ -653,7 +660,7 @@ namespace {
           omap.getValue(select.getOperand(2)));
 
     } else if (isa<StructType>(select.getType())) {
-      dbgs() << "Warning, unsupported select on struct!\n";
+      errs() << "Warning, unsupported select on struct!\n";
     }
   }
 

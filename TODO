@@ -37,6 +37,9 @@ Read in values:
     our analysis
   Read nodes into SEG -- Sparse Evaluation Graph
 
+  Create defs for stores, uses for loads
+  Create spaces for indirect calls
+
 Optimize 1:
   Run HU/HRU/HCD on nodes like Andersens does, to help minimize graph size
 
