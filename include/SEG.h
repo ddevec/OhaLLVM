@@ -26,7 +26,7 @@
 // mappings, so its templated to be generic for that (for example with
 // ObjID->ObjID in 1:1 mapping, or PEid->ObjID)
 struct NodeEmpty { };
-template <typename idType, typename objToID, typename node_data = NodeEmpty>
+template <typename idType, typename node_data>
 class SEG {
   //{{{
  public:
@@ -43,7 +43,7 @@ class SEG {
         Node(Node &&) = default;
 
         Node &operator=(const Node &) = delete;
-        Node &operator=(Node &&) = delete;
+        Node &operator=(Node &&) = default;
         //}}}
 
         // Equality stuff {{{
@@ -54,9 +54,14 @@ class SEG {
         bool operator<(const Node &n) {
           return nodenum_ < n.nodenum_;
         }
+
+        friend bool operator<(const std::reference_wrapper<Node> n1, const
+            std::reference_wrapper<Node> n2) {
+          return n1.get() < n2.get();
+        }
         //}}}
 
-        // accessors {{{
+        // Accessors {{{
         std::set<std::reference_wrapper<Node>> &preds() {
           return preds_;
         }
@@ -88,6 +93,16 @@ class SEG {
         const std::set<DUG::ObjID> &objIds() const {
           return objIds_;
         }
+        //}}}
+
+        // Modifiers
+        void addSucc(Node &n) {
+          succs_.insert(n);
+        }
+
+        void addPred(Node &n) {
+          preds_.insert(n);
+        }
 
         void addObj(DUG::ObjID id) {
           objIds_.insert(id);
@@ -96,9 +111,12 @@ class SEG {
 
      private:
         // For dfs traversal
-        friend class SEG<idType, objToID, node_data>;
+        friend class SEG<idType, node_data>;
 
         // Private data {{{
+        // Used to determine the node's unique id
+        int nodenum_;
+
         // We hold references to our pred and successor nodes
         std::set<std::reference_wrapper<Node>> preds_;
         std::set<std::reference_wrapper<Node>> succs_;
@@ -118,18 +136,16 @@ class SEG {
         int32_t dfsNumPred_ = std::numeric_limits<int32_t>::max();
         int32_t dfsNumSucc_ = std::numeric_limits<int32_t>::max();
 
-        // Used to determine the node's unique id
-        int nodenum_;
         //}}}
 
         // Private helpers {{{
-        template<typename visit_fcn>
-        void visit(visit_fcn &fcn, bool do_dfs, int32_t dfs_num);
+        void calcDFS(bool dfs_succ, int32_t dfs,
+            std::set<std::reference_wrapper<Node>> &visited);
         //}}}
       //}}}
     };
 
-    // Constructor
+    // Constructor {{{
     // Inputs:
     //    id_begin, id_end -- start/end iterators for a range of ids to add
     //    converter -- Function to convert from the input id type to DUG::ObjIDs
@@ -143,16 +159,18 @@ class SEG {
     //          Node &src
     //          Node &dest
     //          const Constraint &con
-    template<typename initializer, typename adder>
+    template<typename objToID, typename initializer, typename adder>
     SEG(objToID &converter, const DUG &graph, initializer &init_fcn,
         adder &add_node);
+    //}}}
 
     // Iterators {{{
-    typedef std::vector<Node>::iterator node_iterator;
-    typedef std::vector<Node>::const_iterator const_node_iterator;
+    typedef typename std::map<idType, Node>::iterator node_iterator;
+    typedef typename std::map<idType, Node>::const_iterator const_node_iterator;
 
-    typedef std::vector<std::reference_wrapper<Node>>::iterator dfs_iterator;
-    typedef std::vector<std::reference_wrapper<Node>>::const_iterator
+    typedef typename std::vector<std::reference_wrapper<Node>>::iterator
+      dfs_iterator;
+    typedef typename std::vector<std::reference_wrapper<Node>>::const_iterator
       const_dfs_iterator;
 
     node_iterator begin() {
@@ -180,104 +198,91 @@ class SEG {
     }
 
     dfs_iterator dfs_succ_begin() {
-      if (!haveDFSSucc) {
+      if (!haveDFSSucc_) {
         fillDFSSucc();
       }
       return std::begin(dfsSucc_);
     }
 
     dfs_iterator dfs_succ_end() {
-      if (!haveDFSSucc) {
+      if (!haveDFSSucc_) {
         fillDFSSucc();
       }
+      assert(haveDFSSucc_);
       return std::end(dfsSucc_);
     }
 
     const_dfs_iterator dfs_succ_begin() const {
-      if (!haveDFSSucc) {
-        fillDFSSucc();
-      }
+      assert(haveDFSSucc_);
       return std::begin(dfsSucc_);
     }
 
     const_dfs_iterator dfs_succ_end() const {
-      if (!haveDFSSucc) {
-        fillDFSSucc();
-      }
+      assert(haveDFSSucc_);
       return std::end(dfsSucc_);
     }
 
     const_dfs_iterator dfs_succ_cbegin() const {
-      if (!haveDFSSucc) {
-        fillDFSSucc();
-      }
+      assert(haveDFSSucc_);
       return dfsSucc_.cbegin();
     }
 
     const_dfs_iterator dfs_succ_cend() const {
-      if (!haveDFSSucc) {
+      if (!haveDFSSucc_) {
         fillDFSSucc();
       }
       return dfsSucc_.cend();
     }
 
     dfs_iterator dfs_pred_begin() {
-      if (!haveDFSPred) {
+      if (!haveDFSPred_) {
         fillDFSPred();
       }
       return std::begin(dfsPred_);
     }
 
     dfs_iterator dfs_pred_end() {
-      if (!haveDFSPred) {
+      if (!haveDFSPred_) {
         fillDFSPred();
       }
       return std::end(dfsPred_);
     }
 
     const_dfs_iterator dfs_pred_begin() const {
-      if (!haveDFSPred) {
-        fillDFSPred();
-      }
+      assert(haveDFSPred_);
       return std::begin(dfsPred_);
     }
 
     const_dfs_iterator dfs_pred_end() const {
-      if (!haveDFSPred) {
-        fillDFSpred();
-      }
+      assert(haveDFSPred_);
       return std::end(dfsPred_);
     }
 
     const_dfs_iterator dfs_pred_cbegin() const {
-      if (!haveDFSPred) {
-        fillDFSPred();
-      }
+      assert(haveDFSPred_);
       return dfsPred_.cbegin();
     }
 
     const_dfs_iterator dfs_pred_cend() const {
-      if (!haveDFSPred) {
-        fillDFSpred();
-      }
+      assert(haveDFSPred_);
       return dfsPred_.cend();
     }
     //}}}
 
     // Accessors {{{
     Node &getNode(idType id) {
-      return nodes[id];
+      return nodes_[id];
     }
 
     const Node &getNode(idType id) const {
-      return nodes[id];
+      return nodes_[id];
     }
 
-    Node &getNode(DUG::ObjID id) {
+    Node &getNodeObj(DUG::ObjID id) {
       return objToNode_[id];
     }
 
-    const Node &getNode(DUG::ObjID id) const {
+    const Node &getNodeObj(DUG::ObjID id) const {
       return objToNode_[id];
     }
     //}}}
@@ -301,36 +306,36 @@ class SEG {
     void fillDFSPred();
     void fillDFSSucc();
 
+    void addObjMapping(DUG::ObjID src_obj, Node &nd);
+
     template<typename initializer>
-    void getOrCreateNode(typeID id, initializer &init);
+    Node &getOrCreateNode(idType id, initializer &init);
     //}}}
   //}}}
 };
 
 // Impl helpers {{{
-template <typename typeID, typename o, typename n>
-void addObjMapping(
-    std::map<DUG::ObjID, std::reference_wrapper<SEG<typeID, o, n>::Node>> &mp,
-    DUG::ObjID src_obj,
-    SEG::<typeId, o, n>::Node &nd) {
+template <typename idType, typename node_data>
+void SEG<idType, node_data>::addObjMapping(DUG::ObjID src_obj, Node &nd) {
   // This obj key shouldn't be in the mapping, or it should map to this node
-  assert((auto it = mp.find(src_obj) == std::end(mp)) || it->second == nd);
-  mp.insert(std::make_pair(obj, nd));
-  nd.addObj(obj);
+  objToNode_.emplace(src_obj, nd);
+  nd.addObj(src_obj);
 }
 //}}}
 
 // SEG Impl {{{
 // Node impl {{{
 // Constructor {{{
-Node(uint32_t nodenum, idType id) :
+
+template <typename idType, typename node_data>
+SEG<idType, node_data>::Node::Node(uint32_t nodenum, idType id) :
   nodenum_(nodenum), id_(id) { }
 //}}}
 
 // Visit helper {{{
-template <typename idType, typename objToID, typename node_data>
-void SEG<idType, objToID, node_data>::Node::calcDFS(bool dfs_succ,
-    int32_t dfs, std::set(std::reference_wrapper<Node>> &visited) {
+template <typename idType, typename node_data>
+void SEG<idType, node_data>::Node::calcDFS(bool dfs_succ,
+    int32_t dfs, std::set<std::reference_wrapper<Node>> &visited) {
   // Also do dfs bookkeeping while we're at it
   auto &dfsNum = dfs_succ ? dfsNumSucc_ : dfsNumPred_;
 
@@ -340,12 +345,12 @@ void SEG<idType, objToID, node_data>::Node::calcDFS(bool dfs_succ,
 
     visited.insert(*this);
 
-    auto &next = dfs_succ ? succ() : preds();
+    auto &next = dfs_succ ? succs() : preds();
 
-    for (auto node : next) {
+    for (Node &node : next) {
       // Only visit a node we haven't already visited
       if (visited.count(node) == 0) {
-        node.calcDFS(succ, dfs+1, visited);
+        node.calcDFS(dfs_succ, dfs+1, visited);
       }
     }
   }
@@ -354,25 +359,27 @@ void SEG<idType, objToID, node_data>::Node::calcDFS(bool dfs_succ,
 //}}}
 
 // Constructor {{{
-template <typename idType, typename objToID, typename node_data>
-template<typename initializer, typename adder>
-SEG<idType, objToID, node_data>::SEG(objToID &converter,
+template <typename idType, typename node_data>
+template<typename objToID, typename initializer, typename adder>
+SEG<idType, node_data>::SEG(objToID &converter,
     const DUG &graph, initializer &init_fcn, adder &add_node) {
   // Okay, we visit each node, and call the initializer on it...
   // We also populate our graphs...
-  std::for_each(graph.constraints_cbegin(), graph.constraints_cend(),
-      [this, &converter, &graph, &init_fcn](const Constraint &con) {
-    // Okay
+  std::for_each(graph.constraint_cbegin(), graph.constraint_cend(),
+      [this, &converter, &graph, &init_fcn, &add_node]
+      (const Constraint &con) {
+    // Set up our mapping to this node, initializing it if needed, then add it
+    //     to the graph
     DUG::ObjID src_obj = con.src();
     DUG::ObjID dest_obj = con.dest();
-    idType src_id = converter(src);
-    idType dst_id = converter(src);
+    idType src_id = converter(src_obj);
+    idType dest_id = converter(dest_obj);
 
-    Node &src = getOrCreateNode(id, initializer);
-    Node &dest = getOrCreateNode(id, initializer);
+    Node &src = getOrCreateNode(src_id, init_fcn);
+    Node &dest = getOrCreateNode(dest_id, init_fcn);
 
-    addObjMapping(objToNode_, src_obj, src);
-    addObjMapping(objToNode_, dest_obj, dest);
+    addObjMapping(src_obj, src);
+    addObjMapping(dest_obj, dest);
 
     add_node(con, src, dest);
   });
@@ -380,10 +387,10 @@ SEG<idType, objToID, node_data>::SEG(objToID &converter,
 //}}}
 
 // Private helpers {{{
-template <typename idType, typename objToID, typename node_data>
+template <typename idType, typename node_data>
 template <typename initializer>
-SEG<idType, objToID, node_data>::Node &
-SEG<idType, objToID, node_data>::getOrCreateNode(idType id, initializer &init) {
+typename SEG<idType, node_data>::Node &
+SEG<idType, node_data>::getOrCreateNode(idType id, initializer &init) {
   auto it = nodes_.find(id);
 
   if (it == std::end(nodes_)) {
@@ -398,17 +405,21 @@ SEG<idType, objToID, node_data>::getOrCreateNode(idType id, initializer &init) {
 }
 
 // Visit functions {{{
-template <typename idType, typename objToID, typename node_data>
-void SEG<idType, objToID, node_data>::fillDFSSucc() {
+template <typename idType, typename node_data>
+void SEG<idType, node_data>::fillDFSSucc() {
   // Okay, visit each node w/ dfs info
   std::for_each(begin(), end(),
-      [] (Node &n) {
+      [] (std::pair<const DUG::ObjID, Node> &pr) {
     std::set<std::reference_wrapper<Node>> visited;
-    n.calcDFS(true, 0, visited);
+    Node &node = pr.second;
+    node.calcDFS(true, 0, visited);
   });
 
   // Fill out our dfs traversal list, based on the node numbers
-  dfsSucc_.insert(begin(), end());
+  // dfsSucc_.insert(begin(), end());
+  for (auto &pair : *this) {
+    dfsSucc_.push_back(pair.second);
+  }
   std::sort(std::begin(dfsSucc_), std::end(dfsSucc_),
     [] (const Node &n1, const Node &n2) {
       n1.dfsNumSucc_ < n2.dfsNumSucc_;
@@ -416,20 +427,25 @@ void SEG<idType, objToID, node_data>::fillDFSSucc() {
   haveDFSSucc_ = true;
 }
 
-template <typename idType, typename objToID, typename node_data>
-void SEG<idType, objToID, node_data>::fillDFSPred() {
+template <typename idType, typename node_data>
+void SEG<idType, node_data>::fillDFSPred() {
   // Okay, visit each node w/ dfs info
   std::for_each(begin(), end(),
-      [] (Node &n) {
+      [] (std::pair<const DUG::ObjID, Node> &pr) {
     std::set<std::reference_wrapper<Node>> visited;
-    n.calcDFS(false, 0, visited);
+    Node &node = pr.second;
+    node.calcDFS(false, 0, visited);
   });
 
   // Fill out our dfs traversal list, based on the node numbers
-  dfsPred_.insert(begin(), end());
+  // dfsPred_.insert(begin(), end());
+  for (auto &pair : *this) {
+    dfsPred_.push_back(pair.second);
+  }
+
   std::sort(std::begin(dfsPred_), std::end(dfsPred_),
-    [] (const Node &n1, const Node &n2) {
-      n1.dfsNumPred_ < n2.dfsNumPred_;
+    [] (const Node &n1, const Node &n2) -> bool {
+      return n1.dfsNumPred_ < n2.dfsNumPred_;
     });
   haveDFSPred_ = true;
 }
