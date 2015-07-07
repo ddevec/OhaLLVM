@@ -2,6 +2,9 @@
  * Copyright (C) 2015 David Devecsery
  */
 
+// Turn debugging on/off for this file
+// #define SPECSFS_DEBUG
+
 #include <cassert>
 #include <cstdint>
 
@@ -12,8 +15,10 @@
 #include <utility>
 #include <vector>
 
+#include "include/Debug.h"
+
 #include "include/SpecSFS.h"
-#include "include/id.h"
+#include "include/util.h"
 
 #include "llvm/ADT/SparseBitVector.h"
 
@@ -61,13 +66,8 @@ static std::string idToString(idT id) {
 // Okay, we're going to need a graph of some kind...
 // Helper Functions {{{
 static DUG::PEid getNextPE() {
-  static int32_t nextPENum = 0;
-  return DUG::PEid(nextPENum++);
-}
-
-static int32_t getNextHuNodeNum() {
-  static int32_t nextHuNodeNum = 0;
-  return nextHuNodeNum++;
+  static UniqueIdentifier<int32_t> PENum;
+  return DUG::PEid(PENum.next());
 }
 
 static int getIdx(DUG::ObjID id) {
@@ -80,11 +80,14 @@ static int getIdx(DUG::ObjID id) {
 class HUNode {
   //{{{
  public:
-    static const int32_t DfsNumInvalid = std::numeric_limits<int32_t>::max();
+    static const int32_t DfsNumInvalid = std::numeric_limits<int32_t>::min();
     static const int32_t RepNumInvalid = -1;
 
+    static UniqueIdentifier<int32_t> HUNum;
+
+
     // Constructor
-    HUNode() : nodenum_(getNextHuNodeNum()) { }
+    HUNode() : nodenum_(HUNum.next()) { }
 
     // No move/copy {{{
     HUNode(HUNode &&) = delete;
@@ -151,6 +154,10 @@ class HUNode {
       visitHU(0);
     }
 
+    int32_t dfs() {
+      return dfsNum_;
+    }
+
     void unite(HUNode &node) {
       assert(ptsto_ == node.ptsto_);
       assert(&node != this);
@@ -198,8 +205,8 @@ class HUNode {
     // Acutal HU visit impl
     void visitHU(int32_t dfs) {
       // If we haven't actually been visited, do the visit
-      if (dfsNum_ > dfs) {
-        dbgs() << "Visiting " << idToString(obj_) << "\n";
+      if (dfsNum_ < dfs) {
+        dout << "Visiting " << idToString(obj_) << "\n";
         dfsNum_ = dfs;
 
         // Union our past ptsto sets
@@ -225,6 +232,7 @@ class HUNode {
     //}}}
   //}}}
 };
+UniqueIdentifier<int32_t> HUNode::HUNum;
 
 // Helpers requiring HUNodes {{{
 static HUNode &getNode(DUG::ObjID id, NodeMapping &nodes) {
@@ -239,11 +247,6 @@ static void createGraph(const Constraint &con,
   src.setObj(con.src());
   dest.setObj(con.dest());
 
-  /*
-  dbgs() << "createGraph src: " << idToString(con.src()) << "\n";
-  dbgs() << "createGraph dest: " << idToString(con.src()) << "\n";
-  */
-
   switch (con.type()) {
     case Constraint::Type::Store:
       // I think we just ignore stores
@@ -251,17 +254,17 @@ static void createGraph(const Constraint &con,
     case Constraint::Type::Load:
       // Add its own indirect ptsto
       if (con.offs() == 0) {
-        dbgs() << "Adding edge: " << idToString(con.src()) << " -> " <<
+        dout << "Adding edge: " << idToString(con.src()) << " -> " <<
           idToString(con.dest()) << "\n";
         dest.addPred(src);
       } else {
-        dbgs() << "Seting: " << idToString(con.src()) << " to indirect\n";
+        dout << "Seting: " << idToString(con.src()) << " to indirect\n";
         dest.setIndirect();
       }
       break;
     case Constraint::Type::AddressOf:
-      dbgs() << "Seting: " << idToString(con.dest()) << "to indirect\n";
-      dbgs() << "Adding ptsto: " << idToString(con.src()) << " to ptsto of: "
+      dout << "Seting: " << idToString(con.dest()) << "to indirect\n";
+      dout << "Adding ptsto: " << idToString(con.src()) << " to ptsto of: "
         << idToString(con.dest()) << "\n";
       dest.setIndirect();
       dest.addPtsTo(con.src());
@@ -270,7 +273,7 @@ static void createGraph(const Constraint &con,
       }
       break;
     case Constraint::Type::Copy:
-      dbgs() << "Adding edge: " << idToString(con.src()) << " -> " <<
+      dout << "Adding edge: " << idToString(con.src()) << " -> " <<
         idToString(con.dest()) << "\n";
       dest.addPred(src);
       break;
@@ -307,27 +310,36 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
     createGraph(con, nodes, omap);
   });
 
-  for (auto &pair : nodes) {
-    dbgs() << "initial ptsto for node " << idToString(pair.second.obj()) <<
-      " is:";
-    for (auto int_id : pair.second.ptsto()) {
-      dbgs() << " " << idToString(DUG::ObjID(int_id));
+  if_debug(
+    for (auto &pair : nodes) {
+      dout << "initial ptsto for node " << idToString(pair.second.obj()) <<
+        " is:";
+      for (auto int_id : pair.second.ptsto()) {
+        dout << " " << idToString(DUG::ObjID(int_id));
+      }
+      dout << "\n";
     }
-    dbgs() << "\n";
-  }
+  )
 
   // Okay, now that we made the graph, do a dfs visit
   for (auto &pair : nodes) {
     pair.second.visitHU();
   }
 
+  if_debug(
   for (auto &pair : nodes) {
-    dbgs() << "ptsto after HU for node " << idToString(pair.second.obj()) <<
+    dout << "ptsto after HU for node " << idToString(pair.second.obj()) <<
       "is:";
     for (auto int_id : pair.second.ptsto()) {
-      dbgs() << " " << idToString(DUG::ObjID(int_id));
+      dout << " " << idToString(DUG::ObjID(int_id));
     }
-    dbgs() << "\n";
+    dout << "\n";
+  }
+  )
+
+  for (auto &pair : nodes) {
+    dbgs() << "dfs after HU for node " << idToString(pair.second.obj()) <<
+      "is: " << pair.second.dfs() << "\n";
   }
 
   auto bitmap_lt = [](const Bitmap &b1, const Bitmap &b2) {
@@ -368,14 +380,14 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
     DUG::PEid pe;
     if (node.indirect()) {
       pe = getNextPE();
-      dbgs() << "pe for indirect node: " << pe.val() << "\n";
+      dout << "pe for indirect node: " << pe.val() << "\n";
     } else if (it == std::end(pts_to_pe)) {
       pe = getNextPE();
       pts_to_pe.insert(std::make_pair(node.ptsto(), pe));
-      dbgs() << "pe for ptsto: " << pe.val() << "\n";
+      dout << "pe for ptsto: " << pe.val() << "\n";
     } else {
       pe = it->second;
-      dbgs() << "pe gathered: " << pe.val() << "\n";
+      dout << "pe gathered: " << pe.val() << "\n";
     }
 
     obj_to_pe.insert(std::make_pair(pair.first, pe));
@@ -386,14 +398,15 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
     pe_to_obj[pair.second].push_back(pair.first);
   }
 
+  if_debug(
   for (auto &pair : pe_to_obj) {
-    dbgs() << "id remapping is now PE (" << pair.first.val() << "): "
-      << idToString((pair.first)) << "is:";
+    dout << "id remapping is now PE (" << pair.first.val() << "): "
+      << idToString((pair.first)) << " is:";
     for (auto obj_id : pair.second) {
-      dbgs() << " " << idToString(obj_id);
+      dout << " " << idToString(obj_id);
     }
-    dbgs() << "\n";
-  }
+    dout << "\n";
+  })
 
   graph.setupPE(obj_to_pe);
 

@@ -30,7 +30,6 @@ function(add_cpplint_target TARGET_NAME)
 
 endfunction(add_cpplint_target)
 
-
 include_directories( . )
 
 find_package(LLVM REQUIRED CONFIG)
@@ -43,21 +42,33 @@ link_directories(${LLVM_LIBRARY_DIRS})
 
 list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
 
+#set(CMAKE_CXX_COMPILER "clang-3.6")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -pedantic -Wno-long-long -fno-exceptions ")
 
 set(SOURCES
   src/SpecSFS.cpp
+
+  src/Debug.cpp
+
   src/ObjectMap.cpp
   src/DUG.cpp
+
+  src/Andersens.cpp
+
   src/IdentifyObjects.cpp
   src/Optimize.cpp
-  src/Andersens.cpp
   )
 
 set(HEADERS
   include/SpecSFS.h
+
+  include/util.h
+  include/SEG.h
+  include/Debug.h
+
   include/ObjectMap.h
   include/DUG.h
+
   include/Andersens.h
   )
 

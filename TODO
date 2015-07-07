@@ -51,6 +51,9 @@ Run Andersens:
   Run Andersens AA to get basic AA info
   Map out our CFG info given Andersens
 
+Insert ICFG:
+  Use results of Andersens to insert edges between nodes
+
 Now compute SSA for top lvl variables:
   This is done via Ramalingam's algorithm (On Sparse Evaluation Representation)
   

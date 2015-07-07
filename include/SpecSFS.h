@@ -16,9 +16,10 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Debug.h"
 
-// Ugh, need to export andersens header... yeeeesh
-class SpecSFS : public llvm::ModulePass {
-                // public llvm::AliasAnalysis {
+// The actual SFS module, most of the work is done via the ObjectMap and Def-Use
+// Graph (DUG), these methods mostly operate on them.
+class SpecSFS : public llvm::ModulePass,
+                public llvm::AliasAnalysis {
  public:
   static char ID;
   SpecSFS();
@@ -43,11 +44,12 @@ class SpecSFS : public llvm::ModulePass {
 
   // Adds additional indirect call info, given an AUX analysis
   //   (in this case, Andersens analysis)
-  bool addIndirectCalls(DUG &, const Andersens &) { return false; }
+  bool addIndirectCalls(DUG &graph, const Andersens &aux,
+      ObjectMap &omap);
 
   // Computes SSA form of the DUG, given its current edge set
   //   Used to compute SSA for top lvl
-  bool computeSSA(DUG &) { return false; }
+  bool computeSSA(DUG &graph);
 
   // Fills in conservative address-taken given an conservative AUX
   bool fillAddressTaken(DUG &, const Andersens &) { return false; }

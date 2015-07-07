@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-#include "include/id.h"
+#include "include/util.h"
 
 #include "llvm/Constants.h"
 #include "llvm/GlobalValue.h"
@@ -25,6 +25,7 @@ struct omap_id { };
 class ObjectMap {
   //{{{
  public:
+    // Exported Constant ObjIDs {{{
     typedef ID<omap_id, int32_t, -1> ObjID;
 
     enum class Type {
@@ -35,7 +36,6 @@ class ObjectMap {
       VarArg
     };
 
-    // Exported Constant ObjIDs {{{
     static enum ObjEnum : int32_t {
       eNullValue = 0,
       eNullObjectValue,
@@ -64,6 +64,11 @@ class ObjectMap {
 
     // Value insertion {{{
     // Top level variable/node
+    void addValueFunction(const llvm::Value *val) {
+      auto id = __do_add(val, valToID_, idToVal_);
+      functions_.push_back(std::make_pair(id, val));
+    }
+
     void addValue(const llvm::Value *val) {
       __do_add(val, valToID_, idToVal_);
     }
@@ -72,6 +77,7 @@ class ObjectMap {
     void addObject(const llvm::Value *val) {
       __do_add(val, objToID_, idToObj_);
     }
+
     // Function return
     void addReturn(const llvm::Value *val) {
       __do_add(val, retToID_, idToRet_);
@@ -84,6 +90,10 @@ class ObjectMap {
     //}}}
 
     // Value Retrieval {{{
+    const llvm::Value *valueAtID(ObjID id) const {
+      return mapping_.at(id.val());
+    }
+
     ObjID getValue(const llvm::Value *val) const {
       // Check for a constant first
       if (auto C = llvm::dyn_cast<const llvm::Constant>(val)) {
@@ -95,16 +105,23 @@ class ObjectMap {
       auto ret = __do_get(val, valToID_);
       return ret;
     }
+
     // Return for a function
     ObjID getValueReturn(const llvm::Value *val) const {
       return __do_get(val, retToID_);
     }
+
     // Allocated object id
     ObjID getObject(const llvm::Value *val) const {
       return __do_get(val, objToID_);
     }
+
     bool isObject(const ObjID id) const {
-      return (idToObj_.find(id) != std::end(idToObj_));
+      return (id == NullObjectValue || id == UniversalValue ||
+          (idToObj_.find(id) != std::end(idToObj_)));
+      return (id == NullObjectValue || id == UniversalValue ||
+          id == IntValue ||
+          (idToObj_.find(id) != std::end(idToObj_)));
     }
 
     static constexpr ObjID getOffsID(ObjID id, int32_t offs) {
@@ -129,34 +146,7 @@ class ObjectMap {
     }
 
     std::pair<Type, const llvm::Value *>
-    getValueInfo(ObjID id) const {
-      if (id.val() < eNumDefaultObjs) {
-        return std::make_pair(Type::Special, nullptr);
-      }
-
-      auto val = __find_helper(id, idToVal_);
-      if (val != nullptr) {
-        return std::make_pair(Type::Value, val);
-      }
-
-      val = __find_helper(id, idToObj_);
-      if (val != nullptr) {
-        return std::make_pair(Type::Object, val);
-      }
-
-      val = __find_helper(id, idToRet_);
-      if (val != nullptr) {
-        return std::make_pair(Type::Return, val);
-      }
-
-      val = __find_helper(id, idToVararg_);
-      if (val != nullptr) {
-        return std::make_pair(Type::VarArg, val);
-      }
-
-      llvm_unreachable("Couldn't Find id!!");
-      return std::make_pair(Type::Value, nullptr);
-    }
+    getValueInfo(ObjID id) const;
     //}}}
 
     // Misc helpers {{{
@@ -172,10 +162,79 @@ class ObjectMap {
     }
     //}}}
 
+    // Iterators {{{
+    typedef std::unordered_map<const llvm::Value *, ObjID>::iterator
+      to_id_iterator;
+    typedef std::unordered_map<const llvm::Value *, ObjID>::const_iterator
+      const_to_id_iterator;
+
+    typedef std::unordered_map<ObjID, const llvm::Value *, ObjID::hasher>
+      idToValMap;
+    typedef idToValMap::iterator to_val_iterator;
+    typedef idToValMap::const_iterator const_to_val_iterator;
+
+    typedef std::vector<std::pair<ObjID, const llvm::Value *>>::iterator
+      function_iterator;
+    typedef std::vector<std::pair<ObjID, const llvm::Value *>>::const_iterator
+      const_function_iterator;
+
+    function_iterator functions_begin() {
+      return std::begin(functions_);
+    }
+
+    function_iterator functions_end() {
+      return std::end(functions_);
+    }
+
+    const_function_iterator functions_begin() const {
+      return std::begin(functions_);
+    }
+
+    const_function_iterator functions_end() const {
+      return std::end(functions_);
+    }
+
+    const_function_iterator functions_cbegin() const {
+      return functions_.cbegin();
+    }
+
+    const_function_iterator functions_cend() const {
+      return functions_.cend();
+    }
+
+    to_val_iterator values_begin() {
+      return std::begin(idToVal_);
+    }
+
+    to_val_iterator values_end() {
+      return std::end(idToVal_);
+    }
+
+    const_to_val_iterator values_begin() const {
+      return std::begin(idToVal_);
+    }
+
+    const_to_val_iterator values_end() const {
+      return std::end(idToVal_);
+    }
+
+    const_to_val_iterator values_cbegin() const {
+      return idToVal_.cbegin();
+    }
+
+    const_to_val_iterator values_cend() const {
+      return idToVal_.cend();
+    }
+
+
+
+
+    //}}}
  private:
     // Private variables {{{
     // Forward mapping
     std::vector<const llvm::Value *> mapping_;
+    std::vector<std::pair<ObjID, const llvm::Value *>> functions_;
 
     // Reverse mapping
     std::unordered_map<const llvm::Value *, ObjID> valToID_;
@@ -184,8 +243,6 @@ class ObjectMap {
     std::unordered_map<const llvm::Value *, ObjID> vargToID_;
 
     // Reverse mapping
-    typedef std::unordered_map<ObjID, const llvm::Value *, ObjID::hasher>
-      idToValMap;
     idToValMap idToVal_;
     idToValMap idToObj_;
     idToValMap idToRet_;
@@ -207,7 +264,7 @@ class ObjectMap {
       return nullptr;
     }
 
-    void __do_add(const llvm::Value *val,
+    ObjID __do_add(const llvm::Value *val,
         std::unordered_map<const llvm::Value *, ObjID> &mp,
         idToValMap &pm) {
       assert(mp.find(val) == std::end(mp));
@@ -219,6 +276,8 @@ class ObjectMap {
 
       mp.insert(std::make_pair(val, id));
       pm.insert(std::make_pair(id, val));
+
+      return id;
     }
 
     ObjID __do_get(const llvm::Value *val,
@@ -234,30 +293,7 @@ class ObjectMap {
 
     ObjID __const_node_helper(const llvm::Constant *C,
         ObjID (ObjectMap::*diff)(const llvm::Value *) const,
-        ObjID nullv) const {
-      if (llvm::isa<const llvm::ConstantPointerNull>(C) ||
-          llvm::isa<const llvm::UndefValue>(C)) {
-        return nullv;
-      } else if (auto GV = llvm::dyn_cast<llvm::GlobalValue>(C)) {
-        return (this->*diff)(GV);
-      } else if (auto CE = llvm::dyn_cast<llvm::ConstantExpr>(C)) {
-        switch (CE->getOpcode()) {
-          case llvm::Instruction::GetElementPtr:
-            return __const_node_helper(CE->getOperand(0), diff, nullv);
-          case llvm::Instruction::IntToPtr:
-            return UniversalValue;
-          case llvm::Instruction::PtrToInt:
-            return IntValue;
-          case llvm::Instruction::BitCast:
-            return __const_node_helper(CE->getOperand(0), diff, nullv);
-          default:
-            llvm::errs() << "Const Expr not yet handled: " << *CE << "\n";
-            llvm_unreachable(0);
-        }
-      } else {
-        llvm_unreachable("Unknown constant expr ptr");
-      }
-    }
+        ObjID nullv) const;
   //}}}
   //}}}
 };

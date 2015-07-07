@@ -425,7 +425,8 @@ class Andersens : public ModulePass,
   }
 
   bool runOnModule(Module &M) {
-    InitializeAliasAnalysis(this);
+    // We don't run Andersens as a classic AA, so we disable this call
+    // InitializeAliasAnalysis(this);
     IdentifyObjects(M);
     CollectConstraints(M);
 #undef DEBUG_TYPE
@@ -487,6 +488,22 @@ class Andersens : public ModulePass,
   virtual void copyValue(Value *From, Value *To) {
     ValueNodes[To] = ValueNodes[From];
     getAnalysis<AliasAnalysis>().copyValue(From, To);
+  }
+
+  const SparseBitVector<> &getPointsTo(const llvm::Value *val) const {
+    return *GraphNodes[FindNode(getNode(const_cast<Value*>(val)))].PointsTo;
+  }
+
+  unsigned valRep(const llvm::Value *val) const {
+    return FindNode(getNode(const_cast<Value*>(val)));
+  }
+
+  unsigned val(const llvm::Value *val) const {
+    return getNode(const_cast<Value*>(val));
+  }
+
+  unsigned obj(const llvm::Value *val) const {
+    return getObject(const_cast<Value*>(val));
   }
 
  private:

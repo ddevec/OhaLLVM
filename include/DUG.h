@@ -7,14 +7,16 @@
 
 #include <cstdint>
 
+#include <functional>
 #include <list>
 #include <map>
-#include <memory>
+#include <queue>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "include/id.h"
+#include "include/util.h"
 #include "include/ObjectMap.h"
 
 class PtsSet {
@@ -29,17 +31,21 @@ class PtsSet {
 class Constraint {
   //{{{
  public:
-    enum class Type { Copy, Load, Store, AddressOf };
+    enum class Type { Copy, Load, Store, AddressOf, Noop };
 
     Constraint(Type t, ObjectMap::ObjID d, ObjectMap::ObjID s);
     Constraint(Type t, ObjectMap::ObjID d, ObjectMap::ObjID s, int32_t o);
 
+    // No copys, yes moves {{{
     Constraint(const Constraint &) = delete;
     Constraint &operator=(const Constraint&) = delete;
 
     Constraint(Constraint &&) = default;
     Constraint &operator=(Constraint&&) = default;
+    //}}}
 
+
+    // Accessors {{{
     Type type() const {
       return type_;
     }
@@ -55,7 +61,19 @@ class Constraint {
     int32_t offs() const {
       return offs_;
     }
+    //}}}
+    //
+    // Noop helpers {{{
+    bool isNoop() const {
+      return type() == Type::Noop;
+    }
 
+    void makeNoop() {
+      type_ = Type::Noop;
+    }
+    //}}}
+
+    // Target helpers {{{
     bool targetIsDest() const {
       // Okay, which target is the target of node?
       switch (type_) {
@@ -65,8 +83,12 @@ class Constraint {
           return false;
         case Type::Store:
           return true;
-        default:
+        case Type::Copy:
           return false;
+        case Type::Noop:
+          return false;
+        default:
+          llvm_unreachable("Unrecognized constraint type");
       }
     }
 
@@ -77,6 +99,7 @@ class Constraint {
         return src();
       }
     }
+    //}}}
 
  private:
     Type type_;
@@ -91,31 +114,59 @@ class Constraint {
 class DUG {
   //{{{
  public:
+    // Id Types {{{
     struct pe_id { };
     typedef ID<pe_id, int32_t, -1> PEid;
     typedef ObjectMap::ObjID ObjID;
 
+    struct con_id { };
+    typedef ID<con_id, int32_t, -1> ConsID;
+    //}}}
+
     DUG() = default;
 
-    // No copy/move semantics
+    // No copy/move semantics {{{
     DUG(const DUG &) = delete;
     DUG(DUG &&) = delete;
 
     DUG &operator=(const DUG &) = delete;
     DUG &operator=(DUG &&) = delete;
+    //}}}
 
+    // DUG Construction Methods {{{
     void prepare(const ObjectMap &omap);
 
-    void add(Constraint::Type, ObjID d, ObjID s, int32_t o = 0);
+    ConsID add(Constraint::Type, ObjID d, ObjID s, int32_t o = 0);
+
+    Constraint &getConstraint(ConsID id) {
+      return constraints_.at(id.val());
+    }
 
     ObjID addNode(ObjectMap &omap);
 
-    void addIndirectCall(ObjID id, const llvm::Value *val);
+    void addIndirectCall(ObjID id, llvm::Instruction *val);
 
     void addIndirect(const llvm::Value *v, Constraint::Type type,
         ObjID d, ObjID s, int32_t o = 0);
 
+    void addUnusedFunction(const llvm::Function *fcn,
+        const std::vector<ConsID> &ids) {
+      unusedFunctions_.emplace(std::make_pair(fcn, ids));
+    }
+
+    void removeUnusedFunction(const llvm::Function *fcn) {
+      auto it = unusedFunctions_.find(fcn);
+
+      for (auto id : it->second) {
+        auto &cons = getConstraint(id);
+        cons.makeNoop();
+      }
+
+      unusedFunctions_.erase(fcn);
+    }
+
     void associateNode(ObjID node, const llvm::Value *val);
+    //}}}
 
     // Use/def tracking {{{
     void addUse(ObjID id) {
@@ -240,6 +291,70 @@ class DUG {
     }
     //}}}
 
+    // Indirect Call Iterators {{{
+    typedef std::vector<std::pair<llvm::Instruction *, ObjID>>::iterator
+      indirect_call_iterator;
+    typedef std::vector<std::pair<llvm::Instruction *, ObjID>>::const_iterator
+      const_indirect_call_iterator;
+
+    indirect_call_iterator indirect_begin() {
+      return std::begin(indirectCalls_);
+    }
+
+    indirect_call_iterator indirect_end() {
+      return std::end(indirectCalls_);
+    }
+
+    const_indirect_call_iterator indirect_begin() const {
+      return std::begin(indirectCalls_);
+    }
+
+    const_indirect_call_iterator indirect_end() const {
+      return std::end(indirectCalls_);
+    }
+
+    const_indirect_call_iterator indirect_cbegin() const {
+      return indirectCalls_.cbegin();
+    }
+
+    const_indirect_call_iterator indirect_cend() const {
+      return indirectCalls_.cend();
+    }
+
+    //}}}
+
+    // Unused Function Iterators {{{
+    typedef std::map<const llvm::Function *, std::vector<ConsID>>::iterator
+      unused_function_iterator;
+    typedef std::map<const llvm::Function *, std::vector<ConsID>>::const_iterator  // NOLINT
+      const_unused_function_iterator;
+
+    unused_function_iterator unused_function_begin() {
+      return std::begin(unusedFunctions_);
+    }
+
+    unused_function_iterator unused_function_end() {
+      return std::end(unusedFunctions_);
+    }
+
+    const_unused_function_iterator unused_function_begin() const {
+      return std::begin(unusedFunctions_);
+    }
+
+    const_unused_function_iterator unused_function_end() const {
+      return std::end(unusedFunctions_);
+    }
+
+    const_unused_function_iterator unused_function_cbegin() const {
+      return unusedFunctions_.cbegin();
+    }
+
+    const_unused_function_iterator unused_function_cend() const {
+      return unusedFunctions_.cend();
+    }
+
+    //}}}
+
     // For debugging {{{
     void printDotConstraintGraph(const std::string &graphname,
         const ObjectMap &omap) const;
@@ -278,6 +393,7 @@ class DUG {
       //}}}
     };
 
+    // Private variables {{{
     // Our vector of nodes
     std::vector<DUGNode> nodes_;
     std::vector<Constraint> constraints_;
@@ -285,10 +401,12 @@ class DUG {
     // The PE equivalent for each obj in the graph
     std::map<ObjID, PEid> objToPE_;
 
-    std::vector<std::pair<const llvm::Value *, ObjID>> indirectCalls_;
+    std::vector<std::pair<llvm::Instruction *, ObjID>> indirectCalls_;
+    std::map<const llvm::Function *, std::vector<ConsID>> unusedFunctions_;
 
     std::vector<ObjID> defs_;
     std::vector<ObjID> uses_;
+    //}}}
   //}}}
 };
 

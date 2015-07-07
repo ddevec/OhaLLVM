@@ -22,6 +22,10 @@ add_executable(simple_fcn
 add_executable(simple_fcn2
   simple_fcn2.c)
 
+add_executable(simple_indr_fcn
+  simple_indr_fcn.c)
+
 create_dis(simple_fcn)
+create_dis(simple_indr_fcn)
 create_dis(simple_fcn2)
 

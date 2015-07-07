@@ -104,9 +104,11 @@ STATISTIC(NumUnified    , "Number of variables unified");
 STATISTIC(NumErased     , "Number of redundant constraints erased");
 
 char Andersens::ID = 0;
+/*
 static RegisterPass<Andersens>
 X("anders-aa", "Andersen's Interprocedural Alias Analysis", false, true);
 static RegisterAnalysisGroup<AliasAnalysis> Y(X);
+*/
 
 // Initialize Timestamp Counter (static).
 volatile llvm::sys::cas_flag Andersens::Node::Counter = 0;

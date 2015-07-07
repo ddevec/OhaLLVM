@@ -57,7 +57,9 @@ static std::string idToString(idT id) {
 }
 
 static void printVal(raw_ostream &ofil, const Value *val) {
-  if (auto GV = dyn_cast<const GlobalValue>(val)) {
+  if (val == nullptr) {
+    ofil << "temp node";
+  } else if (auto GV = dyn_cast<const GlobalValue>(val)) {
     ofil << GV->getName();
   } else if (auto F = dyn_cast<const Function>(val)) {
     ofil << F->getName();
@@ -114,7 +116,7 @@ static const std::string getConsStr(const Constraint &cons) {
     case Constraint::Type::Store:
       return "store";
     default:
-      assert(0 && "illegal constraint type");
+      llvm_unreachable("Constraint with unexpected type!");
       return "BLEH";
   }
 }
@@ -123,6 +125,10 @@ template<typename idT>
 static void printHeader(raw_ostream &ofil, idT id,
     const DUG &, const ObjectMap &omap) {
   auto pr = omap.getValueInfo(id);
+  // If pr is a temp node, don't print it
+  if (pr.second == nullptr) {
+    return;
+  }
 
   std::string idNode = idToString(id);
 
@@ -147,6 +153,10 @@ static void printMultiHeader(raw_ostream &ofil,
   for (auto nit = std::begin(ids), en = std::end(ids), it = nit++; it != en;
       ++it) {
     auto pr = omap.getValueInfo(*it);
+    // If pr is a temp node, don't print it
+    if (pr.second == nullptr) {
+      continue;
+    }
     if (pr.first != ObjectMap::Type::Special) {
       printVal(ofil, pr.second);
     } else {
@@ -238,6 +248,9 @@ static DUG::ObjID getOrigin(const Constraint &con) {
 
 static void printConstraintNodeLinks(raw_ostream &ofil, const DUG &,
     const Constraint &con, const ObjectMap &) {
+  if (con.isNoop()) {
+    return;
+  }
   // Okay... now we print the links...
   // This is to decide on the logical arrow direction
   auto id = getTarget(con);
@@ -255,6 +268,9 @@ static void printConstraintNodeLinks(raw_ostream &ofil, const DUG &,
 
 static void printPENodeLinks(raw_ostream &ofil, const DUG &graph,
     const Constraint &con, const ObjectMap &) {
+  if (con.isNoop()) {
+    return;
+  }
   // Okay... now we print the links...
   // This is to decide on the logical arrow direction
   auto id = getPEid(getTarget(con), graph);
@@ -286,8 +302,9 @@ void DUG::prepare(const ObjectMap &omap) {
   nodes_.resize(omap.size());
 }
 
-void DUG::add(Constraint::Type type, ObjID d, ObjID s, int o) {
+DUG::ConsID DUG::add(Constraint::Type type, ObjID d, ObjID s, int o) {
   constraints_.emplace_back(type, d, s, o);
+  return ConsID(constraints_.size()-1);
 }
 
 DUG::ObjID DUG::addNode(ObjectMap &omap) {
@@ -301,16 +318,9 @@ DUG::ObjID DUG::addNode(ObjectMap &omap) {
   return id;
 }
 
-void DUG::addIndirectCall(ObjID id, const Value *val) {
+void DUG::addIndirectCall(ObjID id, llvm::Instruction *inst) {
   // Indirect graph...
-  indirectCalls_.emplace_back(val, id);
-}
-
-void DUG::addIndirect(const Value *val, Constraint::Type type,
-    ObjID d, ObjID s, int32_t o) {
-  addIndirectCall(d, val);
-
-  add(type, d, s, o);
+  indirectCalls_.emplace_back(inst, id);
 }
 
 void DUG::associateNode(ObjID id, const Value *val) {

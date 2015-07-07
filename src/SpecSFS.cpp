@@ -2,6 +2,10 @@
  * Copyright (C) 2015 David Devecsery
  */
 
+
+// Enable debugging prints for this file
+#define SPECSFS_DEBUG
+
 #include "include/SpecSFS.h"
 
 #include <execinfo.h>
@@ -14,6 +18,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Debug.h"
 
+#include "include/Debug.h"
 #include "include/Andersens.h"
 #include "include/ObjectMap.h"
 
@@ -34,9 +39,9 @@ static void print_stack_trace(void) {
   size = backtrace(array, 10);
   strings = backtrace_symbols(array, size);
 
-  dbgs() << "BACKTRACE:\n";
+  errs() << "BACKTRACE:\n";
   for (i = 0; i < size; i++) {
-    dbgs() << "\t" << strings[i] << "\n";
+    errs() << "\t" << strings[i] << "\n";
   }
 
   free(strings);
@@ -98,18 +103,23 @@ bool SpecSFS::runOnModule(Module &M) {
 
 
   // Get AUX info, in this instance we choose Andersens
-  dbgs() << "Running Andersens\n";
+  dout << "Running Andersens\n";
   Andersens aux;
   bool ret = aux.runOnModule(M);
   // Andersens had better not change M!
-  dbgs() << "Andersens done\n";
+  dout << "Andersens done\n";
   assert(ret == false);
 
   // Now, fill in the indirect function calls
-  if (addIndirectCalls(graph, aux)) {
+  if (addIndirectCalls(graph, aux, omap)) {
     error("AddIndirectCalls failure!");
   }
 
+  dout << "Printing post indir graph\n";
+  graph.printDotConstraintGraph("graph_indr.dot", omap);
+
+  dout << "Printing post indir PE graph\n";
+  graph.printDotPEGraph("graphPE_indr.dot", omap);
 #if 0
   // Now, compute the SSA form for the top-level variables
   // We translate any PHI nodes into copy nodes... b/c the paper says so
