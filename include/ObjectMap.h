@@ -20,14 +20,16 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Debug.h"
 
-struct omap_id { };
 
 class ObjectMap {
   //{{{
  public:
-    // Exported Constant ObjIDs {{{
+    // Internal types {{{
+    struct omap_id { };
     typedef ID<omap_id, int32_t, -1> ObjID;
+    //}}}
 
+    // Exported Constant ObjIDs {{{
     enum class Type {
       Special,
       Value,
@@ -155,10 +157,7 @@ class ObjectMap {
     }
 
     ObjID makeTempValue() {
-      auto ret = getNextID();
-      mapping_.push_back(nullptr);
-
-      return ret;
+      return createMapping(nullptr);
     }
     //}}}
 
@@ -254,6 +253,12 @@ class ObjectMap {
       return ObjID(mapping_.size());
     }
 
+    ObjID createMapping(const llvm::Value *val) {
+      ObjID ret = getNextID();
+      mapping_.emplace_back(val);
+      return ret;
+    }
+
     const llvm::Value *__find_helper(ObjID id, const idToValMap &map) const {
       auto it = map.find(id);
 
@@ -270,9 +275,7 @@ class ObjectMap {
       assert(mp.find(val) == std::end(mp));
 
       // getNextID must happen before emplace back... ugh
-      auto id = getNextID();
-
-      mapping_.emplace_back(val);
+      auto id = createMapping(val);
 
       mp.insert(std::make_pair(val, id));
       pm.insert(std::make_pair(id, val));

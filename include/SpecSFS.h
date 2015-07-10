@@ -5,6 +5,8 @@
 #ifndef INCLUDE_SPECSFS_H_
 #define INCLUDE_SPECSFS_H_
 
+#include <vector>
+
 #include "include/Andersens.h"
 #include "include/SpecSFS.h"
 #include "include/DUG.h"
@@ -49,7 +51,8 @@ class SpecSFS : public llvm::ModulePass,
 
   // Computes SSA form of the DUG, given its current edge set
   //   Used to compute SSA for top lvl
-  bool computeSSA(DUG &graph);
+  bool computeSSA(DUG &graph,
+      const std::vector<DUG::CFGEdge> &edges);
 
   // Fills in conservative address-taken given an conservative AUX
   bool fillAddressTaken(DUG &, const Andersens &) { return false; }

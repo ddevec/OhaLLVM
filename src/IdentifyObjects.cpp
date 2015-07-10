@@ -16,7 +16,7 @@
 
 #include "include/SpecSFS.h"
 
-// #define SPECSFS_DEBUG
+#define SPECSFS_DEBUG
 #include "include/Debug.h"
 
 #include "llvm/Constants.h"
@@ -29,8 +29,91 @@
 
 using namespace llvm; // NOLINT
 
-// Private namespace for file-local info
+// Private namespace for file-local info {{{
 namespace {
+
+// Debugging functions {{{
+if_debug(
+  static void smart_print(const llvm::Value *val) {
+    if (auto GV = dyn_cast<GlobalValue>(val)) {
+      dout << GV->getName();
+    } else {
+      dout << *val;
+    }
+  }
+)
+//}}}
+
+// Using AUX with CFG helpers {{{
+// ID to keep track of anders return values
+struct aux_id { };
+typedef ID<aux_id, int32_t, -1> AuxID;
+
+static void identifyAUXFcnCallRetInfo(DUG &graph, const ObjectMap &omap,
+    const Andersens &aux) {
+
+  // The mapping of andersen's values to functions
+  std::map<AuxID, DUG::ObjID> anders_to_fcn;
+
+  std::for_each(omap.functions_cbegin(), omap.functions_cend(),
+      [&anders_to_fcn, &aux]
+      (const std::pair<DUG::ObjID, const llvm::Value *> &pair) {
+    anders_to_fcn[AuxID(aux.obj(pair.second))] = pair.first;
+  });
+
+  if_debug(
+    dout << "Got ids for functions:";
+    for (auto pr : anders_to_fcn) {
+      dout << " {";
+      auto val = omap.valueAtID(pr.second);
+      smart_print(val);
+      dout << ", " << pr.first << "}";
+    }
+    dout << "\n");
+
+  // We iterate each indirect call in the DUG
+  // to add the indirect info to the constraint map:
+  std::for_each(graph.indirect_cbegin(), graph.indirect_cend(),
+      // We take different arguments, depending on if we're debugging...
+      [&graph, &aux, &anders_to_fcn, &omap]
+      (const std::pair<DUG::ObjID, DUG::CFGid> &pair) {
+    const llvm::CallInst *ci =
+      cast<llvm::CallInst>(omap.valueAtID(pair.first));
+
+    llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
+
+    auto fptr = CS.getCalledValue();
+
+    // This is the andersen's node for this element
+    auto ptsto = aux.getPointsTo(fptr);
+
+    if_debug(
+      dout << "have ptsto:";
+      for (auto aid : ptsto) {
+        dout << " " << aid;
+      }
+      dout << "\n");
+
+    DUG::CFGid call_id = graph.getCFGid();
+    DUG::CFGid ret_id = graph.getCFGid();
+
+    for (auto anders_int_id : ptsto) {
+      AuxID anders_id(anders_int_id);
+
+      DUG::ObjID fcn_id = anders_to_fcn.at(anders_id);
+
+      // Add edge from call->fcn start node
+      graph.addCFGEdge(call_id, graph.getCFGFunctionStart(fcn_id));
+      // Add edge from fcn ret node->ret
+      graph.addCFGEdge(graph.getCFGFunctionReturn(fcn_id), ret_id);
+    }
+
+    graph.addCFGCallRetInfo(omap.getValue(fptr), call_id, ret_id);
+  });
+}
+
+
+//}}}
 
 // Functions/Variables helping me track internal values {{{
 int32_t CallReturnPos = 1;
@@ -46,6 +129,62 @@ ObjectMap::ObjID getValueUpdate(DUG &graph, ObjectMap &omap, const Value *v) {
   graph.associateNode(id, v);
 
   return id;
+}
+//}}}
+
+// Helpers for dealing with adding CFG constraints {{{
+void addCFGLoad(DUG &graph, DUG::CFGid load_id, DUG::ObjID dest) {
+  auto &node = graph.getCFGNode(load_id);
+
+  // Set this as an important or "r" node
+  node.setR();
+  graph.addUse(load_id, dest);
+}
+
+void addCFGStore(DUG &graph, DUG::CFGid *store_id, DUG::ObjID dest) {
+  // Well, stuff here
+
+  auto &node = graph.getCFGNode(*store_id);
+
+  // If this is a p-node, then there are no stores in it, and we can share it
+  // with laods
+  if (node.p()) {
+    node.setM();
+  // If this is a m-node (np-node), then it has a store, and we need to make a
+  // new node
+  } else {
+    DUG::CFGid next_id = graph.getCFGid();
+
+    graph.addCFGEdge(*store_id, next_id);
+
+    // Advance the id
+    *store_id = next_id;
+  }
+
+  graph.addDef(*store_id, dest);
+}
+
+void addCFGCallsite(DUG &graph, const ObjectMap &omap,
+    llvm::Function *fcn, llvm::Instruction *ci, DUG::CFGid *pcall_id) {
+
+  // Add a new node into the graph
+  DUG::CFGid call_id = *pcall_id;
+  DUG::CFGid next_id = graph.getCFGid();
+  *pcall_id = next_id;
+
+  if (fcn) {
+    // We don't add edges now because we haven't identified the entry and return
+    //   CFGid's for all functions yet
+    // We also use a getObject(F) because functions are all associated with
+    // objects, only some are associated with values
+    graph.addCFGCallsite(call_id, omap.getObject(fcn), next_id);
+  } else {
+    // We also don't add edges between the call_id and the callsite for indirect
+    //    calls because we don't know the destination until we run our AUX
+    //    analysis.
+    // All call instructions are associated with values, so we use getValue here
+    graph.addCFGIndirectCall(call_id, omap.getValue(ci), next_id);
+  }
 }
 //}}}
 
@@ -76,7 +215,7 @@ static bool isMalloc(const Value *V) {
 
 // NOTE: Copy/pasted shamelessly from Andersens.cpp
 static bool addConstraintsForExternalCall(DUG &graph, ObjectMap &omap,
-    CallSite &CS, Function *F) {
+    CallSite &CS, Function *F, DUG::CFGid *next_id) {
   assert(F->isDeclaration() && "Not an external call!");
 
   // These functions don't induce any points-to constraints.
@@ -116,8 +255,9 @@ static bool addConstraintsForExternalCall(DUG &graph, ObjectMap &omap,
       F->getName() == "vfprintf" || F->getName() == "vsprintf" ||
       F->getName() == "scanf" || F->getName() == "fscanf" ||
       F->getName() == "sscanf" || F->getName() == "__assert_fail" ||
-      F->getName() == "modf")
-      return true;
+      F->getName() == "modf") {
+    return true;
+  }
 
   // These functions do induce points-to edges.
   if (F->getName().find("llvm.memcpy") == 0 ||
@@ -136,9 +276,17 @@ static bool addConstraintsForExternalCall(DUG &graph, ObjectMap &omap,
       // Creates a new node in the graph, and a temp holder in omap
       auto TempArg = graph.addNode(omap);
 
+      // Setup constraints
       graph.add(Constraint::Type::Store, FirstArg, TempArg);
       graph.add(Constraint::Type::Load, TempArg, SecondArg);
       graph.add(Constraint::Type::Copy, FirstArg, SecondArg);
+
+      // Setup CFG
+      // First setup the load
+      addCFGLoad(graph, *next_id, omap.getValue(CS.getArgument(1)));
+      // Then setup the store
+      addCFGStore(graph, next_id, omap.getValue(CS.getArgument(0)));
+
       return true;
     }
   }
@@ -192,6 +340,7 @@ static bool addConstraintsForExternalCall(DUG &graph, ObjectMap &omap,
             omap.getVarArg(ParentF));
         graph.add(Constraint::Type::Store, omap.getValue(Arg),
             TempArg);
+        addCFGStore(graph, next_id, omap.getValue(Arg));
         return true;
       } else if (IID == Intrinsic::vaend) {
         return true;
@@ -211,6 +360,8 @@ static bool addConstraintsForExternalCall(DUG &graph, ObjectMap &omap,
       Value *Arg = I->getOperand(3);
       graph.add(Constraint::Type::Store, omap.getValue(ThrFunc),
           omap.getValue(Arg), CallFirstArgPos);
+      addCFGStore(graph, next_id,
+          omap.getOffsID(omap.getValue(Arg), CallFirstArgPos));
       return true;
     }
   }
@@ -220,6 +371,7 @@ static bool addConstraintsForExternalCall(DUG &graph, ObjectMap &omap,
     if (FTy->getNumParams() == 1 && isa<PointerType>(FTy->getReturnType())) {
       graph.add(Constraint::Type::Store, omap.getValue(CS.getInstruction()),
           ObjectMap::PthreadSpecificValue);
+      addCFGStore(graph, next_id, ObjectMap::PthreadSpecificValue);
       return true;
     }
   } else if (F->getName() == "pthread_setspecific") {
@@ -334,7 +486,7 @@ static bool analyzeUsesOfFunction(const Value &val) {
           return true;
         }
       } else {
-        return true;;
+        return true;
       }
     } else if (dyn_cast<ICmpInst>(*UI) != nullptr) {
       return true;
@@ -367,11 +519,12 @@ static void addConstraintsForIndirectCall(DUG &graph, ObjectMap &omap,
     return;
   }
 
-  auto id = getValueUpdate(graph, omap, &called_val);
+  getValueUpdate(graph, omap, &called_val);
 
-  // Add a notion this is an indirect call to the graph
-  //   (to later be filled in)
-  graph.addIndirectCall(id, CS.getInstruction());
+
+  // FIXME: This is sloppy?
+  // We take care of adding the constriants to the map in addCFGCallsite, caleld
+  //    from addConstraintsForCall() before this
 }
 
 static void addConstraintsForDirectCall(DUG &graph, ObjectMap &omap,
@@ -444,8 +597,8 @@ static void addConstraintsForDirectCall(DUG &graph, ObjectMap &omap,
   }
 }
 
-static void addConstraintsForCall(DUG &graph, ObjectMap &omap,
-    CallSite &CS, Function *F) {
+static bool addConstraintsForCall(DUG &graph, ObjectMap &omap,
+    CallSite &CS, Function *F, DUG::CFGid *next_id) {
   // bool isIndirect = (F == NULL);
 
   // Try to recover the function from a bitcast (taken from sfs code)
@@ -464,16 +617,27 @@ static void addConstraintsForCall(DUG &graph, ObjectMap &omap,
   // If this is direct && is external
   if (F && F->isDeclaration()) {
     // Add it as an external function
-    if (addConstraintsForExternalCall(graph, omap, CS, F)) {
-      return;
+    if (addConstraintsForExternalCall(graph, omap, CS, F, next_id)) {
+      // If This is an external call that I identified, then we don't add a node
+      // for it constraints for it, because we've already added constriants for
+      // its properties
+      return false;
     }
   }
 
+  // next_id will be nullptr when called to add this call's constraints from
+  // SpecSFS::addIndirectCalls()  In that instance, we've already created
+  // callsite nodes in the CFG, and shouldn't make more
+  if (next_id != nullptr) {
+    addCFGCallsite(graph, omap, F, CS.getInstruction(), next_id);
+  }
   if (F) {
     addConstraintsForDirectCall(graph, omap, CS, F);
   } else {
     addConstraintsForIndirectCall(graph, omap, CS);
   }
+
+  return true;
 }
 //}}}
 
@@ -501,7 +665,8 @@ static void idRetInst(DUG &graph, ObjectMap &omap, const Instruction &inst) {
       omap.getReturn(F), omap.getValue(src));
 }
 
-static void idCallInst(DUG &graph, ObjectMap &omap, const Instruction &inst) {
+static bool idCallInst(DUG &graph, ObjectMap &omap, const Instruction &inst,
+    DUG::CFGid *bb_id) {
   // Meh, Callsites don't take consts... bleh
   CallSite CS(const_cast<Instruction *>(&inst));
 
@@ -515,7 +680,7 @@ static void idCallInst(DUG &graph, ObjectMap &omap, const Instruction &inst) {
     getValueUpdate(graph, omap, &inst);
   }
 
-  addConstraintsForCall(graph, omap, CS, CS.getCalledFunction());
+  return addConstraintsForCall(graph, omap, CS, CS.getCalledFunction(), bb_id);
 }
 
 static void idAllocaInst(DUG &graph, ObjectMap &omap,
@@ -535,14 +700,16 @@ static void idAllocaInst(DUG &graph, ObjectMap &omap,
 
 // FIXME -- Also handle pointer args going through here
 //    (like in Andersens.cpp)
-static void idLoadInst(DUG &graph, ObjectMap &omap, const Instruction &inst) {
+static void idLoadInst(DUG &graph, ObjectMap &omap, const Instruction &inst,
+    DUG::CFGid next_id) {
   auto &ld = *cast<const LoadInst>(&inst);
 
   if (isa<PointerType>(ld.getType())) {
     graph.add(Constraint::Type::Load, getValueUpdate(graph, omap, &ld),
         omap.getValue(ld.getOperand(0)));
+
     // Add this to the uses
-    graph.addUse(omap.getValue(&ld));
+    addCFGLoad(graph, next_id, omap.getValue(&ld));
   } else if (isa<PointerType>(ld.getOperand(0)->getType()) &&
       isa<IntegerType>(ld.getType())) {
     errs() << "FIXME: Unhandled load info!\n";
@@ -552,20 +719,18 @@ static void idLoadInst(DUG &graph, ObjectMap &omap, const Instruction &inst) {
 }
 
 static void idStoreInst(DUG &graph, ObjectMap &omap,
-    const Instruction &inst) {
+    const Instruction &inst, DUG::CFGid *next_id) {
   auto &st = *cast<const StoreInst>(&inst);
 
   if (isa<PointerType>(st.getOperand(0)->getType())) {
     // Store from ptr
     graph.add(Constraint::Type::Store, omap.getValue(st.getOperand(1)),
         omap.getValue(st.getOperand(0)));
-    graph.addDef(omap.getValue(st.getOperand(1)));
   } else if (ConstantExpr *ce = dyn_cast<ConstantExpr>(st.getOperand(0))) {
     // If we just cast a ptr to an int then stored it.. we can keep info on it
     if (ce->getOpcode() == Instruction::PtrToInt) {
       graph.add(Constraint::Type::Store, omap.getValue(st.getOperand(1)),
           omap.getValue(ce->getOperand(0)));
-      graph.addDef(omap.getValue(st.getOperand(1)));
     // Uhh, dunno what to do now
     } else {
       errs() << "FIXME: Unhandled constexpr case!\n";
@@ -583,6 +748,7 @@ static void idStoreInst(DUG &graph, ObjectMap &omap,
         ObjectMap::AgregateNode);
         */
   }
+  addCFGStore(graph, next_id, omap.getValue(st.getOperand(1)));
 }
 
 static void idGEPInst(DUG &graph, ObjectMap &omap, const Instruction &inst) {
@@ -663,35 +829,64 @@ static void idExtractInst(DUG &, ObjectMap &,
 //}}}
 
 // Instruction parsing helpers {{{
-void processBlock(DUG &graph, std::set<const BasicBlock *> &seen,
-    ObjectMap &omap, const BasicBlock &BB) {
+static void processBlock(DUG &graph, std::set<const BasicBlock *> &seen,
+    ObjectMap &omap, const BasicBlock &BB, DUG::CFGid parent_id) {
   // Make sure we don't follow the same block twice
   assert(seen.count(&BB) == 0);
   seen.insert(&BB);
 
-  // Now, analyze each instruction
+  // Extract the basic block info about this block for our CFG (required for
+  //    computing SSA on address-taken variables)
+  // This is for the basic block, not a value, so it's "anon"
+  DUG::CFGid next_id = graph.getCFGid();
+  // Add an edge from our parent, if we have one
+  if (parent_id.valid()) {
+    graph.addCFGEdge(parent_id, next_id);
+  // Or if we don't have a parent denote that we should get edges from calls
+  } else {
+    graph.addCFGFunctionStart(omap.getObject(BB.getParent()), next_id);
+  }
+
+
+  bool block_has_call = false;
+
+  // Now, analyze each instruction, extract constraints
   for (auto &inst : BB) {
     bool is_ptr = isa<PointerType>(inst.getType());
 
     switch (inst.getOpcode()) {
       case Instruction::Ret:
-        assert(!is_ptr);
-        idRetInst(graph, omap, inst);
+        {
+          assert(!is_ptr);
+
+          // We add a "return node" for this block if there is a call within it
+          if (block_has_call) {
+            // Get a new "anon" cfg node for the ret node
+            DUG::CFGid ret_id = graph.getCFGid();
+            graph.addCFGEdge(next_id, ret_id);
+            next_id = ret_id;
+          // Otherwise, we consider the entry node as the return node
+          }
+
+          graph.addCFGFunctionReturn(omap.getObject(BB.getParent()), next_id);
+
+          idRetInst(graph, omap, inst);
+        }
         break;
       case Instruction::Invoke:
       case Instruction::Call:
-        idCallInst(graph, omap, inst);
+        block_has_call |= idCallInst(graph, omap, inst, &next_id);
         break;
       case Instruction::Alloca:
         assert(is_ptr);
         idAllocaInst(graph, omap, inst);
         break;
       case Instruction::Load:
-        idLoadInst(graph, omap, inst);
+        idLoadInst(graph, omap, inst, next_id);
         break;
       case Instruction::Store:
         assert(!is_ptr);
-        idStoreInst(graph, omap, inst);
+        idStoreInst(graph, omap, inst, &next_id);
         break;
       case Instruction::GetElementPtr:
         assert(is_ptr);
@@ -731,9 +926,9 @@ void processBlock(DUG &graph, std::set<const BasicBlock *> &seen,
 
   // Process all of our successor blocks (In DFS order)
   std::for_each(succ_begin(&BB), succ_end(&BB),
-      [&graph, &seen, &omap] (const BasicBlock *succBB) {
+      [&graph, &seen, &omap, next_id] (const BasicBlock *succBB) {
     if (!seen.count(succBB)) {
-      processBlock(graph, seen, omap, *succBB);
+      processBlock(graph, seen, omap, *succBB, next_id);
     }
   });
 }
@@ -754,12 +949,13 @@ void scanFcn(DUG &graph, ObjectMap &omap, const Function &fcn) {
   // Now create constraints in depth first order:
   std::set<const BasicBlock *> seen;
   for (auto &BB : fcn) {
-    processBlock(graph, seen, omap, BB);
+    processBlock(graph, seen, omap, BB, DUG::CFGid::invalid());
   }
 }
 //}}}
 
 }  // End private namespace
+//}}}
 
 bool SpecSFS::identifyObjects(ObjectMap &omap, const Module &M) {
   //{{{
@@ -799,6 +995,12 @@ bool SpecSFS::identifyObjects(ObjectMap &omap, const Module &M) {
       }
     });
 
+    // Each BB in each function gets an ObjID as an object
+    std::for_each(std::begin(fcn), std::end(fcn),
+        [&omap](const BasicBlock &bb) {
+      omap.addObject(&bb);
+    });
+
     // For each instruction:
     std::for_each(inst_begin(fcn), inst_end(fcn),
         [&omap](const Instruction &inst) {
@@ -826,6 +1028,7 @@ bool SpecSFS::createConstraints(DUG &graph, ObjectMap &omap,
     const Module &M) {
   //{{{
 
+  // Special Constraints {{{
   // First, we set up some constraints for our special constraints:
   // Universal value
   graph.add(Constraint::Type::AddressOf, ObjectMap::UniversalValue,
@@ -836,7 +1039,9 @@ bool SpecSFS::createConstraints(DUG &graph, ObjectMap &omap,
   // Null value pts to null object
   graph.add(Constraint::Type::AddressOf, ObjectMap::NullValue,
       ObjectMap::NullObjectValue);
+  //}}}
 
+  // Global Variables {{{
   // Okay, first create nodes for all global variables:
   std::for_each(M.global_begin(), M.global_end(),
       [&graph, &omap](const GlobalVariable &glbl) {
@@ -867,7 +1072,9 @@ bool SpecSFS::createConstraints(DUG &graph, ObjectMap &omap,
           ObjectMap::UniversalValue);
     }
   });
+  //}}}
 
+  // Functions {{{
   // Now that we've dealt with globals, move on to functions
   for (auto &fcn : M) {
     auto obj_id = omap.getObject(&fcn);
@@ -880,7 +1087,7 @@ bool SpecSFS::createConstraints(DUG &graph, ObjectMap &omap,
     addConstraintForConstPtr(graph, omap, fcn);
   }
 
-  // Now we deal with the actual arguments of functions
+  // Now we deal with the actual internals of functions
   for (auto &fcn : M) {
     // If we return a pointer
     if (isa<PointerType>(fcn.getFunctionType()->getReturnType())) {
@@ -922,7 +1129,7 @@ bool SpecSFS::createConstraints(DUG &graph, ObjectMap &omap,
         con_ids.emplace_back(
           graph.add(Constraint::Type::AddressOf, arg_id, id));
       });
-      graph.addUnusedFunction(&fcn, std::move(con_ids));
+      graph.addUnusedFunction(omap.getObject(&fcn), std::move(con_ids));
     }
 
     // If this function has a body
@@ -955,6 +1162,7 @@ bool SpecSFS::createConstraints(DUG &graph, ObjectMap &omap,
       }
     }
   }
+  //}}}
 
   return false;
   //}}}
@@ -963,104 +1171,87 @@ bool SpecSFS::createConstraints(DUG &graph, ObjectMap &omap,
 
 bool SpecSFS::addIndirectCalls(DUG &graph, const Andersens &aux,
     ObjectMap &omap) {
-
-  if_debug(
-    auto smart_print = [](const llvm::Value *val) {
-      if (auto GV = dyn_cast<GlobalValue>(val)) {
-        dout << GV->getName();
-      } else {
-        dout << *val;
-      }
-    };
-  )
-
-  // The mapping of andersen's values to functions
-  std::map<unsigned, DUG::ObjID> anders_to_fcn;
-
-  std::for_each(omap.functions_cbegin(), omap.functions_cend(),
-      [&anders_to_fcn, &aux]
-      (const std::pair<DUG::ObjID, const llvm::Value *> &pair) {
-    anders_to_fcn[aux.obj(pair.second)] = pair.first;
-  });
-
-  /*
-  std::map<unsigned, DUG::ObjID> anders_to_val;
-  std::for_each(omap.values_cbegin(), omap.values_cend(),
-      if_debug([&anders_to_val, &aux, &smart_print])
-      if_not_debug([&anders_to_fcn, &aux])
-      (const std::pair<DUG::ObjID, const llvm::Value *> &pair) {
-    auto aid = aux.valRep(pair.second);
-    dout << "Have mapping: " << aid << " to (" << pair.first << ", ";
-    smart_print(pair.second);
-    dout << ")\n";
-    anders_to_val[aux.valRep(pair.second)] = pair.first;
-  });
-  */
-
-
-  if_debug(
-    dout << "Got ids for functions:";
-    for (auto pr : anders_to_fcn) {
-      dout << " {";
-      auto val = omap.valueAtID(pr.second);
-      smart_print(val);
-      dout << ", " << pr.first << "}";
-    }
-    dout << "\n";
-  )
+  //{{{
+  identifyAUXFcnCallRetInfo(graph, omap, aux);
 
   if_debug(
     dout << "initial unused functions are: ";
     std::for_each(graph.unused_function_begin(), graph.unused_function_end(),
-        [&graph, &omap] (const llvm::Function *fcn) {
+        [&graph, &omap] (DUG::const_unused_function_iterator::reference pr) {
+      const llvm::Function *fcn = cast<Function>(omap.valueAtID(pr.first));
       dout << " " << fcn->getName();
     });
-    dout << "\n";
-  )
-
+    dout << "\n");
 
   // We iterate each indirect call in the DUG
-  // to add the indirect info to the map:
+  // to add the indirect info to the constraint map:
+  TODO("Is using indirect_cbegin() correct here... I think I should switch it"
+      " to the indirect call values added by the CFG components...");
   std::for_each(graph.indirect_cbegin(), graph.indirect_cend(),
-      if_debug([&graph, &aux, &anders_to_fcn, &omap, &smart_print])
-      if_not_debug([&graph, &aux, &anders_to_fcn, &omap])
-      (const std::pair<llvm::Instruction *, DUG::ObjID> &pair) {
-    llvm::CallSite CS(pair.first);
+      // We take different arguments, depending on if we're debugging...
+      [&graph, &aux, &omap]
+      (const std::pair<DUG::ObjID, DUG::CFGid> &pair) {
+    const llvm::CallInst *ci =
+      cast<llvm::CallInst>(omap.valueAtID(pair.first));
+    llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
     auto fptr = CS.getCalledValue();
-    // This is the andersen's node for this element
-    auto ptsto = aux.getPointsTo(fptr);
 
-    if_debug(
-      dout << "have ptsto:";
-      for (auto aid : ptsto) {
-        dout << " " << aid;
-      }
-      dout << "\n";
-    )
+    // Get the functon call/ret info for this function:
+    auto &pr = graph.getCFGCallRetInfo(omap.getValue(fptr));
+    DUG::CFGid aux_call_id = pr.first;
+    DUG::CFGid aux_ret_id = pr.second;
 
-    for (auto anders_id : ptsto) {
-      DUG::ObjID id = anders_to_fcn.at(anders_id);
+    // Add an edge from this call to the fcn
+    DUG::CFGid call_id = pair.second;
+    DUG::CFGid ret_id = graph.getCFGCallSuccessor(call_id);
 
-      // UGH, the llvm stuff doesn't like my const values
-      auto val = const_cast<Value *>(omap.valueAtID(id));
+    // Now add edges
+    graph.addCFGEdge(call_id, aux_call_id);
+    graph.addCFGEdge(aux_ret_id, ret_id);
 
+    bool is_ext = false;
+    const std::vector<DUG::ObjID> &fcnTargets = graph.getIndirFcns(pair.first);
 
-      // Okay, this function points to this value
-      // So we... add edges?
-      // We add a new call constraint
-      dout << "Inserting indirect call from: " << *pair.first << " to " <<
-        cast<Function>(val)->getName() << "\n";
-      addConstraintsForCall(graph, omap, CS, cast<Function>(val));
-      dout << "removing unused function: " <<
-        cast<Function>(val)->getName() << "\n";
-      graph.removeUnusedFunction(cast<Function>(val));
+    // Also, add constraints if needed
+    std::for_each(std::begin(fcnTargets), std::end(fcnTargets),
+          [&graph, &omap, &CS, &is_ext] (const DUG::ObjID fcn_id) {
+      const llvm::Function *fcn = cast<llvm::Function>(omap.valueAtID(fcn_id));
+
+      is_ext |= addConstraintsForCall(graph, omap, CS,
+        const_cast<llvm::Function *>(fcn), nullptr);
+    });
+
+    if (is_ext) {
+      // Add edge through this point due to inserted constraint?
+      graph.addCFGEdge(call_id, ret_id);
     }
+  });
+
+  // Also, add call nodes for the direct calls.  Note, we couldn't do this
+  // earlier, as we hadn't filled out the start/end nodes for all calls yet
+  std::for_each(graph.direct_cbegin(), graph.direct_cend(),
+      [&graph, &omap]
+      (const std::pair<DUG::ObjID, DUG::CFGid> &pair) {
+    llvm::CallInst *ci =
+      cast<llvm::CallInst>(omap.valueAtID(pair.first));
+    llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
+
+    DUG::CFGid fcn_call_id =
+      graph.getCFGFunctionStart(omap.getObject(CS.getCalledFunction()));
+    DUG::CFGid fcn_ret_id = graph.getCFGFunctionEnd(fcn_call_id);
+
+    DU::CFGID call_id = pair.second;
+    DUG::CFGid ret_id = graph.getCFGCallSUccessor(call_id);
+
+    graph.addCFGEdge(call_id, fcn_call_id);
+    graph.addCFGEdge(fcn_ret_id, ret_id);
   });
 
   if_debug(
     dout << "Post insert unused functions are: ";
     std::for_each(graph.unused_function_begin(), graph.unused_function_end(),
-        [&graph, &omap] (const llvm::Function *fcn) {
+        [&graph, &omap] (DUG::const_unused_function_iterator::reference pr) {
+      const llvm::Function *fcn = cast<Function>(omap.valueAtID(pr.first));
       dout << " " << fcn->getName();
     });
     dout << "\n";
@@ -1068,8 +1259,10 @@ bool SpecSFS::addIndirectCalls(DUG &graph, const Andersens &aux,
 
   std::for_each(graph.unused_function_begin(), graph.unused_function_end(),
       [&graph, &omap]
-      (const std::pair<const llvm::Function *, std::vector<DUG::ConsID>> &pr) {
-    addConstraintsForNonInternalLinkage(graph, omap, *pr.first);
+      (const std::pair<DUG::ObjID, std::vector<DUG::ConsID>> &pr) {
+    const llvm::Function *fcn =
+      cast<const llvm::Function>(omap.valueAtID(pr.first));
+    addConstraintsForNonInternalLinkage(graph, omap, *fcn);
     for (auto id : pr.second) {
       auto &cons = graph.getConstraint(id);
       cons.makeNoop();
@@ -1077,5 +1270,6 @@ bool SpecSFS::addIndirectCalls(DUG &graph, const Andersens &aux,
   });
 
   return false;
+  //}}}
 }
 

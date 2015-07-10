@@ -57,6 +57,7 @@ set(SOURCES
 
   src/IdentifyObjects.cpp
   src/Optimize.cpp
+  src/ComputeSSA.cpp
   )
 
 set(HEADERS

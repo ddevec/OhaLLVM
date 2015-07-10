@@ -11,6 +11,8 @@
 #include <set>
 #include <utility>
 
+#define SPECSFS_DEBUG
+#include "include/Debug.h"
 #include "include/ObjectMap.h"
 
 #include "llvm/Function.h"
@@ -132,11 +134,16 @@ static void printHeader(raw_ostream &ofil, idT id,
 
   std::string idNode = idToString(id);
 
+  dout << "got val info type: " << static_cast<int>(pr.first) << "\n";
+  dout << "For reference, special is : " <<
+    static_cast<int>(ObjectMap::Type::Special) << "\n";
+
   // Need a raw_os_ostream to print a value...
   ofil << "  " << idNode << " [label=\"";
   if (pr.first != ObjectMap::Type::Special) {
     printVal(ofil, pr.second);
   } else {
+    dout << "Printing special node: " << idNode << "\n";
     printSpecial(ofil, id);
   }
   ofil << "\"" << getFormatStr(pr.first) << "];\n";
@@ -318,9 +325,23 @@ DUG::ObjID DUG::addNode(ObjectMap &omap) {
   return id;
 }
 
-void DUG::addIndirectCall(ObjID id, llvm::Instruction *inst) {
-  // Indirect graph...
-  indirectCalls_.emplace_back(inst, id);
+bool DUG::removeUnusedFunction(DUG::ObjID fcn_id) {
+  auto it = unusedFunctions_.find(fcn_id);
+
+  if (it != std::end(unusedFunctions_)) {
+    for (auto id : it->second) {
+      auto &cons = getConstraint(id);
+      cons.makeNoop();
+    }
+
+    unusedFunctions_.erase(fcn_id);
+
+    // Successful removal
+    return true;
+  } else {
+    // Unsuccessful removal
+    return false;
+  }
 }
 
 void DUG::associateNode(ObjID id, const Value *val) {

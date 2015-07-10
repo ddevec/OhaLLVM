@@ -13,6 +13,7 @@
 #include <map>
 #include <queue>
 #include <set>
+#include <stack>
 #include <utility>
 #include <vector>
 
@@ -25,8 +26,11 @@
 // This class is actually used at several different levels, with different id
 // mappings, so its templated to be generic for that (for example with
 // ObjID->ObjID in 1:1 mapping, or PEid->ObjID)
-struct NodeEmpty { };
-template <typename idType, typename node_data>
+struct NodeEmpty {
+  void unite(NodeEmpty &) { }
+};
+template <typename srcIdType, typename destIdType,
+         typename node_data = NodeEmpty>
 class SEG {
   //{{{
  public:
@@ -35,13 +39,14 @@ class SEG {
      public:
         // Constructor
         // With constraint(s?) the node is based off of
-        Node(uint32_t nodenum, idType id);
+        Node(uint32_t nodenum, destIdType id);
 
-        // No move/copy {{{
-        Node(const Node &) = delete;
+        // No copy, yes move {{{
+        Node(const Node &) = default;
         // Required for emplace...
         Node(Node &&) = default;
 
+        // We don't allow assignment operators, only explicit cloning?
         Node &operator=(const Node &) = delete;
         Node &operator=(Node &&) = default;
         //}}}
@@ -86,16 +91,16 @@ class SEG {
           return data_;
         }
 
-        idType id() const {
+        destIdType id() const {
           return id_;
         }
 
-        const std::set<DUG::ObjID> &objIds() const {
+        const std::set<srcIdType> &objIds() const {
           return objIds_;
         }
         //}}}
 
-        // Modifiers
+        // Modifiers {{{
         void addSucc(Node &n) {
           succs_.insert(n);
         }
@@ -104,14 +109,20 @@ class SEG {
           preds_.insert(n);
         }
 
-        void addObj(DUG::ObjID id) {
+        void addObj(srcIdType id) {
           objIds_.insert(id);
         }
         //}}}
 
+        // Unite/clone (used for SCC) {{{
+        // Unite -- Used with SCC, returns a new node which is the unification
+        //   of all of these nodes
+        void unite(const Node &n);
+        //}}}
+
      private:
         // For dfs traversal
-        friend class SEG<idType, node_data>;
+        friend class SEG<srcIdType, destIdType, node_data>;
 
         // Private data {{{
         // Used to determine the node's unique id
@@ -122,7 +133,7 @@ class SEG {
         std::set<std::reference_wrapper<Node>> succs_;
 
         // The id for this node
-        idType id_;
+        destIdType id_;
 
         // Data must be move constructible!
         static_assert(std::is_move_constructible<node_data>::value,
@@ -130,12 +141,11 @@ class SEG {
         node_data data_;
 
         // Ids of the nodes represented by this SEGNode
-        std::set<DUG::ObjID> objIds_;
+        std::set<srcIdType> objIds_;
 
         // Used for DFS traversal
         int32_t dfsNumPred_ = std::numeric_limits<int32_t>::max();
         int32_t dfsNumSucc_ = std::numeric_limits<int32_t>::max();
-
         //}}}
 
         // Private helpers {{{
@@ -145,34 +155,70 @@ class SEG {
       //}}}
     };
 
+    // Extra data associated with each node when calculating SCC via Tarjan's
+    struct SCCWrap {
+      //{{{
+      static const int32_t invalidIndex = std::numeric_limits<int32_t>::min();
+
+      explicit SCCWrap(Node &n) : nd(n) { }
+
+      bool operator==(const SCCWrap &wrap) const {
+        return wrap.nd == nd;
+      }
+
+      bool operator<=(const SCCWrap &wrap) const {
+        return wrap.nd <= nd;
+      }
+
+      bool indexInvalid() {
+        return index == invalidIndex;
+      }
+
+      int32_t index = indexInvalid;
+      int32_t lowlevel = indexInvalid;
+      bool onStack = false;
+
+      const Node &nd;
+      //}}}
+    };
+
     // Constructor {{{
     // Inputs:
-    //    id_begin, id_end -- start/end iterators for a range of ids to add
-    //    converter -- Function to convert from the input id type to DUG::ObjIDs
-    //    graph -- The DUG theses nodes reside in
+    //    begin, end -- start/end iterators for a range of ids to add
+    //    converter -- Function to convert from the input id type to srcIdType
     //    init_fcn -- Function called when nodes are created, takes Node &
     //    add_node -- Function called when a constraint is added for a node
     //      This function is responsible for updating up node_data for this
     //      constraint, and setting up pred()/succ() of each node, relative to
     //      this constraint
     //        arguments:
+    //          InputIter::reference &con
     //          Node &src
     //          Node &dest
-    //          const Constraint &con
-    template<typename objToID, typename initializer, typename adder>
-    SEG(objToID &converter, const DUG &graph, initializer &init_fcn,
-        adder &add_node);
+    template<typename InputIter, typename objToID,
+      typename initializer, typename adder>
+    SEG(InputIter st, InputIter en,
+        objToID &converter, initializer &init_fcn, adder &add_node);
     //}}}
 
     // Iterators {{{
-    typedef typename std::map<idType, Node>::iterator node_iterator;
-    typedef typename std::map<idType, Node>::const_iterator const_node_iterator;
+    // Typedefs {{{
+    typedef typename std::map<destIdType, Node>::iterator node_iterator;
+    typedef typename std::map<destIdType, Node>::const_iterator
+      const_node_iterator;
 
     typedef typename std::vector<std::reference_wrapper<Node>>::iterator
       dfs_iterator;
     typedef typename std::vector<std::reference_wrapper<Node>>::const_iterator
       const_dfs_iterator;
 
+    typedef typename std::vector<std::reference_wrapper<Node>>::iterator
+      scc_iterator;
+    typedef typename std::vector<std::reference_wrapper<Node>>::const_iterator
+      const_scc_iterator;
+    //}}}
+
+    // Node iteration (pair<id, node>) {{{
     node_iterator begin() {
       return std::begin(nodes_);
     }
@@ -196,7 +242,9 @@ class SEG {
     const_node_iterator cend() const {
       return nodes_.cend();
     }
+    //}}}
 
+    // dfs iterators (succ and pred) {{{
     dfs_iterator dfs_succ_begin() {
       if (!haveDFSSucc_) {
         fillDFSSucc();
@@ -269,20 +317,57 @@ class SEG {
     }
     //}}}
 
+    // SCC iterators {{{
+    scc_iterator scc_begin() {
+      if (!haveSCC_) {
+        fillSCC();
+      }
+      return std::begin(SCC_);
+    }
+
+    scc_iterator scc_end() {
+      if (!haveSCC_) {
+        fillSCC();
+      }
+      return std::end(SCC_);
+    }
+
+    const_scc_iterator scc_begin() const {
+      assert(haveSCC_);
+      return std::begin(SCC_);
+    }
+
+    const_scc_iterator scc_end() const {
+      assert(haveSCC_);
+      return std::end(SCC_);
+    }
+
+    const_scc_iterator scc_cbegin() const {
+      assert(haveSCC_);
+      return SCC_.cbegin();
+    }
+
+    const_scc_iterator scc_cend() const {
+      assert(haveSCC_);
+      return SCC_.cend();
+    }
+    //}}}
+    //}}}
+
     // Accessors {{{
-    Node &getNode(idType id) {
+    Node &getNode(destIdType id) {
       return nodes_[id];
     }
 
-    const Node &getNode(idType id) const {
+    const Node &getNode(destIdType id) const {
       return nodes_[id];
     }
 
-    Node &getNodeObj(DUG::ObjID id) {
+    Node &getNodeObj(srcIdType id) {
       return objToNode_[id];
     }
 
-    const Node &getNodeObj(DUG::ObjID id) const {
+    const Node &getNodeObj(srcIdType id) const {
       return objToNode_[id];
     }
     //}}}
@@ -290,14 +375,16 @@ class SEG {
  private:
     // Private variables {{{
     // Holds all of the nodes
-    std::map<idType, Node> nodes_;
-    std::map<DUG::ObjID, std::reference_wrapper<Node>> objToNode_;
+    std::map<destIdType, Node> nodes_;
+    std::map<srcIdType, std::reference_wrapper<Node>> objToNode_;
     std::vector<std::reference_wrapper<Node>> dfsPred_;
     std::vector<std::reference_wrapper<Node>> dfsSucc_;
+    std::vector<Node> SCC_;
 
     // Required for dfs (dfs is calculated on visit)
     bool haveDFSPred_ = false;
     bool haveDFSSucc_ = false;
+    bool haveSCC_ = false;
 
     UniqueIdentifier<uint32_t> nodeNum_;
     //}}}
@@ -305,18 +392,23 @@ class SEG {
     // Private helpers {{{
     void fillDFSPred();
     void fillDFSSucc();
+    // Tarjan's SCC algorithm to detect strongly connected components
+    void fillSCC_strongconnect(SCCWrap &nd, int &index,
+        std::stack<std::reference_wrapper<SCCWrap>> &st);
+    void fillSCC();
 
-    void addObjMapping(DUG::ObjID src_obj, Node &nd);
+    void addObjMapping(srcIdType src_obj, Node &nd);
 
     template<typename initializer>
-    Node &getOrCreateNode(idType id, initializer &init);
+    Node &getOrCreateNode(destIdType id, initializer &init);
     //}}}
   //}}}
 };
 
 // Impl helpers {{{
-template <typename idType, typename node_data>
-void SEG<idType, node_data>::addObjMapping(DUG::ObjID src_obj, Node &nd) {
+template <typename srcIdType, typename destIdType, typename node_data>
+void SEG<srcIdType, destIdType, node_data>::addObjMapping(
+    srcIdType src_obj, Node &nd) {
   // This obj key shouldn't be in the mapping, or it should map to this node
   objToNode_.emplace(src_obj, nd);
   nd.addObj(src_obj);
@@ -327,14 +419,15 @@ void SEG<idType, node_data>::addObjMapping(DUG::ObjID src_obj, Node &nd) {
 // Node impl {{{
 // Constructor {{{
 
-template <typename idType, typename node_data>
-SEG<idType, node_data>::Node::Node(uint32_t nodenum, idType id) :
+template <typename srcIdType, typename destIdType, typename node_data>
+SEG<srcIdType, destIdType, node_data>::Node::Node(
+    uint32_t nodenum, destIdType id) :
   nodenum_(nodenum), id_(id) { }
 //}}}
 
 // Visit helper {{{
-template <typename idType, typename node_data>
-void SEG<idType, node_data>::Node::calcDFS(bool dfs_succ,
+template <typename srcIdType, typename destIdType, typename node_data>
+void SEG<srcIdType, destIdType, node_data>::Node::calcDFS(bool dfs_succ,
     int32_t dfs, std::set<std::reference_wrapper<Node>> &visited) {
   // Also do dfs bookkeeping while we're at it
   auto &dfsNum = dfs_succ ? dfsNumSucc_ : dfsNumPred_;
@@ -356,24 +449,41 @@ void SEG<idType, node_data>::Node::calcDFS(bool dfs_succ,
   }
 }
 //}}}
+
+// SCC Helpers {{{
+template <typename srcIdType, typename destIdType, typename node_data>
+void SEG<srcIdType, destIdType, node_data>::Node::unite(const Node &n) {
+  // Merge in the preds and successors
+  preds().insert(std::begin(n.preds()), std::end(n.preds()));
+  succs().insert(std::begin(n.succs()), std::end(n.succs()));
+
+  // Merge in the data
+  data().unite(n.data());
+
+  objIds_.insert(std::begin(n.objIds_), std::end(n.objIds_));
+
+  // NOTE: We ignore dfsNumPred_ and dfsNumSucc_ because we've already
+  //     collected SCCs...
+}
+//}}}
 //}}}
 
 // Constructor {{{
-template <typename idType, typename node_data>
-template<typename objToID, typename initializer, typename adder>
-SEG<idType, node_data>::SEG(objToID &converter,
-    const DUG &graph, initializer &init_fcn, adder &add_node) {
+template <typename srcIdType, typename destIdType, typename node_data>
+template<typename InputIter, typename objToID,
+  typename initializer, typename adder>
+SEG<srcIdType, destIdType, node_data>::SEG(InputIter st, InputIter en,
+    objToID &converter, initializer &init_fcn, adder &add_node) {
   // Okay, we visit each node, and call the initializer on it...
   // We also populate our graphs...
-  std::for_each(graph.constraint_cbegin(), graph.constraint_cend(),
-      [this, &converter, &graph, &init_fcn, &add_node]
-      (const Constraint &con) {
-    // Set up our mapping to this node, initializing it if needed, then add it
-    //     to the graph
-    DUG::ObjID src_obj = con.src();
-    DUG::ObjID dest_obj = con.dest();
-    idType src_id = converter(src_obj);
-    idType dest_id = converter(dest_obj);
+  std::for_each(st, en,
+      [this, &converter, &init_fcn, &add_node]
+      (typename InputIter::reference con) {
+    srcIdType src_obj = con.src();
+    srcIdType dest_obj = con.dest();
+
+    destIdType src_id = converter(src_obj);
+    destIdType dest_id = converter(dest_obj);
 
     Node &src = getOrCreateNode(src_id, init_fcn);
     Node &dest = getOrCreateNode(dest_id, init_fcn);
@@ -387,10 +497,11 @@ SEG<idType, node_data>::SEG(objToID &converter,
 //}}}
 
 // Private helpers {{{
-template <typename idType, typename node_data>
+template <typename srcIdType, typename destIdType, typename node_data>
 template <typename initializer>
-typename SEG<idType, node_data>::Node &
-SEG<idType, node_data>::getOrCreateNode(idType id, initializer &init) {
+typename SEG<srcIdType, destIdType, node_data>::Node &
+SEG<srcIdType, destIdType, node_data>::getOrCreateNode(
+    destIdType id, initializer &init) {
   auto it = nodes_.find(id);
 
   if (it == std::end(nodes_)) {
@@ -405,11 +516,66 @@ SEG<idType, node_data>::getOrCreateNode(idType id, initializer &init) {
 }
 
 // Visit functions {{{
-template <typename idType, typename node_data>
-void SEG<idType, node_data>::fillDFSSucc() {
+// Use Tarjan's method to calculate SCCs for this graph
+template <typename srcIdType, typename destIdType, typename node_data>
+void SEG<srcIdType, destIdType, node_data>::fillSCC_strongconnect(
+    SCCWrap &nd,
+    int &index,
+    std::stack<std::reference_wrapper<SCCWrap>> &st) {
+  nd.index = index;
+  nd.lowlink = index;
+  index++;
+
+  st.push(nd);
+  nd.onStack = true;
+
+  for (Node &succ : nd.succs()) {
+    if (succ.index == nd.indexInvalid()) {
+      fillSCC_strongconnect(succ, index, st);
+      nd.lowlink = std::min(nd.lowlink, succ.lowlink);
+    } else if (succ.onStack) {
+      nd.lowlink = std::min(nd.lowlink, succ.index);
+    }
+  }
+
+  // If nd is a root node
+  if (nd.lowlink == nd.index) {
+    // Copy nd into scc, as our scc root
+    SCC_.emplace_back(nd);
+    Node &rep = SCC_.at(SCC_.size()-1);
+
+    while (true) {
+      SCCWrap &grp = st.top();
+      st.pop();
+
+      // Unite all of the SCCs with the one we just made
+      rep.nd.unite(grp.nd);
+
+      if (grp == rep) {
+        break;
+      }
+    }
+  }
+}
+
+template <typename srcIdType, typename destIdType, typename node_data>
+void SEG<srcIdType, destIdType, node_data>::fillSCC() {
+  int index = 0;
+
+  std::stack<std::reference_wrapper<SCCWrap>> st;
+
+  std::for_each(cbegin(), cend(),
+      [&index, &st] (const std::pair<const srcIdType, const Node> &pr) {
+    strongconnect(SCCWrap(pr.second), index, st);
+  });
+}
+
+// Calculate a valid DFS traversal order
+template <typename srcIdType, typename destIdType, typename node_data>
+void SEG<srcIdType, destIdType, node_data>::fillDFSSucc() {
   // Okay, visit each node w/ dfs info
   std::for_each(begin(), end(),
-      [] (std::pair<const DUG::ObjID, Node> &pr) {
+      [] (std::pair<const srcIdType, Node> &pr) {
     std::set<std::reference_wrapper<Node>> visited;
     Node &node = pr.second;
     node.calcDFS(true, 0, visited);
@@ -427,11 +593,11 @@ void SEG<idType, node_data>::fillDFSSucc() {
   haveDFSSucc_ = true;
 }
 
-template <typename idType, typename node_data>
-void SEG<idType, node_data>::fillDFSPred() {
+template <typename srcIdType, typename destIdType, typename node_data>
+void SEG<srcIdType, destIdType, node_data>::fillDFSPred() {
   // Okay, visit each node w/ dfs info
   std::for_each(begin(), end(),
-      [] (std::pair<const DUG::ObjID, Node> &pr) {
+      [] (std::pair<const srcIdType, Node> &pr) {
     std::set<std::reference_wrapper<Node>> visited;
     Node &node = pr.second;
     node.calcDFS(false, 0, visited);
@@ -453,34 +619,4 @@ void SEG<idType, node_data>::fillDFSPred() {
 //}}}
 //}}}
 
-
-/* -- Specialization for Ramalingam's, needs to go in those nodes
-        bool p() const {
-          return p_;
-        }
-
-        bool m() const {
-          return !p_;
-        }
-
-        bool r() const {
-          return r_;
-        }
-
-        bool u() const {
-          return !r_;
-        }
-
-        bool c() const {
-          return c_;
-        }
-
-        // Private variables {{{
-        // To identify p/m nodes (see computeSSA comments)
-        bool p_;
-        // To identify r/u nodes (see computeSSA comments)
-        bool r_;
-        // To identify constant nodes (see computeSSA comments)
-        bool c_;
-*/
 #endif  // INCLUDE_SEG_H_

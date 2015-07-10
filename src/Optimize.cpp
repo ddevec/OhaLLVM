@@ -26,12 +26,12 @@
 using namespace llvm;  // NOLINT
 
 namespace {
-
-
-// Typedef for the HU Sparse Evaluation Graph
+// Typedefs for the HU Sparse Evaluation Graph {{{
 struct HUData;
-typedef SEG<DUG::ObjID, HUData> HUSeg;
+typedef SEG<DUG::ObjID, DUG::ObjID, HUData> HUSeg;
 typedef HUSeg::Node HUNode;
+typedef SparseBitVector<> Bitmap;
+//}}}
 
 // Simple helpers needed later {{{
 static int getIdx(DUG::ObjID id) {
@@ -43,10 +43,7 @@ static DUG::ObjID return_self(DUG::ObjID id) {
 }
 //}}}
 
-// Simple typedef for bitmap
-typedef SparseBitVector<> Bitmap;
-
-// Data for HU nodes
+// Data for HU nodes {{{
 struct HUData {
   //{{{
   void addPtsTo(DUG::ObjID id) {
@@ -81,7 +78,7 @@ struct HUData {
   }
   //}}}
 };
-
+//}}}
 
 // Debugging fcns {{{
 template<typename idT>
@@ -113,16 +110,42 @@ static std::string idToString(idT id) {
 }
 //}}}
 
-
-// Okay, we're going to need a graph of some kind...
 // Helper Functions {{{
 static DUG::PEid getNextPE() {
   static UniqueIdentifier<int32_t> PENum;
   return DUG::PEid(PENum.next());
 }
 
-//}}}
 
+// Comparrison fcn for bitmaps
+struct BitmapLT {
+  bool operator() (const Bitmap &b1, const Bitmap &b2) {
+    auto it1 = std::begin(b1);
+    auto it2 = std::begin(b2);
+    auto en1 = std::end(b1);
+    auto en2 = std::end(b2);
+
+    // True if any element b1 < b2
+    for (; it1 != en1 && it2 != en2; ++it1, ++it2) {
+      // if it1 < it2 : b1 < b2
+      if (*it1 < *it2) {
+        return true;
+      // If it1 > it2 : b1 > b2
+      } else if (*it1 > *it2) {
+        return false;
+      }
+      // Otherwise, they are equal, try the next element
+    }
+
+    // If they are equivalent but b1 is longer b1 is less than it b2
+    if (it1 != en1) {
+      return true;
+    }
+
+    return false;
+  }
+};
+//}}}
 
 // Helpers requiring HUNodes {{{
 static void createGraph(const Constraint &con,
@@ -164,9 +187,9 @@ static void createGraph(const Constraint &con,
   }
 }
 //}}}
-
 }  // End anon namespace
 
+// optimizeConstraints {{{
 bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
   // Okay, we run HU here, over the constraints
   //
@@ -189,8 +212,9 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
     createGraph(con, src, dest, omap);
   };
 
-  // The offline graph for optimizations
-  HUSeg seg(return_self, graph, init_fcn, add_node);
+  // Create the initial graph
+  HUSeg seg(graph.constraint_begin(), graph.constraint_end(),
+      return_self, init_fcn, add_node);
 
   if_debug(
     for (auto &pair : nodes) {
@@ -202,9 +226,10 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
       dout << "\n";
     });
 
-  // Okay, now that we made the graph, do a dfs visit, and run visitHU
+  // Now iterate in DFS order
   std::for_each(seg.dfs_pred_begin(), seg.dfs_pred_end(),
       [](HUNode &n) {
+    // Do the HU visit (pred collection) on each node
     HUData::visitHU(n);
   });
 
@@ -218,36 +243,9 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
       dout << "\n";
     });
 
-  // Comparrison fcn for bitmaps
-  auto bitmap_lt = [](const Bitmap &b1, const Bitmap &b2) {
-    auto it1 = std::begin(b1);
-    auto it2 = std::begin(b2);
-    auto en1 = std::end(b1);
-    auto en2 = std::end(b2);
-
-    // True if any element b1 < b2
-    for (; it1 != en1 && it2 != en2; ++it1, ++it2) {
-      // if it1 < it2 : b1 < b2
-      if (*it1 < *it2) {
-        return true;
-      // If it1 > it2 : b1 > b2
-      } else if (*it1 > *it2) {
-        return false;
-      }
-      // Otherwise, they are equal, try the next element
-    }
-
-    // If they are equivalent but b1 is longer b1 is less than it b2
-    if (it1 != en1) {
-      return true;
-    }
-
-    return false;
-  };
-
   //  Used to map objs to the PE class
   std::map<DUG::ObjID, DUG::PEid> obj_to_pe;
-  std::map<Bitmap, DUG::PEid, decltype(bitmap_lt)> pts_to_pe(bitmap_lt);
+  std::map<Bitmap, DUG::PEid, BitmapLT> pts_to_pe;
 
   // Now create the pointer equivalency ids
   for (auto &pair : seg) {
@@ -291,4 +289,5 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
 
   return false;
 }
+//}}}
 
