@@ -89,7 +89,7 @@ bool SpecSFS::runOnModule(Module &M) {
     error("CreateConstraints failure!");
   }
 
-  graph.printDotConstraintGraph("graph.dot", omap);
+  // graph.printDotConstraintGraph("graph.dot", omap);
 
   // Initial optimization pass
   // Runs HU on the graph as it stands, w/ only top level info filled in
@@ -99,7 +99,7 @@ bool SpecSFS::runOnModule(Module &M) {
     error("OptimizeConstraints failure!");
   }
 
-  graph.printDotPEGraph("graphPE.dot", omap);
+  // graph.printDotPEGraph("graphPE.dot", omap);
 
 
   // Get AUX info, in this instance we choose Andersens
@@ -116,10 +116,10 @@ bool SpecSFS::runOnModule(Module &M) {
   }
 
   dout << "Printing post indir graph\n";
-  graph.printDotConstraintGraph("graph_indr.dot", omap);
+  // graph.printDotConstraintGraph("graph_indr.dot", omap);
 
   dout << "Printing post indir PE graph\n";
-  graph.printDotPEGraph("graphPE_indr.dot", omap);
+  // graph.printDotPEGraph("graphPE_indr.dot", omap);
 #if 0
   // Now, compute the SSA form for the top-level variables
   // We translate any PHI nodes into copy nodes... b/c the paper says so

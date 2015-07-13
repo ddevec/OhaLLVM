@@ -44,12 +44,6 @@ class PEFGData {
       r_ |= n.r();
     }
 
-    void unite(const PEFGNode &n) {
-      const PEFGData &d = n.data();
-      // Oh boy, do the actual uniting
-      unite(d);
-    }
-
     void setM() {
       m_ = true;
     }
@@ -88,7 +82,7 @@ void T6(PEFG &) {
 void T5(PEFG &) {
 }
 
-static void Ramalingam(PEFG &G) {
+void Ramalingam(PEFG &G) {
   // T4 -- This transform collapses a set of strongly connected p (preserving)
   // nodes into a single node.
   T4(G);
@@ -128,8 +122,9 @@ static void Ramalingam(PEFG &G) {
 
 // I suppose this requires knowing the set of nodes we care about... as we're
 // calculating the "Partially Equivalent Flow Graph" representation
-bool SpecSFS::computeSSA(DUG &graph,
-    const std::vector<DUG::CFGEdge> &def_use) {
+bool SpecSFS::computeSSA(DUG &,
+    const std::vector<DUG::CFGEdge> &) {
+  /*
   auto converter = [&graph](DUG::CFGid id){
     return id;
   };
@@ -154,6 +149,7 @@ bool SpecSFS::computeSSA(DUG &graph,
       converter, init_fcn, add_node);
 
   Ramalingam(G);
+  */
 
   return false;
 }

@@ -30,34 +30,6 @@ DUG::ObjID::base_type obj_id(DUG::ObjID id) {
 //}}}
 
 // Support for printing {{{
-template<typename idT>
-static std::string idToString(idT id) {
-  auto val = id.val();
-
-  if (val == 0) {
-    return "a";
-  }
-
-  int len = 0;
-
-  auto val_bkp = val;
-  while (val_bkp != 0) {
-    ++len;
-    val_bkp /= 10;
-  }
-
-  std::string ret(len, 'a');
-
-  for (int i = 0; i < len; i++) {
-    char digit = val % 10;
-    val /= 10;
-
-    ret.replace(i, 1, 1, 'a' + digit);
-  }
-
-  return ret;
-}
-
 static void printVal(raw_ostream &ofil, const Value *val) {
   if (val == nullptr) {
     ofil << "temp node";
@@ -74,6 +46,7 @@ static std::string getFormatStr(DUG::PEid) {
   return " shape=box";
 }
 
+__attribute__((unused))
 static std::string getFormatStr(ObjectMap::Type type) {
   switch (type) {
     case ObjectMap::Type::Special:
@@ -124,7 +97,7 @@ static const std::string getConsStr(const Constraint &cons) {
 }
 
 template<typename idT>
-static void printHeader(raw_ostream &ofil, idT id,
+static void printHeader(raw_ostream &, idT id,
     const DUG &, const ObjectMap &omap) {
   auto pr = omap.getValueInfo(id);
   // If pr is a temp node, don't print it
@@ -139,7 +112,9 @@ static void printHeader(raw_ostream &ofil, idT id,
     static_cast<int>(ObjectMap::Type::Special) << "\n";
 
   // Need a raw_os_ostream to print a value...
+  /*
   ofil << "  " << idNode << " [label=\"";
+  auto pr = omap.getValueInfo(id);
   if (pr.first != ObjectMap::Type::Special) {
     printVal(ofil, pr.second);
   } else {
@@ -147,6 +122,7 @@ static void printHeader(raw_ostream &ofil, idT id,
     printSpecial(ofil, id);
   }
   ofil << "\"" << getFormatStr(pr.first) << "];\n";
+  */
 }
 
 static void printMultiHeader(raw_ostream &ofil,
@@ -179,15 +155,6 @@ static void printMultiHeader(raw_ostream &ofil,
   ofil << "\"" << getFormatStr(peid) << "];\n";
 }
 
-static void printDotHeader(raw_ostream &ofil) {
-  ofil << "digraph graphname {\n";
-}
-
-static void printDotFooter(raw_ostream &ofil) {
-  // We use endl here, so the file will force flush
-  ofil << "}" << "\n";
-}
-
 static DUG::PEid getPEid(DUG::ObjID id, const DUG &graph) {
   DUG::PEid ret = DUG::PEid(id.val() + (1<<30));
   auto pe = graph.getPE(id);
@@ -200,12 +167,16 @@ static DUG::PEid getPEid(DUG::ObjID id, const DUG &graph) {
   return ret;
 }
 
+// FIXME: replace and remove
+__attribute__((unused))
 static void printPENodeHeader(raw_ostream &ofil, const DUG &graph,
     DUG::PEid peid, const std::set<DUG::ObjID> &ids, const ObjectMap &omap) {
   printMultiHeader(ofil, peid, ids, graph, omap);
 }
 
 
+// FIXME: Replace and remove
+__attribute__((unused))
 static void printConstraintNodeHeader(raw_ostream &ofil, const DUG &graph,
     const Constraint &con, const ObjectMap &omap,
     std::set<DUG::ObjID> &seen) {
@@ -253,11 +224,14 @@ static DUG::ObjID getOrigin(const Constraint &con) {
   }
 }
 
+__attribute__((unused))
 static void printConstraintNodeLinks(raw_ostream &ofil, const DUG &,
     const Constraint &con, const ObjectMap &) {
+  /*
   if (con.isNoop()) {
     return;
   }
+  */
   // Okay... now we print the links...
   // This is to decide on the logical arrow direction
   auto id = getTarget(con);
@@ -273,11 +247,14 @@ static void printConstraintNodeLinks(raw_ostream &ofil, const DUG &,
     " [label=\"" << consStr << "\"];\n";
 }
 
+__attribute__((unused))
 static void printPENodeLinks(raw_ostream &ofil, const DUG &graph,
     const Constraint &con, const ObjectMap &) {
+  /*
   if (con.isNoop()) {
     return;
   }
+  */
   // Okay... now we print the links...
   // This is to decide on the logical arrow direction
   auto id = getPEid(getTarget(con), graph);
@@ -296,31 +273,24 @@ static void printPENodeLinks(raw_ostream &ofil, const DUG &graph,
 }  // end anon. namespace
 
 // Constraint {{{
-Constraint::Constraint(Type t, ObjectMap::ObjID d, ObjectMap::ObjID s) :
-  Constraint(t, d, s, 0) { }
+Constraint::Constraint(ObjectMap::ObjID s, ObjectMap::ObjID d, Type t) :
+  Constraint(s, d, t, 0) { }
 
-Constraint::Constraint(Type t, ObjectMap::ObjID d, ObjectMap::ObjID s,
+Constraint::Constraint(ObjectMap::ObjID d, ObjectMap::ObjID s, Type t,
     int32_t o) : type_(t), dest_(d), src_(s), offs_(o) { }
 //}}}
 
-
-void DUG::prepare(const ObjectMap &omap) {
-  // Create a node per constraint (initially)
-  nodes_.resize(omap.size());
-}
-
 DUG::ConsID DUG::add(Constraint::Type type, ObjID d, ObjID s, int o) {
-  constraints_.emplace_back(type, d, s, o);
-  return ConsID(constraints_.size()-1);
+  constraintGraph_.addEdge(s, d, type, o);
+
+  return ConsID(s, d);
 }
 
 DUG::ObjID DUG::addNode(ObjectMap &omap) {
   auto id = omap.makeTempValue();
 
   // Put a new node on the back of nodes
-  nodes_.emplace_back();
-
-  assert(ObjID(nodes_.size()-1) == id);
+  constraintGraph_.createNode(id);
 
   return id;
 }
@@ -330,8 +300,7 @@ bool DUG::removeUnusedFunction(DUG::ObjID fcn_id) {
 
   if (it != std::end(unusedFunctions_)) {
     for (auto id : it->second) {
-      auto &cons = getConstraint(id);
-      cons.makeNoop();
+      constraintGraph_.removeEdge(id);
     }
 
     unusedFunctions_.erase(fcn_id);
@@ -344,13 +313,17 @@ bool DUG::removeUnusedFunction(DUG::ObjID fcn_id) {
   }
 }
 
-void DUG::associateNode(ObjID id, const Value *val) {
-  assert(static_cast<size_t>(obj_id(id)) < nodes_.size());
-  DUGNode &node = nodes_[obj_id(id)];
+/*
+void DUG::associateNode(ObjID id, ObjID val) {
+  //assert(static_cast<size_t>(obj_id(id)) < nodes_.size());
+  ConstraintNode &node =
+    constraintGraph_.getNode(id).data();
 
-  node.setValue(val);
+  node.id = val;
 }
+*/
 
+/*
 // Debug Printing functions {{{
 void DUG::printDotConstraintGraph(const std::string &graphname,
     const ObjectMap &omap) const {
@@ -412,5 +385,6 @@ void DUG::printDotPEGraph(const std::string &graphname,
 
   printDotFooter(ofil);
 }
+*/
 //}}}
 

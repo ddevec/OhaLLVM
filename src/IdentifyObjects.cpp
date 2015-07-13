@@ -126,7 +126,7 @@ ObjectMap::ObjID getValueReturn(const ObjectMap &omap, const Value *v) {
 ObjectMap::ObjID getValueUpdate(DUG &graph, ObjectMap &omap, const Value *v) {
   auto id = omap.getValue(v);
 
-  graph.associateNode(id, v);
+  graph.associateNode(id, id);
 
   return id;
 }
@@ -671,7 +671,7 @@ static bool idCallInst(DUG &graph, ObjectMap &omap, const Instruction &inst,
   CallSite CS(const_cast<Instruction *>(&inst));
 
   if (isMalloc(&inst)) {
-    graph.associateNode(omap.getObject(&inst), &inst);
+    graph.associateNode(omap.getObject(&inst), omap.getValue(&inst));
     graph.add(Constraint::Type::AddressOf, getValueUpdate(graph, omap, &inst),
         omap.getObject(&inst));
   }
@@ -691,7 +691,7 @@ static void idAllocaInst(DUG &graph, ObjectMap &omap,
   auto obj_id = omap.getObject(&alloc);
 
   // Associate that obj with this value
-  graph.associateNode(obj_id, &alloc);
+  graph.associateNode(obj_id, omap.getValue(&inst));
 
   // Add a constraint pointing this value to that object
   graph.add(Constraint::Type::AddressOf, getValueUpdate(graph, omap, &alloc),
@@ -1047,7 +1047,7 @@ bool SpecSFS::createConstraints(DUG &graph, ObjectMap &omap,
       [&graph, &omap](const GlobalVariable &glbl) {
     // Associate the global address with a node:
     auto obj_id = omap.getObject(&glbl);
-    graph.associateNode(obj_id, &glbl);
+    // graph.associateNode(obj_id, &glbl);
 
     // Create the constraint for the actual global
     graph.add(Constraint::Type::AddressOf, getValueUpdate(graph, omap, &glbl),
@@ -1078,7 +1078,7 @@ bool SpecSFS::createConstraints(DUG &graph, ObjectMap &omap,
   // Now that we've dealt with globals, move on to functions
   for (auto &fcn : M) {
     auto obj_id = omap.getObject(&fcn);
-    graph.associateNode(obj_id, &fcn);
+    // graph.associateNode(obj_id, &fcn);
 
     graph.add(Constraint::Type::AddressOf, getValueUpdate(graph, omap, &fcn),
         obj_id);
@@ -1092,11 +1092,11 @@ bool SpecSFS::createConstraints(DUG &graph, ObjectMap &omap,
     // If we return a pointer
     if (isa<PointerType>(fcn.getFunctionType()->getReturnType())) {
       // Create a node for this fcn's return
-      graph.associateNode(omap.getReturn(&fcn), &fcn);
+      graph.associateNode(omap.getReturn(&fcn), omap.getObject(&fcn));
     }
     // Set up our vararg node
     if (fcn.getFunctionType()->isVarArg()) {
-      graph.associateNode(omap.getVarArg(&fcn), &fcn);
+      graph.associateNode(omap.getVarArg(&fcn), omap.getObject(&fcn));
     }
 
     // Update the value for each arg
@@ -1185,8 +1185,6 @@ bool SpecSFS::addIndirectCalls(DUG &graph, const Andersens &aux,
 
   // We iterate each indirect call in the DUG
   // to add the indirect info to the constraint map:
-  TODO("Is using indirect_cbegin() correct here... I think I should switch it"
-      " to the indirect call values added by the CFG components...");
   std::for_each(graph.indirect_cbegin(), graph.indirect_cend(),
       // We take different arguments, depending on if we're debugging...
       [&graph, &aux, &omap]
@@ -1231,20 +1229,29 @@ bool SpecSFS::addIndirectCalls(DUG &graph, const Andersens &aux,
   // earlier, as we hadn't filled out the start/end nodes for all calls yet
   std::for_each(graph.direct_cbegin(), graph.direct_cend(),
       [&graph, &omap]
-      (const std::pair<DUG::ObjID, DUG::CFGid> &pair) {
-    llvm::CallInst *ci =
-      cast<llvm::CallInst>(omap.valueAtID(pair.first));
-    llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
+      (const std::pair<DUG::CFGid, std::vector<DUG::ObjID>> &pair) {
+    DUG::CFGid call_id = pair.first;
+    DUG::CFGid ret_id = graph.getCFGCallSuccessor(call_id);
 
-    DUG::CFGid fcn_call_id =
-      graph.getCFGFunctionStart(omap.getObject(CS.getCalledFunction()));
-    DUG::CFGid fcn_ret_id = graph.getCFGFunctionEnd(fcn_call_id);
+    std::for_each(pair.second.cbegin(), pair.second.cend(),
+        [&graph, &omap, &call_id, &ret_id] (const DUG::ObjID &ins_id){
+      dout << "valueAtID (" << ins_id << ") is: " << *omap.valueAtID(ins_id);
+      const llvm::CallInst *ci =
+        dyn_cast<llvm::CallInst>(omap.valueAtID(ins_id));
+      if (ci) {
+        llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
 
-    DU::CFGID call_id = pair.second;
-    DUG::CFGid ret_id = graph.getCFGCallSUccessor(call_id);
+        DUG::ObjID fcn_id = omap.getObject(CS.getCalledFunction());
+        DUG::CFGid fcn_call_id =
+          graph.getCFGFunctionStart(fcn_id);
+        DUG::CFGid fcn_ret_id = graph.getCFGFunctionReturn(fcn_id);
 
-    graph.addCFGEdge(call_id, fcn_call_id);
-    graph.addCFGEdge(fcn_ret_id, ret_id);
+        graph.addCFGEdge(call_id, fcn_call_id);
+        graph.addCFGEdge(fcn_ret_id, ret_id);
+      } else {
+        dout << "skipping value: " << *ci << "\n";
+      }
+    });
   });
 
   if_debug(
@@ -1264,8 +1271,11 @@ bool SpecSFS::addIndirectCalls(DUG &graph, const Andersens &aux,
       cast<const llvm::Function>(omap.valueAtID(pr.first));
     addConstraintsForNonInternalLinkage(graph, omap, *fcn);
     for (auto id : pr.second) {
+      graph.removeConstraint(id);
+      /*
       auto &cons = graph.getConstraint(id);
       cons.makeNoop();
+      */
     }
   });
 

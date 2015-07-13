@@ -18,8 +18,7 @@
 
 #include "include/util.h"
 #include "include/ObjectMap.h"
-
-#include "llvm/Instructions.h"
+#include "include/SEG.h"
 
 class PtsSet {
   //{{{
@@ -33,15 +32,15 @@ class PtsSet {
 class Constraint {
   //{{{
  public:
-    enum class Type { Copy, Load, Store, AddressOf, Noop };
+    enum class Type { Copy, Load, Store, AddressOf };
 
     // Constructors {{{
-    Constraint(Type t, ObjectMap::ObjID d, ObjectMap::ObjID s);
-    Constraint(Type t, ObjectMap::ObjID d, ObjectMap::ObjID s, int32_t o);
+    Constraint(ObjectMap::ObjID s, ObjectMap::ObjID d, Type t);
+    Constraint(ObjectMap::ObjID s, ObjectMap::ObjID d, Type t, int32_t o);
 
     // No copys, yes moves {{{
-    Constraint(const Constraint &) = delete;
-    Constraint &operator=(const Constraint&) = delete;
+    Constraint(const Constraint &) = default;
+    Constraint &operator=(const Constraint&) = default;
 
     Constraint(Constraint &&) = default;
     Constraint &operator=(Constraint&&) = default;
@@ -67,6 +66,7 @@ class Constraint {
     //}}}
 
     // Noop helpers {{{
+    /*
     bool isNoop() const {
       return type() == Type::Noop;
     }
@@ -74,6 +74,7 @@ class Constraint {
     void makeNoop() {
       type_ = Type::Noop;
     }
+    */
     //}}}
 
     // Target helpers {{{
@@ -88,8 +89,10 @@ class Constraint {
           return true;
         case Type::Copy:
           return false;
+        /*
         case Type::Noop:
           return false;
+          */
         default:
           llvm_unreachable("Unrecognized constraint type");
       }
@@ -120,22 +123,33 @@ class DUG {
   //{{{
  public:
     // Id Types {{{
-    struct pe_id { };
-    typedef ID<pe_id, int32_t, -1> PEid;
     typedef ObjectMap::ObjID ObjID;
 
+    struct pe_id { };
+    typedef ID<pe_id, int32_t, -1> PEid;
+
+    /* -- We switched this to pair<ObjID, ObjID>
     struct con_id { };
     typedef ID<con_id, int32_t, -1> ConsID;
+    */
 
     // Control Flow graph ids
     struct cfg_id { };
     typedef ID<cfg_id, int32_t, -1> CFGid;
+
     //}}}
 
     // Internal classes {{{
+    // Constraint node {{{
+    struct ConstraintNode {
+      ObjID id;
+    };
+    //}}}
+
     // CFGNodes {{{
     class CFGNode {
      public:
+        CFGNode() = default;
         // No Copy/move {{{
         CFGNode(const CFGNode &) = delete;
         CFGNode(CFGNode &&) = delete;
@@ -204,6 +218,15 @@ class DUG {
     //}}}
     //}}}
 
+    // Graph types {{{
+    typedef SEG<DUG::ObjID, SEGNodeEmpty, Constraint> ConstraintGraph;
+    typedef SEG<DUG::PEid, SEGNodeEmpty, Constraint> ConstraintPEGraph;
+    typedef SEG<DUG::CFGid, CFGNode, CFGEdge> ControlFlowGraph;
+
+    typedef std::pair<ObjID, ObjID> ConsID;
+    //}}}
+
+
     // Constructors {{{
     // Default constructor
     DUG() = default;
@@ -218,12 +241,12 @@ class DUG {
     //}}}
 
     // DUG Construction Methods {{{
-    void prepare(const ObjectMap &omap);
+    void prepare(const ObjectMap &) { }
 
     ConsID add(Constraint::Type, ObjID d, ObjID s, int32_t o = 0);
 
-    Constraint &getConstraint(ConsID id) {
-      return constraints_.at(id.val());
+    const Constraint &getConstraint(ConsID id) const {
+      return constraintGraph_.getEdge(id);
     }
 
     ObjID addNode(ObjectMap &omap);
@@ -240,7 +263,15 @@ class DUG {
 
     bool removeUnusedFunction(DUG::ObjID fcn_id);
 
-    void associateNode(ObjID node, const llvm::Value *val);
+    void associateNode(ObjID, ObjID) { }
+
+    void removeConstraint(ConsID id) {
+      constraintGraph_.removeEdge(id);
+    }
+
+    const ConstraintGraph &getConstraintGraph() const {
+      return constraintGraph_;
+    }
     //}}}
 
     // CFG tracking {{{
@@ -262,7 +293,7 @@ class DUG {
       cfgCallSuccessors_[call_id] = ret_id;
     }
 
-    void addCFGIndirectCall(CFGid call_id, ObjID call_insn_id,
+    void addCFGIndirectCall(CFGid call_id, ObjID,
         CFGid ret_id) {
       // Don't think I actually need this... I'm using another function
       // instead... I should clean it up at some point
@@ -320,7 +351,12 @@ class DUG {
 
     // CFG Unique Identifier Generator {{{
     CFGid getCFGid() {
-      return CFGid(cfgIdGenerator_.next());
+      auto ret = CFGid(cfgIdGenerator_.next());
+
+      cfgNodes_.emplace(std::piecewise_construct, std::make_tuple(ret),
+          std::make_tuple());
+
+      return ret;
     }
     //}}}
     //}}}
@@ -392,45 +428,6 @@ class DUG {
     };
     //}}}
 
-    // Constraint iterators {{{
-    /*
-    typedef pair_iter<std::vector<Constraint>::iterator, Constraint>
-      constraint_iterator;
-    typedef pair_iter<std::vector<Constraint>::const_iterator, const Constraint>
-      const_constraint_iterator;
-    */
-    typedef std::vector<Constraint>::iterator constraint_iterator;
-    typedef std::vector<Constraint>::const_iterator const_constraint_iterator;
-
-    size_t constraintSize() const {
-      return constraints_.size();
-    }
-
-    constraint_iterator constraint_begin() {
-      return std::begin(constraints_);
-    }
-
-    constraint_iterator constraint_end() {
-      return std::begin(constraints_);
-    }
-
-    const_constraint_iterator constraint_begin() const {
-      return std::begin(constraints_);
-    }
-
-    const_constraint_iterator constraint_end() const {
-      return std::end(constraints_);
-    }
-
-    const_constraint_iterator constraint_cbegin() const {
-      return constraints_.cbegin();
-    }
-
-    const_constraint_iterator constraint_cend() const {
-      return constraints_.cend();
-    }
-    //}}}
-
     // Indirect Call Iterators {{{
     typedef std::vector<std::pair<ObjID, CFGid>>::iterator
       indirect_call_iterator;
@@ -460,7 +457,37 @@ class DUG {
     const_indirect_call_iterator indirect_cend() const {
       return indirectCalls_.cend();
     }
+    //}}}
 
+    // Direct Call Iterators {{{
+    typedef std::map<CFGid, std::vector<ObjID>>::iterator
+      direct_call_iterator;
+    typedef std::map<CFGid, std::vector<ObjID>>::const_iterator
+      const_direct_call_iterator;
+
+    direct_call_iterator direct_begin() {
+      return std::begin(cfgDirCallsites_);
+    }
+
+    direct_call_iterator direct_end() {
+      return std::end(cfgDirCallsites_);
+    }
+
+    const_direct_call_iterator direct_begin() const {
+      return std::begin(cfgDirCallsites_);
+    }
+
+    const_direct_call_iterator direct_end() const {
+      return std::end(cfgDirCallsites_);
+    }
+
+    const_direct_call_iterator direct_cbegin() const {
+      return cfgDirCallsites_.cbegin();
+    }
+
+    const_direct_call_iterator direct_cend() const {
+      return cfgDirCallsites_.cend();
+    }
     //}}}
 
     // Unused Function Iterators {{{
@@ -492,7 +519,6 @@ class DUG {
     const_unused_function_iterator unused_function_cend() const {
       return unusedFunctions_.cend();
     }
-
     //}}}
 
     // Def-use Iterators {{{
@@ -564,13 +590,11 @@ class DUG {
     };
 
     // Private variables {{{
-    // Our vector of nodes
-    std::vector<DUGNode> nodes_;
-
     // Constraint data
-    std::vector<Constraint> constraints_;
+    ConstraintGraph constraintGraph_;
 
     // Control Flow Graph data {{{
+
     // The actual edges in the graph
     std::vector<CFGEdge> cfgEdges_;
     // CFGids to CFGNodes
@@ -579,7 +603,7 @@ class DUG {
     // FunctionID to call/ret nodes
     std::map<ObjID, std::pair<CFGid, CFGid>> cfgFcnToCallRet_;
 
-    // Maps Control Flow nodes to the call functions wthin them
+    // Maps Control Flow nodes to the call functions within them
     std::map<CFGid, std::vector<ObjID>> cfgDirCallsites_;
     // Maps Control Flow nodes to the call instructions wthin them
     std::map<CFGid, std::vector<ObjID>> cfgIndirCallsites_;
