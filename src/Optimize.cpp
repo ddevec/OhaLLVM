@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+// #define SPECSFS_DEBUG
 #include "include/Debug.h"
 
 #include "include/SEG.h"
@@ -41,7 +42,8 @@ typedef SparseBitVector<> Bitmap;
 struct HUData {
   //{{{
   HUData() = default;
-  explicit HUData(const SEGNodeEmpty &) { }
+  template<typename old_node>
+  explicit HUData(const old_node &) { }
 
   void addPtsTo(DUG::ObjID id) {
     ptsto_.set(getIdx(id));
@@ -96,45 +98,63 @@ struct HUData {
   //}}}
 };
 
+// FIXME: HAX to be removed later
+ObjectMap *g_omap;
 
 struct HUEdge {
   //{{{
  public:
     template<typename graph_type>
-    HUEdge(graph_type *graph, const Constraint &con) :
+    HUEdge(graph_type *graph, const Constraint<DUG::ObjID> &con) :
         src_(con.src()), dest_(con.dest()), type_(con.type()) {
       auto &dest = graph->getNode(con.dest());
+      auto &src = graph->getNode(con.src());
 
       switch (con.type()) {
-        case Constraint::Type::Store:
+        case Constraint<DUG::ObjID>::Type::Store:
           // I think we just ignore stores
           break;
-        case Constraint::Type::Load:
+        case Constraint<DUG::ObjID>::Type::Load:
           // Add its own indirect ptsto
           if (con.offs() == 0) {
-            dout << "Adding edge: " << idToString(con.src()) << " -> " <<
-              idToString(con.dest()) << "\n";
-            dest.addPred(con.src());
+            if_debug(
+              dout << "Adding edge: " << idToString(con.src()) << " -> " <<
+                idToString(con.dest()) << "\n";
+              dout << "Adding pred to: ";
+              src.print_label(dout, *g_omap);
+              dout << "\n");
+
+            src.addPred(con.dest());
           } else {
-            dout << "Seting: " << idToString(con.src()) << " to indirect\n";
-            dest.data().setIndirect();
+            dout << "Setting: " << idToString(con.src()) << " to indirect\n";
+            src.data().setIndirect();
           }
           break;
-        case Constraint::Type::AddressOf:
-          dout << "Seting: " << idToString(con.dest()) << "to indirect\n";
-          dout << "Adding ptsto: " << idToString(con.src()) << " to ptsto of: "
-            << idToString(con.dest()) << "\n";
+        case Constraint<DUG::ObjID>::Type::AddressOf:
+          if_debug(
+            dout << "Setting: " << idToString(con.dest()) << " to indirect\n";
+            dout << "Adding ptsto: " << idToString(con.dest()) <<
+                " to ptsto of: " << idToString(con.src()) << "\n");
+
           dest.data().setIndirect();
-          dest.data().addPtsTo(con.src());
+          src.data().addPtsTo(con.dest());
           /*
-          if (omap.isObject(con.src())) {
+          if (g_omap->isObject(con.src())) {
+            dbgs() << "!!!!! IS OBJECT!\n";
+            auto &src = graph->getNode(con.src());
             src.data().setIndirect();
+          } else {
+            // dbgs() << "NOT object!\n";
           }
           */
           break;
-        case Constraint::Type::Copy:
-          dout << "Adding edge: " << idToString(con.src()) << " -> " <<
-            idToString(con.dest()) << "\n";
+        case Constraint<DUG::ObjID>::Type::Copy:
+          if_debug(
+            dout << "Adding edge: " << idToString(con.src()) << " -> " <<
+              idToString(con.dest()) << "\n";
+            dout << "Adding pred (copy) to: ";
+            src.print_label(dout, *g_omap);
+            dout << "\n");
           dest.addPred(con.src());
           break;
         default:
@@ -152,16 +172,16 @@ struct HUEdge {
 
     void print_label(llvm::raw_ostream &ofil, const ObjectMap &) const {
       switch (type_) {
-        case Constraint::Type::Copy:
+        case Constraint<DUG::ObjID>::Type::Copy:
           ofil << "copy";
           break;
-        case Constraint::Type::AddressOf:
+        case Constraint<DUG::ObjID>::Type::AddressOf:
           ofil << "addr_of";
           break;
-        case Constraint::Type::Load:
+        case Constraint<DUG::ObjID>::Type::Load:
           ofil << "load";
           break;
-        case Constraint::Type::Store:
+        case Constraint<DUG::ObjID>::Type::Store:
           ofil << "store";
           break;
         default:
@@ -174,7 +194,7 @@ struct HUEdge {
     //{{{
     DUG::ObjID src_;
     DUG::ObjID dest_;
-    Constraint::Type type_;
+    Constraint<DUG::ObjID>::Type type_;
     //}}}
   //}}}
 };
@@ -188,12 +208,32 @@ typedef HUSeg::Node HUNode;
 //}}}
 
 // Acutal HU visit impl {{{
-static void visitHU(HUSeg &seg, HUNode &node) {
+static void visitHU(HUSeg &seg, HUNode &node, const ObjectMap &if_debug(omap)) {
+  if_debug(
+    dout << "Visiting: (" << idToString(node.id()) << ") ";
+    node.print_label(dout, omap);
+    dout << "\n");
   // Union our past ptsto sets
   auto &node_data = node.data();
   for (DUG::ObjID node_id : node.preds()) {
     HUNode &pred = seg.getNode(node_id);
+    if_debug(
+      dout << "\tOn pred: (" << idToString(pred.id()) << ") ";
+      pred.print_label(dout, omap);
+      dout << "\n");
     auto &pred_data = pred.data();
+
+    if_debug(
+      dout << "Unioning src ptsto: ";
+      for (auto int_id : node_data.ptsto()) {
+        dout << " " << idToString(DUG::ObjID(int_id));
+      }
+      dout << "\n";
+      dout << "with pred ptsto: ";
+      for (auto int_id : pred_data.ptsto()) {
+        dout << " " << idToString(DUG::ObjID(int_id));
+      }
+      dout << "\n");
 
     node_data.ptsto_ |= pred_data.ptsto_;
   }
@@ -243,6 +283,8 @@ struct BitmapLT {
 
 // optimizeConstraints {{{
 bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
+  // FIXME: HAX to be removed later
+  g_omap = const_cast<ObjectMap *>(&omap);
   // Okay, we run HU here, over the constraints
   //
   // The algorithm is listed as:
@@ -261,10 +303,10 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
   HUSeg huSeg(graph.getConstraintGraph());
 
   if_debug(
-    for (auto &pair : nodes) {
-      dout << "initial ptsto for node " << idToString(pair.second.obj()) <<
+    for (auto &pair : huSeg) {
+      dout << "initial ptsto for node " << idToString(pair.second.id()) <<
         " is:";
-      for (auto int_id : pair.second.ptsto()) {
+      for (auto int_id : pair.second.data().ptsto()) {
         dout << " " << idToString(DUG::ObjID(int_id));
       }
       dout << "\n";
@@ -272,22 +314,28 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
 
   // Now iterate in DFS order
   std::for_each(huSeg.dfs_pred_begin(), huSeg.dfs_pred_end(),
-      [&huSeg](DUG::ObjID node_id) {
+      [&huSeg, &omap](DUG::ObjID node_id) {
     // Do the HU visit (pred collection) on each node
-    visitHU(huSeg, huSeg.getNode(node_id));
+    visitHU(huSeg, huSeg.getNode(node_id), omap);
   });
 
   if_debug(
-    for (auto &pair : nodes) {
-      dout << "ptsto after HU for node " << idToString(pair.second.obj()) <<
-        "is:";
-      for (auto int_id : pair.second.ptsto()) {
+    for (auto &pair : huSeg) {
+      dout << "ptsto after HU for (";
+      if (pair.second.data().indirect()) {
+        dout << "indirect";
+      } else {
+        dout << "  direct";
+      }
+      dout << ") node " << idToString(pair.second.id()) <<
+        " is:";
+      for (auto int_id : pair.second.data().ptsto()) {
         dout << " " << idToString(DUG::ObjID(int_id));
       }
       dout << "\n";
     });
 
-  huSeg.printDotFile("optimize.dot", omap);
+  // huSeg.printDotFile("optimize.dot", omap);
 
   //  Used to map objs to the PE class
   std::map<DUG::ObjID, DUG::PEid> obj_to_pe;

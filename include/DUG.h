@@ -11,6 +11,7 @@
 #include <list>
 #include <map>
 #include <queue>
+#include <set>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -29,14 +30,25 @@ class PtsSet {
   //}}}
 };
 
+
+template <typename id_type>
 class Constraint {
   //{{{
  public:
     enum class Type { Copy, Load, Store, AddressOf };
 
     // Constructors {{{
-    Constraint(ObjectMap::ObjID s, ObjectMap::ObjID d, Type t);
-    Constraint(ObjectMap::ObjID s, ObjectMap::ObjID d, Type t, int32_t o);
+    Constraint(id_type s, id_type d, Type t);
+    Constraint(id_type s, id_type d, Type t, int32_t o);
+
+    // For conversion from another constraint type
+    template <typename graph_type, typename old_id_type>
+    Constraint(graph_type *,
+        const std::pair<id_type, id_type> &edges,
+        const Constraint<old_id_type> &old_cons) :
+      type_(static_cast<Type>(old_cons.type())),
+      dest_(edges.second), src_(edges.first),
+      offs_(old_cons.offs()) { }
 
     // No copys, yes moves {{{
     Constraint(const Constraint &) = default;
@@ -52,29 +64,17 @@ class Constraint {
       return type_;
     }
 
-    ObjectMap::ObjID src() const {
+    id_type src() const {
       return src_;
     }
 
-    ObjectMap::ObjID dest() const {
+    id_type dest() const {
       return dest_;
     }
 
     int32_t offs() const {
       return offs_;
     }
-    //}}}
-
-    // Noop helpers {{{
-    /*
-    bool isNoop() const {
-      return type() == Type::Noop;
-    }
-
-    void makeNoop() {
-      type_ = Type::Noop;
-    }
-    */
     //}}}
 
     // Target helpers {{{
@@ -98,7 +98,7 @@ class Constraint {
       }
     }
 
-    ObjectMap::ObjID getTarget() const {
+    id_type getTarget() const {
       if (targetIsDest()) {
         return dest();
       } else {
@@ -107,15 +107,94 @@ class Constraint {
     }
     //}}}
 
+    // Print helper {{{
+    void print_label(llvm::raw_ostream &ofil, const ObjectMap &) const {
+      switch (type()) {
+        case Type::Copy:
+          ofil << "copy";
+          break;
+        case Type::AddressOf:
+          ofil << "addr_of";
+          break;
+        case Type::Load:
+          ofil << "load";
+          break;
+        case Type::Store:
+          ofil << "store";
+          break;
+        default:
+          llvm_unreachable("Constraint with unexpected type!");
+          ofil << "BLEH";
+      }
+    }
+    //}}}
+
  private:
     // Private Data {{{
     Type type_;
 
-    ObjectMap::ObjID dest_;
-    ObjectMap::ObjID src_;
+    id_type dest_;
+    id_type src_;
 
     int32_t offs_ = 0;
     //}}}
+  //}}}
+};
+
+template<typename phys_id_type, typename id_type>
+struct SEGNodeGroup {
+  //{{{
+  template <typename old_node>
+  explicit SEGNodeGroup(const old_node &old) {
+    ids.insert(old.id());
+  }
+
+  template <typename old_node, typename converter>
+  void init_unite(const old_node &n, converter) {
+    ids.insert(n.id());
+  }
+
+  void print_label(llvm::raw_ostream &ofil, phys_id_type,
+      const ObjectMap &omap) const {
+    // So I can know when the end is coming, for newline printing
+    for (auto it = std::begin(ids), en = std::end(ids); it != en;) {
+      auto id = *it;
+      auto pr = omap.getValueInfo(id);
+      if (pr.first != ObjectMap::Type::Special) {
+        const llvm::Value *val = pr.second;
+        if (val == nullptr) {
+          ofil << "temp node";
+        } else if (auto GV = llvm::dyn_cast<const llvm::GlobalValue>(val)) {
+          ofil <<  GV->getName();
+        } else if (auto F = llvm::dyn_cast<const llvm::Function>(val)) {
+          ofil <<  F->getName();
+        } else {
+          ofil << *val;
+        }
+      } else {
+        if (id == ObjectMap::NullValue) {
+          ofil << "NullValue";
+        } else if (id == ObjectMap::NullObjectValue) {
+          ofil << "NullObjectValue";
+        } else if (id == ObjectMap::IntValue) {
+          ofil << "IntValue";
+        } else if (id == ObjectMap::UniversalValue) {
+          ofil << "UniversalValue";
+        } else if (id == ObjectMap::UniversalValue) {
+          ofil << "PthreadSpecificValue";
+        } else {
+          llvm_unreachable("Shouldn't have unknown value here!");
+        }
+      }
+
+      ++it;
+      if (it != en) {
+        ofil << "\n";
+      }
+    }
+  }
+
+  std::set<id_type> ids;
   //}}}
 };
 
@@ -140,22 +219,16 @@ class DUG {
     //}}}
 
     // Internal classes {{{
-    // Constraint node {{{
-    struct ConstraintNode {
-      ObjID id;
-    };
-    //}}}
-
     // CFGNodes {{{
     class CFGNode {
      public:
         CFGNode() = default;
         // No Copy/move {{{
-        CFGNode(const CFGNode &) = delete;
-        CFGNode(CFGNode &&) = delete;
+        CFGNode(const CFGNode &) = default;
+        CFGNode(CFGNode &&) = default;
 
-        CFGNode &operator=(const CFGNode &) = delete;
-        CFGNode &operator=(CFGNode &&) = delete;
+        CFGNode &operator=(const CFGNode &) = default;
+        CFGNode &operator=(CFGNode &&) = default;
         //}}}
 
         // Accessors {{{
@@ -183,6 +256,18 @@ class DUG {
 
         void setR() {
           r_ = true;
+        }
+
+        void setC() {
+          c_ = true;
+        }
+        //}}}
+
+        // Unite {{{
+        void unite(const CFGNode &n) {
+          m_ |= n.m_;
+          r_ |= n.r_;
+          c_ |= n.c_;
         }
         //}}}
 
@@ -219,9 +304,11 @@ class DUG {
     //}}}
 
     // Graph types {{{
-    typedef SEG<DUG::ObjID, SEGNodeEmpty, Constraint> ConstraintGraph;
-    typedef SEG<DUG::PEid, SEGNodeEmpty, Constraint> ConstraintPEGraph;
+    typedef SEG<DUG::ObjID, SEGNodeEmpty, Constraint<ObjID>> ConstraintGraph;
+    typedef SEG<DUG::PEid, SEGNodeGroup<PEid, ObjID>, Constraint<PEid>>
+      ConstraintPEGraph;
     typedef SEG<DUG::CFGid, CFGNode, CFGEdge> ControlFlowGraph;
+    typedef SEG<DUG::CFGid, CFGNode, CFGEdge>::Node ControlFlowNode;
 
     typedef std::pair<ObjID, ObjID> ConsID;
     //}}}
@@ -243,18 +330,13 @@ class DUG {
     // DUG Construction Methods {{{
     void prepare(const ObjectMap &) { }
 
-    ConsID add(Constraint::Type, ObjID d, ObjID s, int32_t o = 0);
+    ConsID add(Constraint<ObjID>::Type, ObjID d, ObjID s, int32_t o = 0);
 
-    const Constraint &getConstraint(ConsID id) const {
+    const Constraint<ObjID>  &getConstraint(ConsID id) const {
       return constraintGraph_.getEdge(id);
     }
 
     ObjID addNode(ObjectMap &omap);
-
-    void addIndirectCall(ObjID id, CFGid cfg) {
-      // Indirect graph...
-      indirectCalls_.emplace_back(id, cfg);
-    }
 
     void addUnusedFunction(ObjID fcn_id,
         const std::vector<ConsID> &ids) {
@@ -271,6 +353,12 @@ class DUG {
 
     const ConstraintGraph &getConstraintGraph() const {
       return constraintGraph_;
+    }
+
+    ConstraintPEGraph getConstraintPEGraph() const {
+      // Now, create a new SEG with the mappings
+      return ConstraintPEGraph(getConstraintGraph(),
+          std::bind(&DUG::getPE, this, std::placeholders::_1));
     }
     //}}}
 
@@ -293,11 +381,12 @@ class DUG {
       cfgCallSuccessors_[call_id] = ret_id;
     }
 
-    void addCFGIndirectCall(CFGid call_id, ObjID,
+    void addCFGIndirectCall(CFGid call_id, ObjID obj_id,
         CFGid ret_id) {
       // Don't think I actually need this... I'm using another function
       // instead... I should clean it up at some point
       // cfgIndirCallsites_[call_id].push_back(call_insn_id);
+      indirectCalls_.emplace_back(obj_id, call_id);
       cfgCallSuccessors_[call_id] = ret_id;
     }
 
@@ -346,6 +435,10 @@ class DUG {
 
     const std::vector<ObjID> &getIndirFcns(ObjID call_id) const {
       return indirFcns_.at(call_id);
+    }
+
+    const ControlFlowGraph &getCFG() const {
+      return CFG_;
     }
     //}}}
 
@@ -585,15 +678,17 @@ class DUG {
 
         ObjID rep_;
 
-        std::list<Constraint> constraints_;
+        std::list<Constraint<ObjID>> constraints_;
       //}}}
     };
 
     // Private variables {{{
     // Constraint data
     ConstraintGraph constraintGraph_;
+    ConstraintPEGraph constraintPEGraph_;
 
     // Control Flow Graph data {{{
+    ControlFlowGraph CFG_;
 
     // The actual edges in the graph
     std::vector<CFGEdge> cfgEdges_;
@@ -605,13 +700,15 @@ class DUG {
 
     // Maps Control Flow nodes to the call functions within them
     std::map<CFGid, std::vector<ObjID>> cfgDirCallsites_;
+    /*
     // Maps Control Flow nodes to the call instructions wthin them
     std::map<CFGid, std::vector<ObjID>> cfgIndirCallsites_;
+    */
+    // Function call -> CFG node
+    std::vector<std::pair<ObjID, CFGid>> indirectCalls_;
 
     std::map<ObjID, std::vector<ObjID>> indirFcns_;
 
-    // Function call -> CFG node
-    std::vector<std::pair<ObjID, CFGid>> indirectCalls_;
 
     // The return CFG node associated with each CFG containing a call
     std::map<CFGid, CFGid> cfgCallSuccessors_;

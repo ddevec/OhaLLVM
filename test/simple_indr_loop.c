@@ -18,17 +18,20 @@ int main(void) {
 
   void (*do_pr)(const char *);
 
+  int i;
 
   do_pr = print;
 
-  do_pr(d);
-  d = b;
-  do_pr(e);
-  e = a;
-  do_pr("\n");
-  do_pr(a);
-  do_pr(d);
-  do_pr("\n");
+  for (i = 0; i < 3; i++) {
+    do_pr(d);
+    d = b;
+    do_pr(e);
+    e = a;
+    do_pr("\n");
+    do_pr(a);
+    do_pr(d);
+    do_pr("\n");
+  }
   
   return EXIT_SUCCESS;
 }

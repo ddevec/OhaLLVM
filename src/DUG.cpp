@@ -80,15 +80,15 @@ static void printSpecial(raw_ostream &ofil, DUG::ObjID id) {
   }
 }
 
-static const std::string getConsStr(const Constraint &cons) {
+static const std::string getConsStr(const Constraint<DUG::ObjID> &cons) {
   switch (cons.type()) {
-    case Constraint::Type::Copy:
+    case Constraint<DUG::ObjID>::Type::Copy:
       return "copy";
-    case Constraint::Type::AddressOf:
+    case Constraint<DUG::ObjID>::Type::AddressOf:
       return "addr_of";
-    case Constraint::Type::Load:
+    case Constraint<DUG::ObjID>::Type::Load:
       return "load";
-    case Constraint::Type::Store:
+    case Constraint<DUG::ObjID>::Type::Store:
       return "store";
     default:
       llvm_unreachable("Constraint with unexpected type!");
@@ -178,7 +178,7 @@ static void printPENodeHeader(raw_ostream &ofil, const DUG &graph,
 // FIXME: Replace and remove
 __attribute__((unused))
 static void printConstraintNodeHeader(raw_ostream &ofil, const DUG &graph,
-    const Constraint &con, const ObjectMap &omap,
+    const Constraint<DUG::ObjID> &con, const ObjectMap &omap,
     std::set<DUG::ObjID> &seen) {
   auto id = con.getTarget();
   auto id2 = con.targetIsDest() ? con.src() : con.dest();
@@ -194,30 +194,30 @@ static void printConstraintNodeHeader(raw_ostream &ofil, const DUG &graph,
   }
 }
 
-static DUG::ObjID getTarget(const Constraint &con) {
+static DUG::ObjID getTarget(const Constraint<DUG::ObjID> &con) {
   switch (con.type()) {
-    case Constraint::Type::Copy:
+    case Constraint<DUG::ObjID>::Type::Copy:
       return con.dest();
-    case Constraint::Type::AddressOf:
+    case Constraint<DUG::ObjID>::Type::AddressOf:
       return con.src();
-    case Constraint::Type::Load:
+    case Constraint<DUG::ObjID>::Type::Load:
       return con.dest();
-    case Constraint::Type::Store:
+    case Constraint<DUG::ObjID>::Type::Store:
       return con.dest();
     default:
       llvm_unreachable("Unhandled constraint");
   }
 }
 
-static DUG::ObjID getOrigin(const Constraint &con) {
+static DUG::ObjID getOrigin(const Constraint<DUG::ObjID> &con) {
   switch (con.type()) {
-    case Constraint::Type::Copy:
+    case Constraint<DUG::ObjID>::Type::Copy:
       return con.src();
-    case Constraint::Type::AddressOf:
+    case Constraint<DUG::ObjID>::Type::AddressOf:
       return con.dest();
-    case Constraint::Type::Load:
+    case Constraint<DUG::ObjID>::Type::Load:
       return con.src();
-    case Constraint::Type::Store:
+    case Constraint<DUG::ObjID>::Type::Store:
       return con.src();
     default:
       llvm_unreachable("Unhandled constraint");
@@ -226,7 +226,7 @@ static DUG::ObjID getOrigin(const Constraint &con) {
 
 __attribute__((unused))
 static void printConstraintNodeLinks(raw_ostream &ofil, const DUG &,
-    const Constraint &con, const ObjectMap &) {
+    const Constraint<DUG::ObjID> &con, const ObjectMap &) {
   /*
   if (con.isNoop()) {
     return;
@@ -249,7 +249,7 @@ static void printConstraintNodeLinks(raw_ostream &ofil, const DUG &,
 
 __attribute__((unused))
 static void printPENodeLinks(raw_ostream &ofil, const DUG &graph,
-    const Constraint &con, const ObjectMap &) {
+    const Constraint<DUG::ObjID> &con, const ObjectMap &) {
   /*
   if (con.isNoop()) {
     return;
@@ -273,14 +273,16 @@ static void printPENodeLinks(raw_ostream &ofil, const DUG &graph,
 }  // end anon. namespace
 
 // Constraint {{{
-Constraint::Constraint(ObjectMap::ObjID s, ObjectMap::ObjID d, Type t) :
+template<typename id_type>
+Constraint<id_type>::Constraint(id_type s, id_type d, Type t) :
   Constraint(s, d, t, 0) { }
 
-Constraint::Constraint(ObjectMap::ObjID d, ObjectMap::ObjID s, Type t,
+template<typename id_type>
+Constraint<id_type>::Constraint(id_type d, id_type s, Type t,
     int32_t o) : type_(t), dest_(d), src_(s), offs_(o) { }
 //}}}
 
-DUG::ConsID DUG::add(Constraint::Type type, ObjID d, ObjID s, int o) {
+DUG::ConsID DUG::add(Constraint<ObjID>::Type type, ObjID d, ObjID s, int o) {
   constraintGraph_.addEdge(s, d, type, o);
 
   return ConsID(s, d);

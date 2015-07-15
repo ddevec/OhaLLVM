@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "include/Andersens.h"
-#include "include/SpecSFS.h"
 #include "include/DUG.h"
 #include "include/ObjectMap.h"
 
@@ -51,8 +50,7 @@ class SpecSFS : public llvm::ModulePass,
 
   // Computes SSA form of the DUG, given its current edge set
   //   Used to compute SSA for top lvl
-  bool computeSSA(DUG &graph,
-      const std::vector<DUG::CFGEdge> &edges);
+  DUG::ControlFlowGraph computeSSA(const DUG::ControlFlowGraph &cfg);
 
   // Fills in conservative address-taken given an conservative AUX
   bool fillAddressTaken(DUG &, const Andersens &) { return false; }

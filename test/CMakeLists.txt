@@ -9,23 +9,45 @@ function(create_dis TARGET_NAME)
 
 endfunction(create_dis)
 
+function(create_test TARGET_NAME)
+
+  add_executable(${TARGET_NAME} ${ARGN})
+
+  create_dis(${TARGET_NAME})
+endfunction(create_test)
+
 
 set(CMAKE_C_COMPILER "clang")
 #-Wno-format-security gets rid of some warnings due to the fakeness of my tests
 set(CMAKE_C_FLAGS "-Wno-format-security -O0 -emit-llvm")
 set(CMAKE_C_LINK_EXECUTABLE "llvm-ld -disable-opt <LINK_FLAGS> <OBJECTS> -o <TARGET>")
 
+create_test(simple_fcn
+    simple_fcn.c
+  )
 
-add_executable(simple_fcn
-  simple_fcn.c)
+create_test(simple_fcn2
+    simple_fcn2.c
+  )
 
-add_executable(simple_fcn2
-  simple_fcn2.c)
+create_test(simple_indr_fcn
+    simple_indr_fcn.c
+  )
 
-add_executable(simple_indr_fcn
-  simple_indr_fcn.c)
+create_test(simple_indr_loop
+    simple_indr_loop.c
+  )
 
-create_dis(simple_fcn)
-create_dis(simple_indr_fcn)
-create_dis(simple_fcn2)
+#add_executable(simple_fcn
+#  simple_fcn.c)
+
+#add_executable(simple_fcn2
+#  simple_fcn2.c)
+
+#add_executable(simple_indr_fcn
+#  simple_indr_fcn.c)
+
+#create_dis(simple_fcn)
+#create_dis(simple_indr_fcn)
+#create_dis(simple_fcn2)
 

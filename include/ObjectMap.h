@@ -14,6 +14,7 @@
 #include "include/util.h"
 
 #include "llvm/Constants.h"
+#include "llvm/Function.h"
 #include "llvm/GlobalValue.h"
 #include "llvm/Instruction.h"
 #include "llvm/Value.h"
@@ -111,6 +112,15 @@ class ObjectMap {
     // Return for a function
     ObjID getValueReturn(const llvm::Value *val) const {
       return __do_get(val, retToID_);
+    }
+
+
+    ObjID getFunction(const llvm::Function *fcn) const {
+      return valToID_.at(llvm::cast<const llvm::Value>(fcn));
+    }
+
+    const llvm::Function *getFunction(ObjID id) const {
+      return llvm::cast<const llvm::Function>(idToVal_.at(id));
     }
 
     // Allocated object id

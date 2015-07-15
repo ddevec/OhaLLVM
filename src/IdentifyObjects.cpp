@@ -16,7 +16,7 @@
 
 #include "include/SpecSFS.h"
 
-#define SPECSFS_DEBUG
+// #define SPECSFS_DEBUG
 #include "include/Debug.h"
 
 #include "llvm/Constants.h"
@@ -102,8 +102,15 @@ static void identifyAUXFcnCallRetInfo(DUG &graph, const ObjectMap &omap,
 
       DUG::ObjID fcn_id = anders_to_fcn.at(anders_id);
 
+      graph.addIndirFcn(pair.first, fcn_id);
+
       // Add edge from call->fcn start node
+      dout << "Getting cfgfunctionstart for: " << fcn_id << "\n";
+      dout << "Function is: " <<
+        cast<const llvm::Function>(omap.valueAtID(fcn_id))->getName() <<
+        "\n";
       graph.addCFGEdge(call_id, graph.getCFGFunctionStart(fcn_id));
+
       // Add edge from fcn ret node->ret
       graph.addCFGEdge(graph.getCFGFunctionReturn(fcn_id), ret_id);
     }
@@ -164,8 +171,13 @@ void addCFGStore(DUG &graph, DUG::CFGid *store_id, DUG::ObjID dest) {
   graph.addDef(*store_id, dest);
 }
 
-void addCFGCallsite(DUG &graph, const ObjectMap &omap,
+void addCFGCallsite(DUG &graph, ObjectMap &omap,
     llvm::Function *fcn, llvm::Instruction *ci, DUG::CFGid *pcall_id) {
+
+  // Ignore the llvm debug function...
+  if (fcn != nullptr && fcn->getName() == "llvm.dbg.declare") {
+    return;
+  }
 
   // Add a new node into the graph
   DUG::CFGid call_id = *pcall_id;
@@ -177,13 +189,23 @@ void addCFGCallsite(DUG &graph, const ObjectMap &omap,
     //   CFGid's for all functions yet
     // We also use a getObject(F) because functions are all associated with
     // objects, only some are associated with values
+    dout << "Adding direct call to: " << fcn->getName() << " id: "
+        << omap.getObject(fcn) << "\n";
     graph.addCFGCallsite(call_id, omap.getObject(fcn), next_id);
   } else {
     // We also don't add edges between the call_id and the callsite for indirect
     //    calls because we don't know the destination until we run our AUX
     //    analysis.
     // All call instructions are associated with values, so we use getValue here
-    graph.addCFGIndirectCall(call_id, omap.getValue(ci), next_id);
+    dout << "Adding INDIRECT call to: " << *ci << "\n";
+    DUG::ObjID obj_id = omap.getValue(ci);
+    if (obj_id == ObjectMap::NullValue) {
+      omap.addValue(ci);
+      obj_id = omap.getValue(ci);
+    }
+    dout << "ci has id: " << obj_id << "\n";
+    assert(obj_id != ObjectMap::NullValue);
+    graph.addCFGIndirectCall(call_id, obj_id, next_id);
   }
 }
 //}}}
@@ -277,9 +299,9 @@ static bool addConstraintsForExternalCall(DUG &graph, ObjectMap &omap,
       auto TempArg = graph.addNode(omap);
 
       // Setup constraints
-      graph.add(Constraint::Type::Store, FirstArg, TempArg);
-      graph.add(Constraint::Type::Load, TempArg, SecondArg);
-      graph.add(Constraint::Type::Copy, FirstArg, SecondArg);
+      graph.add(Constraint<DUG::ObjID>::Type::Store, FirstArg, TempArg);
+      graph.add(Constraint<DUG::ObjID>::Type::Load, TempArg, SecondArg);
+      graph.add(Constraint<DUG::ObjID>::Type::Copy, FirstArg, SecondArg);
 
       // Setup CFG
       // First setup the load
@@ -300,7 +322,8 @@ static bool addConstraintsForExternalCall(DUG &graph, ObjectMap &omap,
     const FunctionType *FTy = F->getFunctionType();
     if (FTy->getNumParams() > 0 &&
         isa<PointerType>(FTy->getParamType(0))) {
-      graph.add(Constraint::Type::Copy, omap.getValue(CS.getInstruction()),
+      graph.add(Constraint<DUG::ObjID>::Type::Copy,
+          omap.getValue(CS.getInstruction()),
           omap.getValue(CS.getArgument(0)));
       return true;
     }
@@ -310,7 +333,8 @@ static bool addConstraintsForExternalCall(DUG &graph, ObjectMap &omap,
     const FunctionType *FTy = F->getFunctionType();
     if (FTy->getNumParams() > 0 &&
         isa<PointerType>(FTy->getParamType(1))) {
-      graph.add(Constraint::Type::Copy, omap.getValue(CS.getInstruction()),
+      graph.add(Constraint<DUG::ObjID>::Type::Copy,
+          omap.getValue(CS.getInstruction()),
           omap.getValue(CS.getArgument(1)));
       return true;
     }
@@ -320,7 +344,8 @@ static bool addConstraintsForExternalCall(DUG &graph, ObjectMap &omap,
     const FunctionType *FTy = F->getFunctionType();
     if (FTy->getNumParams() > 0 &&
         isa<PointerType>(FTy->getParamType(2))) {
-      graph.add(Constraint::Type::Copy, omap.getValue(CS.getInstruction()),
+      graph.add(Constraint<DUG::ObjID>::Type::Copy,
+          omap.getValue(CS.getInstruction()),
           omap.getValue(CS.getArgument(2)));
       return true;
     }
@@ -336,9 +361,9 @@ static bool addConstraintsForExternalCall(DUG &graph, ObjectMap &omap,
             && "va_start in non-vararg function!");
         Value *Arg = II->getArgOperand(0);
         auto TempArg = graph.addNode(omap);
-        graph.add(Constraint::Type::AddressOf, TempArg,
+        graph.add(Constraint<DUG::ObjID>::Type::AddressOf, TempArg,
             omap.getVarArg(ParentF));
-        graph.add(Constraint::Type::Store, omap.getValue(Arg),
+        graph.add(Constraint<DUG::ObjID>::Type::Store, omap.getValue(Arg),
             TempArg);
         addCFGStore(graph, next_id, omap.getValue(Arg));
         return true;
@@ -358,7 +383,7 @@ static bool addConstraintsForExternalCall(DUG &graph, ObjectMap &omap,
       // Copy the actual argument into the formal argument.
       Value *ThrFunc = I->getOperand(2);
       Value *Arg = I->getOperand(3);
-      graph.add(Constraint::Type::Store, omap.getValue(ThrFunc),
+      graph.add(Constraint<DUG::ObjID>::Type::Store, omap.getValue(ThrFunc),
           omap.getValue(Arg), CallFirstArgPos);
       addCFGStore(graph, next_id,
           omap.getOffsID(omap.getValue(Arg), CallFirstArgPos));
@@ -369,7 +394,8 @@ static bool addConstraintsForExternalCall(DUG &graph, ObjectMap &omap,
   if (F->getName() == "pthread_getspecific") {
     const FunctionType *FTy = F->getFunctionType();
     if (FTy->getNumParams() == 1 && isa<PointerType>(FTy->getReturnType())) {
-      graph.add(Constraint::Type::Store, omap.getValue(CS.getInstruction()),
+      graph.add(Constraint<DUG::ObjID>::Type::Store,
+          omap.getValue(CS.getInstruction()),
           ObjectMap::PthreadSpecificValue);
       addCFGStore(graph, next_id, ObjectMap::PthreadSpecificValue);
       return true;
@@ -377,7 +403,8 @@ static bool addConstraintsForExternalCall(DUG &graph, ObjectMap &omap,
   } else if (F->getName() == "pthread_setspecific") {
     const FunctionType *FTy = F->getFunctionType();
     if (FTy->getNumParams() == 2 && isa<PointerType>(FTy->getParamType(1))) {
-      graph.add(Constraint::Type::Copy, ObjectMap::PthreadSpecificValue,
+      graph.add(Constraint<DUG::ObjID>::Type::Copy,
+          ObjectMap::PthreadSpecificValue,
           omap.getValue(CS.getInstruction()->getOperand(1)));
       return true;
     }
@@ -393,13 +420,13 @@ static void addGlobalInitializerConstraints(DUG &graph, ObjectMap &omap,
   // Simple case, single initializer
   if (C->getType()->isSingleValueType()) {
     if (isa<PointerType>(C->getType())) {
-      graph.add(Constraint::Type::Copy, id,
+      graph.add(Constraint<DUG::ObjID>::Type::Copy, id,
           omap.getConstValue(C));
     }
 
   // Initialized to null value
   } else if (C->isNullValue()) {
-    graph.add(Constraint::Type::Copy, id, ObjectMap::NullValue);
+    graph.add(Constraint<DUG::ObjID>::Type::Copy, id, ObjectMap::NullValue);
 
   // Set to some other defined value
   } else if (!isa<UndefValue>(C)) {
@@ -435,7 +462,7 @@ static void addConstraintForConstPtr(DUG &graph, ObjectMap &omap,
       // If its a ptr to int, add an "intvalue"
       if (CE->getOpcode() == Instruction::PtrToInt) {
         if (!inserted) {
-          graph.add(Constraint::Type::Copy, ObjectMap::IntValue,
+          graph.add(Constraint<DUG::ObjID>::Type::Copy, ObjectMap::IntValue,
             omap.getValue(&glbl));
 
           inserted = true;
@@ -503,7 +530,7 @@ static void addConstraintsForNonInternalLinkage(DUG &graph, ObjectMap &omap,
   std::for_each(fcn.arg_begin(), fcn.arg_end(),
       [&graph, &omap] (const Argument &arg) {
     if (isa<PointerType>(arg.getType())) {
-      graph.add(Constraint::Type::Copy, omap.getValue(&arg),
+      graph.add(Constraint<DUG::ObjID>::Type::Copy, omap.getValue(&arg),
         ObjectMap::UniversalValue);
     }
   });
@@ -538,18 +565,20 @@ static void addConstraintsForDirectCall(DUG &graph, ObjectMap &omap,
     // If the function that's called also returns a pointer
     if (isa<PointerType>(F->getFunctionType()->getReturnType())) {
       // Add a copy from the return value into this value
-      graph.add(Constraint::Type::Copy, val,
+      graph.add(Constraint<DUG::ObjID>::Type::Copy, val,
           omap.getValueReturn(&called_val));
 
     // The callsite returns a pointer, but the function returns a
     // non-pointer value, treat it as a non-pointer cast to a pointer
     } else {
-      graph.add(Constraint::Type::Copy, val, ObjectMap::UniversalValue);
+      graph.add(Constraint<DUG::ObjID>::Type::Copy, val,
+          ObjectMap::UniversalValue);
     }
   // The callsite returns a non-pointer, but the function returns a
   // pointer value, treat it as a pointer cast to a non-pointer
   } else if (F && isa<PointerType>(F->getFunctionType()->getReturnType())) {
-    graph.add(Constraint::Type::Copy, omap.getValueReturn(&called_val),
+    graph.add(Constraint<DUG::ObjID>::Type::Copy,
+        omap.getValueReturn(&called_val),
         ObjectMap::UniversalValue);
   }
 
@@ -564,8 +593,8 @@ static void addConstraintsForDirectCall(DUG &graph, ObjectMap &omap,
   // For each arg
   for (; FargI != FargE && ArgI != ArgE; ++FargI, ++ArgI) {
     if (external && isa<PointerType>((*ArgI)->getType())) {
-      dout << "Adding arg to universal value :(\n";
-      graph.add(Constraint::Type::Copy, omap.getValue(*ArgI),
+      dbgs() << "Adding arg to universal value :(\n";
+      graph.add(Constraint<DUG::ObjID>::Type::Copy, omap.getValue(*ArgI),
           ObjectMap::UniversalValue);
     }
 
@@ -574,13 +603,13 @@ static void addConstraintsForDirectCall(DUG &graph, ObjectMap &omap,
       // And we get one!
       if (isa<PointerType>((*ArgI)->getType())) {
         dout << "Adding arg copy!\n";
-        graph.add(Constraint::Type::Copy, omap.getValue(FargI),
+        graph.add(Constraint<DUG::ObjID>::Type::Copy, omap.getValue(FargI),
             omap.getValue(*ArgI));
       // But if its not a pointer type...
       } else {
         // Map it to everything (i2p)
         dout << "Adding i2p universal value :(\n";
-        graph.add(Constraint::Type::Copy, omap.getValue(FargI),
+        graph.add(Constraint<DUG::ObjID>::Type::Copy, omap.getValue(FargI),
             ObjectMap::UniversalValue);
       }
     }
@@ -590,7 +619,7 @@ static void addConstraintsForDirectCall(DUG &graph, ObjectMap &omap,
   if (F->getFunctionType()->isVarArg()) {
     for (; ArgI != ArgE; ++ArgI) {
       if (isa<PointerType>((*ArgI)->getType())) {
-        graph.add(Constraint::Type::Copy, omap.getVarArg(F),
+        graph.add(Constraint<DUG::ObjID>::Type::Copy, omap.getVarArg(F),
             omap.getValue(*ArgI));
       }
     }
@@ -661,7 +690,7 @@ static void idRetInst(DUG &graph, ObjectMap &omap, const Instruction &inst) {
   // The function in which ret was called
   const Function *F = ret.getParent()->getParent();
 
-  graph.add(Constraint::Type::Copy,
+  graph.add(Constraint<DUG::ObjID>::Type::Copy,
       omap.getReturn(F), omap.getValue(src));
 }
 
@@ -672,7 +701,8 @@ static bool idCallInst(DUG &graph, ObjectMap &omap, const Instruction &inst,
 
   if (isMalloc(&inst)) {
     graph.associateNode(omap.getObject(&inst), omap.getValue(&inst));
-    graph.add(Constraint::Type::AddressOf, getValueUpdate(graph, omap, &inst),
+    graph.add(Constraint<DUG::ObjID>::Type::AddressOf,
+        getValueUpdate(graph, omap, &inst),
         omap.getObject(&inst));
   }
 
@@ -694,7 +724,8 @@ static void idAllocaInst(DUG &graph, ObjectMap &omap,
   graph.associateNode(obj_id, omap.getValue(&inst));
 
   // Add a constraint pointing this value to that object
-  graph.add(Constraint::Type::AddressOf, getValueUpdate(graph, omap, &alloc),
+  graph.add(Constraint<DUG::ObjID>::Type::AddressOf,
+      getValueUpdate(graph, omap, &alloc),
       obj_id);
 }
 
@@ -705,7 +736,8 @@ static void idLoadInst(DUG &graph, ObjectMap &omap, const Instruction &inst,
   auto &ld = *cast<const LoadInst>(&inst);
 
   if (isa<PointerType>(ld.getType())) {
-    graph.add(Constraint::Type::Load, getValueUpdate(graph, omap, &ld),
+    graph.add(Constraint<DUG::ObjID>::Type::Load,
+        getValueUpdate(graph, omap, &ld),
         omap.getValue(ld.getOperand(0)));
 
     // Add this to the uses
@@ -724,12 +756,14 @@ static void idStoreInst(DUG &graph, ObjectMap &omap,
 
   if (isa<PointerType>(st.getOperand(0)->getType())) {
     // Store from ptr
-    graph.add(Constraint::Type::Store, omap.getValue(st.getOperand(1)),
+    graph.add(Constraint<DUG::ObjID>::Type::Store,
+        omap.getValue(st.getOperand(1)),
         omap.getValue(st.getOperand(0)));
   } else if (ConstantExpr *ce = dyn_cast<ConstantExpr>(st.getOperand(0))) {
     // If we just cast a ptr to an int then stored it.. we can keep info on it
     if (ce->getOpcode() == Instruction::PtrToInt) {
-      graph.add(Constraint::Type::Store, omap.getValue(st.getOperand(1)),
+      graph.add(Constraint<DUG::ObjID>::Type::Store,
+          omap.getValue(st.getOperand(1)),
           omap.getValue(ce->getOperand(0)));
     // Uhh, dunno what to do now
     } else {
@@ -738,13 +772,14 @@ static void idStoreInst(DUG &graph, ObjectMap &omap,
   // put int value into the int pool
   } else if (isa<IntegerType>(st.getOperand(0)->getType()) &&
       isa<PointerType>(st.getOperand(1)->getType())) {
-    graph.add(Constraint::Type::Store, omap.getValue(st.getOperand(1)),
+    graph.add(Constraint<DUG::ObjID>::Type::Store,
+        omap.getValue(st.getOperand(1)),
         ObjectMap::IntValue);
   // Poop... structs
   } else if (isa<StructType>(st.getOperand(0)->getType())) {
     errs() << "FIXME: Ignoring struct store\n";
     /*
-    graph.add(Constraint::Type::Store, omap.getValue(st.getOperand(1)),
+    graph.add(Constraint<DUG::ObjID>::Type::Store, omap.getValue(st.getOperand(1)),
         ObjectMap::AgregateNode);
         */
   }
@@ -754,7 +789,8 @@ static void idStoreInst(DUG &graph, ObjectMap &omap,
 static void idGEPInst(DUG &graph, ObjectMap &omap, const Instruction &inst) {
   auto &gep = *cast<const GetElementPtrInst>(&inst);
 
-  graph.add(Constraint::Type::Copy, getValueUpdate(graph, omap, &gep),
+  graph.add(Constraint<DUG::ObjID>::Type::Copy,
+      getValueUpdate(graph, omap, &gep),
       omap.getValue(gep.getOperand(0)));
 }
 
@@ -766,7 +802,8 @@ static void idI2PInst(DUG &graph, ObjectMap &omap, const Instruction &inst) {
   // unaware of what's in it) and screw up our tracking
   // Instead I'm just going to go w/ the Andersen's, approach, give it an
   // int value
-  graph.add(Constraint::Type::Copy, getValueUpdate(graph, omap, &inst),
+  graph.add(Constraint<DUG::ObjID>::Type::Copy,
+      getValueUpdate(graph, omap, &inst),
       ObjectMap::IntValue);
 }
 
@@ -781,7 +818,7 @@ static void idBitcastInst(DUG &graph, ObjectMap &omap,
   assert(isa<PointerType>(bcast.getOperand(0)->getType()));
   auto op = omap.getValue(bcast.getOperand(0));
 
-  graph.add(Constraint::Type::Copy, id, op);
+  graph.add(Constraint<DUG::ObjID>::Type::Copy, id, op);
 }
 
 static void idPhiInst(DUG &graph, ObjectMap &omap, const Instruction &inst) {
@@ -793,7 +830,7 @@ static void idPhiInst(DUG &graph, ObjectMap &omap, const Instruction &inst) {
   auto phid = getValueUpdate(graph, omap, &phi);
 
   for (size_t i = 0, e = phi.getNumIncomingValues(); i != e; ++i) {
-    graph.add(Constraint::Type::Copy, phid,
+    graph.add(Constraint<DUG::ObjID>::Type::Copy, phid,
         omap.getValue(phi.getIncomingValue(i)));
   }
 }
@@ -807,9 +844,9 @@ static void idSelectInst(DUG &graph, ObjectMap &omap,
   if (isa<PointerType>(select.getType())) {
     auto sid = getValueUpdate(graph, omap, &select);
 
-    graph.add(Constraint::Type::Copy, sid,
+    graph.add(Constraint<DUG::ObjID>::Type::Copy, sid,
         omap.getValue(select.getOperand(1)));
-    graph.add(Constraint::Type::Copy, sid,
+    graph.add(Constraint<DUG::ObjID>::Type::Copy, sid,
         omap.getValue(select.getOperand(2)));
 
   } else if (isa<StructType>(select.getType())) {
@@ -844,7 +881,10 @@ static void processBlock(DUG &graph, std::set<const BasicBlock *> &seen,
     graph.addCFGEdge(parent_id, next_id);
   // Or if we don't have a parent denote that we should get edges from calls
   } else {
-    graph.addCFGFunctionStart(omap.getObject(BB.getParent()), next_id);
+    dout << "Adding CFGFunctionStart for: " << omap.getObject(BB.getParent()) <<
+      "\n";
+    dout << "Function is : " << BB.getParent()->getName() << "\n";
+    graph.addCFGFunctionStart(omap.getFunction(BB.getParent()), next_id);
   }
 
 
@@ -868,7 +908,7 @@ static void processBlock(DUG &graph, std::set<const BasicBlock *> &seen,
           // Otherwise, we consider the entry node as the return node
           }
 
-          graph.addCFGFunctionReturn(omap.getObject(BB.getParent()), next_id);
+          graph.addCFGFunctionReturn(omap.getFunction(BB.getParent()), next_id);
 
           idRetInst(graph, omap, inst);
         }
@@ -927,7 +967,7 @@ static void processBlock(DUG &graph, std::set<const BasicBlock *> &seen,
   // Process all of our successor blocks (In DFS order)
   std::for_each(succ_begin(&BB), succ_end(&BB),
       [&graph, &seen, &omap, next_id] (const BasicBlock *succBB) {
-    if (!seen.count(succBB)) {
+    if (seen.count(succBB) == 0) {
       processBlock(graph, seen, omap, *succBB, next_id);
     }
   });
@@ -948,9 +988,9 @@ void scanFcn(DUG &graph, ObjectMap &omap, const Function &fcn) {
 
   // Now create constraints in depth first order:
   std::set<const BasicBlock *> seen;
-  for (auto &BB : fcn) {
-    processBlock(graph, seen, omap, BB, DUG::CFGid::invalid());
-  }
+  // for (auto &BB : fcn) {
+  processBlock(graph, seen, omap, fcn.getEntryBlock(), DUG::CFGid::invalid());
+  // }
 }
 //}}}
 
@@ -1031,13 +1071,13 @@ bool SpecSFS::createConstraints(DUG &graph, ObjectMap &omap,
   // Special Constraints {{{
   // First, we set up some constraints for our special constraints:
   // Universal value
-  graph.add(Constraint::Type::AddressOf, ObjectMap::UniversalValue,
+  graph.add(Constraint<DUG::ObjID>::Type::AddressOf, ObjectMap::UniversalValue,
       ObjectMap::UniversalValue);
-  graph.add(Constraint::Type::Store, ObjectMap::UniversalValue,
+  graph.add(Constraint<DUG::ObjID>::Type::Store, ObjectMap::UniversalValue,
       ObjectMap::UniversalValue);
 
   // Null value pts to null object
-  graph.add(Constraint::Type::AddressOf, ObjectMap::NullValue,
+  graph.add(Constraint<DUG::ObjID>::Type::AddressOf, ObjectMap::NullValue,
       ObjectMap::NullObjectValue);
   //}}}
 
@@ -1050,8 +1090,8 @@ bool SpecSFS::createConstraints(DUG &graph, ObjectMap &omap,
     // graph.associateNode(obj_id, &glbl);
 
     // Create the constraint for the actual global
-    graph.add(Constraint::Type::AddressOf, getValueUpdate(graph, omap, &glbl),
-        obj_id);
+    graph.add(Constraint<DUG::ObjID>::Type::AddressOf,
+      getValueUpdate(graph, omap, &glbl), obj_id);
 
     // If its a global w/ an initalizer
     if (glbl.hasDefinitiveInitializer()) {
@@ -1066,9 +1106,9 @@ bool SpecSFS::createConstraints(DUG &graph, ObjectMap &omap,
 
     // Doesn't have initializer
     } else {
-      graph.add(Constraint::Type::Copy, omap.getObject(&glbl),
+      graph.add(Constraint<DUG::ObjID>::Type::Copy, omap.getObject(&glbl),
           ObjectMap::UniversalValue);
-      graph.add(Constraint::Type::Copy, omap.getValue(&glbl),
+      graph.add(Constraint<DUG::ObjID>::Type::Copy, omap.getValue(&glbl),
           ObjectMap::UniversalValue);
     }
   });
@@ -1080,8 +1120,8 @@ bool SpecSFS::createConstraints(DUG &graph, ObjectMap &omap,
     auto obj_id = omap.getObject(&fcn);
     // graph.associateNode(obj_id, &fcn);
 
-    graph.add(Constraint::Type::AddressOf, getValueUpdate(graph, omap, &fcn),
-        obj_id);
+    graph.add(Constraint<DUG::ObjID>::Type::AddressOf,
+        getValueUpdate(graph, omap, &fcn), obj_id);
 
     // Functions are constant pointers
     addConstraintForConstPtr(graph, omap, fcn);
@@ -1121,15 +1161,19 @@ bool SpecSFS::createConstraints(DUG &graph, ObjectMap &omap,
       // constraints for the arguments, to stop HU from combining them together
       // with other arguments that aren't filled until after HU
       // We add in a fake address of to make the node unusable
-      std::vector<DUG::ConsID> con_ids;
-      std::for_each(fcn.arg_begin(), fcn.arg_end(),
-          [&graph, &omap, &con_ids](const Argument &arg) {
-        auto arg_id = omap.getValue(&arg);
-        auto id = omap.makeTempValue();
-        con_ids.emplace_back(
-          graph.add(Constraint::Type::AddressOf, arg_id, id));
-      });
-      graph.addUnusedFunction(omap.getObject(&fcn), std::move(con_ids));
+      // Don't add unused function pieces for main or llvm.dbg.declare, they are
+      //     special, and don't need to be tracked
+      if (fcn.getName() != "main" && fcn.getName() != "llvm.dbg.declare") {
+        std::vector<DUG::ConsID> con_ids;
+        std::for_each(fcn.arg_begin(), fcn.arg_end(),
+            [&graph, &omap, &con_ids](const Argument &arg) {
+          auto arg_id = omap.getValue(&arg);
+          auto id = omap.makeTempValue();
+          con_ids.emplace_back(
+            graph.add(Constraint<DUG::ObjID>::Type::AddressOf, arg_id, id));
+        });
+        graph.addUnusedFunction(omap.getFunction(&fcn), std::move(con_ids));
+      }
     }
 
     // If this function has a body
@@ -1138,7 +1182,7 @@ bool SpecSFS::createConstraints(DUG &graph, ObjectMap &omap,
     // There is no body...
     } else {
       if (isa<PointerType>(fcn.getFunctionType()->getReturnType())) {
-        graph.add(Constraint::Type::Copy, omap.getReturn(&fcn),
+        graph.add(Constraint<DUG::ObjID>::Type::Copy, omap.getReturn(&fcn),
             ObjectMap::UniversalValue);
       }
 
@@ -1147,17 +1191,17 @@ bool SpecSFS::createConstraints(DUG &graph, ObjectMap &omap,
           [&graph, &omap](const Argument &arg) {
         if (isa<PointerType>(arg.getType())) {
           // Must deal with pointers passed into extrernal fcns
-          graph.add(Constraint::Type::Store, omap.getValue(&arg),
+          graph.add(Constraint<DUG::ObjID>::Type::Store, omap.getValue(&arg),
             ObjectMap::UniversalValue);
 
           // must deal w/ memory object passed into external fcns
-          graph.add(Constraint::Type::Copy, omap.getValue(&arg),
+          graph.add(Constraint<DUG::ObjID>::Type::Copy, omap.getValue(&arg),
             ObjectMap::UniversalValue);
         }
       });
 
       if (fcn.getFunctionType()->isVarArg()) {
-        graph.add(Constraint::Type::Store, omap.getVarArg(&fcn),
+        graph.add(Constraint<DUG::ObjID>::Type::Store, omap.getVarArg(&fcn),
             ObjectMap::UniversalValue);
       }
     }
@@ -1186,7 +1230,6 @@ bool SpecSFS::addIndirectCalls(DUG &graph, const Andersens &aux,
   // We iterate each indirect call in the DUG
   // to add the indirect info to the constraint map:
   std::for_each(graph.indirect_cbegin(), graph.indirect_cend(),
-      // We take different arguments, depending on if we're debugging...
       [&graph, &aux, &omap]
       (const std::pair<DUG::ObjID, DUG::CFGid> &pair) {
     const llvm::CallInst *ci =
@@ -1213,10 +1256,12 @@ bool SpecSFS::addIndirectCalls(DUG &graph, const Andersens &aux,
     // Also, add constraints if needed
     std::for_each(std::begin(fcnTargets), std::end(fcnTargets),
           [&graph, &omap, &CS, &is_ext] (const DUG::ObjID fcn_id) {
-      const llvm::Function *fcn = cast<llvm::Function>(omap.valueAtID(fcn_id));
+      const llvm::Function *fcn = omap.getFunction(fcn_id);
 
       is_ext |= addConstraintsForCall(graph, omap, CS,
         const_cast<llvm::Function *>(fcn), nullptr);
+
+      graph.removeUnusedFunction(fcn_id);
     });
 
     if (is_ext) {
@@ -1235,22 +1280,19 @@ bool SpecSFS::addIndirectCalls(DUG &graph, const Andersens &aux,
 
     std::for_each(pair.second.cbegin(), pair.second.cend(),
         [&graph, &omap, &call_id, &ret_id] (const DUG::ObjID &ins_id){
-      dout << "valueAtID (" << ins_id << ") is: " << *omap.valueAtID(ins_id);
       const llvm::CallInst *ci =
         dyn_cast<llvm::CallInst>(omap.valueAtID(ins_id));
-      if (ci) {
-        llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
+      llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
 
-        DUG::ObjID fcn_id = omap.getObject(CS.getCalledFunction());
-        DUG::CFGid fcn_call_id =
-          graph.getCFGFunctionStart(fcn_id);
-        DUG::CFGid fcn_ret_id = graph.getCFGFunctionReturn(fcn_id);
+      DUG::ObjID fcn_id = omap.getFunction(CS.getCalledFunction());
+      DUG::CFGid fcn_call_id =
+        graph.getCFGFunctionStart(fcn_id);
+      DUG::CFGid fcn_ret_id = graph.getCFGFunctionReturn(fcn_id);
 
-        graph.addCFGEdge(call_id, fcn_call_id);
-        graph.addCFGEdge(fcn_ret_id, ret_id);
-      } else {
-        dout << "skipping value: " << *ci << "\n";
-      }
+      graph.addCFGEdge(call_id, fcn_call_id);
+      graph.addCFGEdge(fcn_ret_id, ret_id);
+
+      graph.removeUnusedFunction(fcn_id);
     });
   });
 
