@@ -30,13 +30,15 @@ void T5(DUG::ControlFlowGraph &) {
 void Ramalingam(DUG::ControlFlowGraph &G) {
   // Start by restricting G to only p-nodes, this gives is "Gp"
   // Make Gp a copy of G
-  DUG::ControlFlowGraph Gp(G);
+  DUG::ControlFlowGraph Gp = G.convert<DUG::CFGNode, DUG::CFGEdge>();
+
   std::vector<DUG::CFGid> remove_list;
   std::for_each(std::begin(Gp), std::end(Gp),
       [&remove_list]
-      (std::pair<const DUG::CFGid, DUG::ControlFlowGraph::Node> &pr) {
+      (DUG::ControlFlowGraph::node_iter_type &pr) {
+    auto &node = llvm::cast<DUG::CFGNode>(*pr.second);
     // If the node is non-preserving, remove it
-    if (!pr.second.data().p()) {
+    if (!node.p()) {
       remove_list.push_back(pr.first);
     }
   });
@@ -48,7 +50,7 @@ void Ramalingam(DUG::ControlFlowGraph &G) {
   });
 
   // Now get the SCC version of Gp
-  DUG::ControlFlowGraph Gp_SCC = Gp.getSCC();
+  Gp.createSCC();
 
   // T4 -- This transform collapses a set of strongly connected p (preserving)
   // nodes into a single node.
@@ -91,7 +93,8 @@ void Ramalingam(DUG::ControlFlowGraph &G) {
 // calculating the "Partially Equivalent Flow Graph" (PEFG) representation
 DUG::ControlFlowGraph
 SpecSFS::computeSSA(const DUG::ControlFlowGraph &CFG) {
-  DUG::ControlFlowGraph ret(CFG);
+  // This essentially copies the CFG
+  DUG::ControlFlowGraph ret = CFG.convert<DUG::CFGNode, DUG::CFGEdge>();
 
   Ramalingam(ret);
 

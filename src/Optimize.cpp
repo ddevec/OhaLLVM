@@ -39,17 +39,25 @@ static int getIdx(DUG::ObjID id) {
 typedef SparseBitVector<> Bitmap;
 
 // Data for HU nodes {{{
-struct HUData {
+struct HUNode : public SEGNode<DUG::ObjID> {
   //{{{
-  HUData() = default;
-  template<typename old_node>
-  explicit HUData(const old_node &) { }
+  HUNode(int32_t nodenum, DUG::ObjID id) :
+    SEGNode<DUG::ObjID>(NodeKind::HUNode, nodenum, id) { }
+
+  template <typename id_converter>
+  HUNode(int32_t nodenum, DUG::ObjID id, const SEGNode<DUG::ObjID> &nd,
+        id_converter convert) :
+      SEGNode<DUG::ObjID>(NodeKind::HUNode, nodenum, id, nd, convert) { }
 
   void addPtsTo(DUG::ObjID id) {
     ptsto_.set(getIdx(id));
   }
 
   const Bitmap &ptsto() const {
+    return ptsto_;
+  }
+
+  Bitmap &ptsto() {
     return ptsto_;
   }
 
@@ -92,6 +100,12 @@ struct HUData {
     }
   }
 
+  // For LLVM RTTI {{{
+  static bool classof(const SEGNode<DUG::ObjID> *n) {
+    return n->getKind() == NodeKind::HUNode;
+  }
+  //}}}
+
   bool indirect_ = false;
 
   Bitmap ptsto_;
@@ -111,10 +125,10 @@ struct HUEdge {
       auto &src = graph->getNode(con.src());
 
       switch (con.type()) {
-        case Constraint<DUG::ObjID>::Type::Store:
+        case ConstraintType::Store:
           // I think we just ignore stores
           break;
-        case Constraint<DUG::ObjID>::Type::Load:
+        case ConstraintType::Load:
           // Add its own indirect ptsto
           if (con.offs() == 0) {
             if_debug(
@@ -130,7 +144,7 @@ struct HUEdge {
             src.data().setIndirect();
           }
           break;
-        case Constraint<DUG::ObjID>::Type::AddressOf:
+        case ConstraintType::AddressOf:
           if_debug(
             dout << "Setting: " << idToString(con.dest()) << " to indirect\n";
             dout << "Adding ptsto: " << idToString(con.dest()) <<
@@ -148,7 +162,7 @@ struct HUEdge {
           }
           */
           break;
-        case Constraint<DUG::ObjID>::Type::Copy:
+        case ConstraintType::Copy:
           if_debug(
             dout << "Adding edge: " << idToString(con.src()) << " -> " <<
               idToString(con.dest()) << "\n";
@@ -172,16 +186,16 @@ struct HUEdge {
 
     void print_label(llvm::raw_ostream &ofil, const ObjectMap &) const {
       switch (type_) {
-        case Constraint<DUG::ObjID>::Type::Copy:
+        case ConstraintType::Copy:
           ofil << "copy";
           break;
-        case Constraint<DUG::ObjID>::Type::AddressOf:
+        case ConstraintType::AddressOf:
           ofil << "addr_of";
           break;
-        case Constraint<DUG::ObjID>::Type::Load:
+        case ConstraintType::Load:
           ofil << "load";
           break;
-        case Constraint<DUG::ObjID>::Type::Store:
+        case ConstraintType::Store:
           ofil << "store";
           break;
         default:
@@ -194,7 +208,7 @@ struct HUEdge {
     //{{{
     DUG::ObjID src_;
     DUG::ObjID dest_;
-    Constraint<DUG::ObjID>::Type type_;
+    ConstraintType type_;
     //}}}
   //}}}
 };
@@ -202,9 +216,7 @@ struct HUEdge {
 //}}}
 
 // Typedefs for the HU Sparse Evaluation Graph {{{
-struct HUData;
-typedef SEG<DUG::ObjID, HUData, HUEdge> HUSeg;
-typedef HUSeg::Node HUNode;
+typedef SEG<DUG::ObjID> HUSeg;
 //}}}
 
 // Acutal HU visit impl {{{
@@ -214,28 +226,26 @@ static void visitHU(HUSeg &seg, HUNode &node, const ObjectMap &if_debug(omap)) {
     node.print_label(dout, omap);
     dout << "\n");
   // Union our past ptsto sets
-  auto &node_data = node.data();
   for (DUG::ObjID node_id : node.preds()) {
-    HUNode &pred = seg.getNode(node_id);
+    HUNode &pred = llvm::cast<HUNode>(seg.getNode(node_id));
     if_debug(
       dout << "\tOn pred: (" << idToString(pred.id()) << ") ";
       pred.print_label(dout, omap);
       dout << "\n");
-    auto &pred_data = pred.data();
 
     if_debug(
       dout << "Unioning src ptsto: ";
-      for (auto int_id : node_data.ptsto()) {
+      for (auto int_id : node.ptsto()) {
         dout << " " << idToString(DUG::ObjID(int_id));
       }
       dout << "\n";
       dout << "with pred ptsto: ";
-      for (auto int_id : pred_data.ptsto()) {
+      for (auto int_id : pred.ptsto()) {
         dout << " " << idToString(DUG::ObjID(int_id));
       }
       dout << "\n");
 
-    node_data.ptsto_ |= pred_data.ptsto_;
+    node.ptsto() |= pred.ptsto();
   }
 }
 //}}}
@@ -300,7 +310,8 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
   //  V is the set of vertecies in the graph
 
   // Create the initial graph
-  HUSeg huSeg(graph.getConstraintGraph());
+  HUSeg huSeg =
+    graph.getConstraintGraph().convert<HUNode, Constraint<DUG::ObjID>>();
 
   if_debug(
     for (auto &pair : huSeg) {
@@ -316,7 +327,7 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
   std::for_each(huSeg.dfs_pred_begin(), huSeg.dfs_pred_end(),
       [&huSeg, &omap](DUG::ObjID node_id) {
     // Do the HU visit (pred collection) on each node
-    visitHU(huSeg, huSeg.getNode(node_id), omap);
+    visitHU(huSeg, llvm::cast<HUNode>(huSeg.getNode(node_id)), omap);
   });
 
   if_debug(
@@ -343,17 +354,17 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
 
   // Now create the pointer equivalency ids
   for (auto &pair : huSeg) {
-    auto &node = pair.second;
+    auto &node = llvm::cast<HUNode>(*pair.second);
 
-    auto it = pts_to_pe.find(node.data().ptsto());
+    auto it = pts_to_pe.find(node.ptsto());
 
     DUG::PEid pe;
-    if (node.data().indirect()) {
+    if (node.indirect()) {
       pe = getNextPE();
       dout << "pe for indirect node: " << pe.val() << "\n";
     } else if (it == std::end(pts_to_pe)) {
       pe = getNextPE();
-      pts_to_pe.insert(std::make_pair(node.data().ptsto(), pe));
+      pts_to_pe.insert(std::make_pair(node.ptsto(), pe));
       dout << "pe for ptsto: " << pe.val() << "\n";
     } else {
       pe = it->second;

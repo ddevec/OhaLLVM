@@ -82,13 +82,13 @@ static void printSpecial(raw_ostream &ofil, DUG::ObjID id) {
 
 static const std::string getConsStr(const Constraint<DUG::ObjID> &cons) {
   switch (cons.type()) {
-    case Constraint<DUG::ObjID>::Type::Copy:
+    case ConstraintType::Copy:
       return "copy";
-    case Constraint<DUG::ObjID>::Type::AddressOf:
+    case ConstraintType::AddressOf:
       return "addr_of";
-    case Constraint<DUG::ObjID>::Type::Load:
+    case ConstraintType::Load:
       return "load";
-    case Constraint<DUG::ObjID>::Type::Store:
+    case ConstraintType::Store:
       return "store";
     default:
       llvm_unreachable("Constraint with unexpected type!");
@@ -196,13 +196,13 @@ static void printConstraintNodeHeader(raw_ostream &ofil, const DUG &graph,
 
 static DUG::ObjID getTarget(const Constraint<DUG::ObjID> &con) {
   switch (con.type()) {
-    case Constraint<DUG::ObjID>::Type::Copy:
+    case ConstraintType::Copy:
       return con.dest();
-    case Constraint<DUG::ObjID>::Type::AddressOf:
+    case ConstraintType::AddressOf:
       return con.src();
-    case Constraint<DUG::ObjID>::Type::Load:
+    case ConstraintType::Load:
       return con.dest();
-    case Constraint<DUG::ObjID>::Type::Store:
+    case ConstraintType::Store:
       return con.dest();
     default:
       llvm_unreachable("Unhandled constraint");
@@ -211,13 +211,13 @@ static DUG::ObjID getTarget(const Constraint<DUG::ObjID> &con) {
 
 static DUG::ObjID getOrigin(const Constraint<DUG::ObjID> &con) {
   switch (con.type()) {
-    case Constraint<DUG::ObjID>::Type::Copy:
+    case ConstraintType::Copy:
       return con.src();
-    case Constraint<DUG::ObjID>::Type::AddressOf:
+    case ConstraintType::AddressOf:
       return con.dest();
-    case Constraint<DUG::ObjID>::Type::Load:
+    case ConstraintType::Load:
       return con.src();
-    case Constraint<DUG::ObjID>::Type::Store:
+    case ConstraintType::Store:
       return con.src();
     default:
       llvm_unreachable("Unhandled constraint");
@@ -274,16 +274,18 @@ static void printPENodeLinks(raw_ostream &ofil, const DUG &graph,
 
 // Constraint {{{
 template<typename id_type>
-Constraint<id_type>::Constraint(id_type s, id_type d, Type t) :
+Constraint<id_type>::Constraint(id_type s, id_type d, ConstraintType t) :
   Constraint(s, d, t, 0) { }
 
 template<typename id_type>
-Constraint<id_type>::Constraint(id_type d, id_type s, Type t,
-    int32_t o) : type_(t), dest_(d), src_(s), offs_(o) { }
+Constraint<id_type>::Constraint(id_type d, id_type s, ConstraintType t,
+      int32_t o) :
+    SEGEdge<id_type>(EdgeKind::Constraint, s, d),
+    type_(t), offs_(o) { }
 //}}}
 
-DUG::ConsID DUG::add(Constraint<ObjID>::Type type, ObjID d, ObjID s, int o) {
-  constraintGraph_.addEdge(s, d, type, o);
+DUG::ConsID DUG::add(ConstraintType type, ObjID d, ObjID s, int o) {
+  constraintGraph_.addEdge<Constraint<ObjID>>(s, d, type, o);
 
   return ConsID(s, d);
 }
@@ -292,7 +294,7 @@ DUG::ObjID DUG::addNode(ObjectMap &omap) {
   auto id = omap.makeTempValue();
 
   // Put a new node on the back of nodes
-  constraintGraph_.createNode(id);
+  constraintGraph_.addNode<ConstraintNode>(id);
 
   return id;
 }
