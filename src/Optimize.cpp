@@ -70,7 +70,8 @@ struct HUNode : public SEGNode<DUG::ObjID> {
   }
 
   void print_label(llvm::raw_ostream &ofil,
-      DUG::ObjID id, const ObjectMap &omap) const {
+      const ObjectMap &omap) const override {
+    DUG::ObjID id = SEGNode<DUG::ObjID>::id();
     auto pr = omap.getValueInfo(id);
     if (pr.first != ObjectMap::Type::Special) {
       const llvm::Value *val = pr.second;
@@ -115,75 +116,140 @@ struct HUNode : public SEGNode<DUG::ObjID> {
 // FIXME: HAX to be removed later
 ObjectMap *g_omap;
 
-struct HUEdge {
+struct HUEdge : public SEGEdge<DUG::ObjID> {
   //{{{
  public:
-    template<typename graph_type>
-    HUEdge(graph_type *graph, const Constraint<DUG::ObjID> &con) :
-        src_(con.src()), dest_(con.dest()), type_(con.type()) {
-      auto &dest = graph->getNode(con.dest());
-      auto &src = graph->getNode(con.src());
+    // Construction from Constraint {{{
+    HUEdge(DUG::ObjID src, DUG::ObjID dest, SEG<DUG::ObjID> &graph,
+          const Constraint<DUG::ObjID> &con) :
+        SEGEdge(EdgeKind::HUEdge, src, dest),
+        type_(con.type()), offs_(con.offs()) {
+      // Get our two HU nodes
+      auto &dest_node = llvm::cast<HUNode>(graph.getNode(dest));
+      auto &src_node = llvm::cast<HUNode>(graph.getNode(src));
 
-      switch (con.type()) {
+      // Add constraints
+      switch (type()) {
         case ConstraintType::Store:
           // I think we just ignore stores
           break;
         case ConstraintType::Load:
           // Add its own indirect ptsto
-          if (con.offs() == 0) {
+          if (offs() == 0) {
             if_debug(
-              dout << "Adding edge: " << idToString(con.src()) << " -> " <<
-                idToString(con.dest()) << "\n";
+              dout << "Adding edge: " << idToString(src) << " -> " <<
+                idToString(dest) << "\n";
               dout << "Adding pred to: ";
-              src.print_label(dout, *g_omap);
+              src_node.print_label(dout, *g_omap);
               dout << "\n");
 
-            src.addPred(con.dest());
+            src_node.addPred(dest);
           } else {
-            dout << "Setting: " << idToString(con.src()) << " to indirect\n";
-            src.data().setIndirect();
+            dout << "Setting: " << idToString(src) << " to indirect\n";
+            src_node.setIndirect();
           }
           break;
         case ConstraintType::AddressOf:
           if_debug(
-            dout << "Setting: " << idToString(con.dest()) << " to indirect\n";
-            dout << "Adding ptsto: " << idToString(con.dest()) <<
-                " to ptsto of: " << idToString(con.src()) << "\n");
+            dout << "Setting: " << idToString(dest) << " to indirect\n";
+            dout << "Adding ptsto: " << idToString(dest) <<
+                " to ptsto of: " << idToString(src) << "\n");
 
-          dest.data().setIndirect();
-          src.data().addPtsTo(con.dest());
-          /*
-          if (g_omap->isObject(con.src())) {
-            dbgs() << "!!!!! IS OBJECT!\n";
-            auto &src = graph->getNode(con.src());
-            src.data().setIndirect();
-          } else {
-            // dbgs() << "NOT object!\n";
+          dest_node.setIndirect();
+          src_node.addPtsTo(dest);
+
+          if (g_omap->isObject(src)) {
+            src_node.setIndirect();
           }
-          */
+
           break;
         case ConstraintType::Copy:
           if_debug(
-            dout << "Adding edge: " << idToString(con.src()) << " -> " <<
-              idToString(con.dest()) << "\n";
+            dout << "Adding edge: " << idToString(src) << " -> " <<
+              idToString(dest) << "\n";
             dout << "Adding pred (copy) to: ";
-            src.print_label(dout, *g_omap);
+            src_node.print_label(dout, *g_omap);
             dout << "\n");
-          dest.addPred(con.src());
+          dest_node.addPred(src);
           break;
         default:
           llvm_unreachable("Should never get here!\n");
       }
     }
 
-    DUG::ObjID src() const {
-      return src_;
+    /*
+    template <typename id_converter>
+    HUEdge(DUG::ObjID src, DUG::ObjID dest, const SEGEdge<DUG::ObjID> &node,
+        SEG<DUG::ObjID> &graph, id_converter) :
+        SEGEdge(EdgeKind::HUEdge, src, dest),
+        type_(llvm::cast<Constraint<DUG::ObjID>>(node).type()),
+        offs_(llvm::cast<Constraint<DUG::ObjID>>(node).offs()) {
+      // Get our two HU nodes
+      auto &dest_node = llvm::cast<HUNode>(graph.getNode(dest));
+      auto &src_node = llvm::cast<HUNode>(graph.getNode(src));
+
+      // Add constraints
+      switch (type()) {
+        case ConstraintType::Store:
+          // I think we just ignore stores
+          break;
+        case ConstraintType::Load:
+          // Add its own indirect ptsto
+          if (offs() == 0) {
+            if_debug(
+              dout << "Adding edge: " << idToString(src) << " -> " <<
+                idToString(dest) << "\n";
+              dout << "Adding pred to: ";
+              src_node.print_label(dout, *g_omap);
+              dout << "\n");
+
+            // src_node.addPred(dest());
+          } else {
+            dout << "Setting: " << idToString(src()) << " to indirect\n";
+            src_node.setIndirect();
+          }
+          break;
+        case ConstraintType::AddressOf:
+          if_debug(
+            dout << "Setting: " << idToString(dest()) << " to indirect\n";
+            dout << "Adding ptsto: " << idToString(dest()) <<
+                " to ptsto of: " << idToString(src()) << "\n");
+
+          dest_node.setIndirect();
+          src_node.addPtsTo(dest);
+
+          if (g_omap->isObject(src())) {
+            src_node.setIndirect();
+          }
+
+          break;
+        case ConstraintType::Copy:
+          if_debug(
+            dout << "Adding edge: " << idToString(src) << " -> " <<
+              idToString(dest) << "\n";
+            dout << "Adding pred (copy) to: ";
+            src_node.print_label(dout, *g_omap);
+            dout << "\n");
+          // dest_node.addPred(src);
+          break;
+        default:
+          llvm_unreachable("Should never get here!\n");
+      }
+    }
+    */
+    //}}}
+
+    // Accessors {{{
+    int32_t offs() const {
+      return offs_;
     }
 
-    DUG::ObjID dest() const {
-      return dest_;
+    ConstraintType type() const {
+      return type_;
     }
+    //}}}
 
+    // Dot Print Support {{{
     void print_label(llvm::raw_ostream &ofil, const ObjectMap &) const {
       switch (type_) {
         case ConstraintType::Copy:
@@ -203,12 +269,12 @@ struct HUEdge {
           ofil << "BLEH";
       }
     }
+    //}}}
 
  private:
     //{{{
-    DUG::ObjID src_;
-    DUG::ObjID dest_;
     ConstraintType type_;
+    int32_t offs_;
     //}}}
   //}}}
 };
@@ -310,43 +376,65 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
   //  V is the set of vertecies in the graph
 
   // Create the initial graph
+  /* Clone it from the constraint graph?
   HUSeg huSeg =
-    graph.getConstraintGraph().convert<HUNode, Constraint<DUG::ObjID>>();
+    graph.getConstraintGraph().convert<HUNode, HUEdge>();
+    */
+
+  // Instead, create it fresh:
+  HUSeg huSeg;
+
+  auto &conGraph = graph.getConstraintGraph();
+  // create a HUNode per ConstraintNode:
+  std::for_each(conGraph.cbegin(), conGraph.cend(),
+      [&huSeg](const DUG::ConstraintGraph::node_iter_type &pr) {
+    huSeg.addNode<HUNode>(pr.first);
+  });
+
+  std::for_each(conGraph.edges_cbegin(), conGraph.edges_cend(),
+      [&huSeg](const DUG::ConstraintGraph::edge_iter_type &pr) {
+    auto &cons = llvm::cast<Constraint<DUG::ObjID>>(*pr.second);
+    huSeg.addEdge<HUEdge>(pr.first.first, pr.first.second, huSeg, cons);
+  });
+
 
   if_debug(
     for (auto &pair : huSeg) {
-      dout << "initial ptsto for node " << idToString(pair.second.id()) <<
+      HUNode &node = llvm::cast<HUNode>(*pair.second);
+      dout << "initial ptsto for node " << idToString(pair.second->id()) <<
         " is:";
-      for (auto int_id : pair.second.data().ptsto()) {
+      for (auto int_id : node.ptsto()) {
         dout << " " << idToString(DUG::ObjID(int_id));
       }
       dout << "\n";
     });
 
-  // Now iterate in DFS order
-  std::for_each(huSeg.dfs_pred_begin(), huSeg.dfs_pred_end(),
+  // Now iterate in topological order (start w/ root, end w/ leaf)
+  std::for_each(huSeg.topo_begin(), huSeg.topo_end(),
       [&huSeg, &omap](DUG::ObjID node_id) {
-    // Do the HU visit (pred collection) on each node
+    // Do the HU visit (pred collection) on each node in reverse
+    //    topological order
     visitHU(huSeg, llvm::cast<HUNode>(huSeg.getNode(node_id)), omap);
   });
 
   if_debug(
     for (auto &pair : huSeg) {
+      HUNode &node = llvm::cast<HUNode>(*pair.second);
       dout << "ptsto after HU for (";
-      if (pair.second.data().indirect()) {
+      if (node.indirect()) {
         dout << "indirect";
       } else {
         dout << "  direct";
       }
-      dout << ") node " << idToString(pair.second.id()) <<
+      dout << ") node " << idToString(node.id()) <<
         " is:";
-      for (auto int_id : pair.second.data().ptsto()) {
+      for (auto int_id : node.ptsto()) {
         dout << " " << idToString(DUG::ObjID(int_id));
       }
       dout << "\n";
     });
 
-  // huSeg.printDotFile("optimize.dot", omap);
+  huSeg.printDotFile("optimize.dot", omap);
 
   //  Used to map objs to the PE class
   std::map<DUG::ObjID, DUG::PEid> obj_to_pe;

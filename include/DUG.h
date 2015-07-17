@@ -156,7 +156,6 @@ class DUG {
 
     struct SEGNodeGroup : public UnifyNode<PEid> {
       //{{{
-
       // Constructors {{{
       SEGNodeGroup(int32_t nodenum, PEid id, ObjID base_id) :
           UnifyNode<PEid>(NodeKind::SEGNodeGroup, nodenum, id) {
@@ -167,12 +166,23 @@ class DUG {
       SEGNodeGroup(int32_t nodenum, PEid id, const SEGNode<ObjID> &old_node,
             id_converter convert) :
           UnifyNode<PEid>(NodeKind::SEGNodeGroup, nodenum, id,
-              llvm::cast<UnifyNode<ObjID>>(old_node), convert) { }
+              old_node, convert) {
+        oids.insert(old_node.id());
+
+        if (auto pun = llvm::dyn_cast<UnifyNode<ObjID>>(&old_node)) {
+          auto &node = *pun;
+
+          std::for_each(node.rep_begin(), node.rep_end(),
+              [this](ObjID oid) {
+            oids.insert(oid);
+          });
+        }
+      }
       //}}}
 
       // Printing for DOT debugging {{{
       void print_label(llvm::raw_ostream &ofil,
-          const ObjectMap &omap) const {
+          const ObjectMap &omap) const override {
         // So I can know when the end is coming, for newline printing
         for (auto it = oids.begin(),
             en = oids.end(); it != en;) {
@@ -211,16 +221,27 @@ class DUG {
           }
         }
       }
+      //}}}
 
-      void unite(SEGNode<PEid> &n) override {
+      // Unite/merge overrides {{{
+      void unite(SEG<PEid> &graph, SEGNode<PEid> &n) override {
         auto &grp = llvm::cast<SEGNodeGroup>(n);
 
         oids.insert(std::begin(grp.oids), std::end(grp.oids));
 
-        UnifyNode<PEid>::unite(n);
+        UnifyNode<PEid>::unite(graph, n);
       }
 
-      // For llvm RTTI
+      void merge(const SEGNode<PEid> &n) override {
+        auto &grp = llvm::cast<SEGNodeGroup>(n);
+
+        oids.insert(std::begin(grp.oids), std::end(grp.oids));
+
+        UnifyNode<PEid>::merge(n);
+      }
+      //}}}
+
+      // For llvm RTTI {{{
       static bool classof(const SEGNode<PEid> *node) {
         return node->getKind() == NodeKind::SEGNodeGroup;
       }
@@ -309,6 +330,10 @@ class DUG {
           return r_;
         }
 
+        bool u() const {
+          return !r();
+        }
+
         bool c() const {
           return c_;
         }
@@ -329,10 +354,14 @@ class DUG {
         //}}}
 
         // Unite {{{
-        void unite(const CFGNode &n) {
-          m_ |= n.m_;
-          r_ |= n.r_;
-          c_ |= n.c_;
+        void unite(SEG<CFGid> &graph, SEGNode<CFGid> &n) override {
+          auto &node = llvm::cast<CFGNode>(n);
+
+          m_ |= node.m_;
+          r_ |= node.r_;
+          c_ |= node.c_;
+
+          SCCNode<CFGid>::unite(graph, n);
         }
         //}}}
 

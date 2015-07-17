@@ -1073,8 +1073,10 @@ bool SpecSFS::createConstraints(DUG &graph, ObjectMap &omap,
   // Universal value
   graph.add(ConstraintType::AddressOf, ObjectMap::UniversalValue,
       ObjectMap::UniversalValue);
+  /* FIXME - I should add this back in... but it screws with my edge mappings...
   graph.add(ConstraintType::Store, ObjectMap::UniversalValue,
       ObjectMap::UniversalValue);
+      */
 
   // Null value pts to null object
   graph.add(ConstraintType::AddressOf, ObjectMap::NullValue,
@@ -1195,8 +1197,10 @@ bool SpecSFS::createConstraints(DUG &graph, ObjectMap &omap,
             ObjectMap::UniversalValue);
 
           // must deal w/ memory object passed into external fcns
+          /* FIXME -- Must deal with multiple edges to same location first...
           graph.add(ConstraintType::Copy, omap.getValue(&arg),
             ObjectMap::UniversalValue);
+            */
         }
       });
 

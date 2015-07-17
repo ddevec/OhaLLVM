@@ -11,8 +11,11 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <iterator>
 #include <limits>
+#include <list>
 #include <map>
+#include <memory>
 #include <queue>
 #include <set>
 #include <stack>
@@ -100,7 +103,8 @@ enum class NodeKind {
 
 enum class EdgeKind {
   Constraint,
-  CFGEdge
+  CFGEdge,
+  HUEdge
 };
 //}}}
 
@@ -125,6 +129,15 @@ class SEGEdge {
 
     EdgeKind getKind() const {
       return kind_;
+    }
+
+    static bool classof(const SEGEdge<id_type> *) {
+      return true;
+    }
+
+    void retarget(std::pair<id_type, id_type> &new_edge) {
+      src_ = new_edge.first;
+      dest_ = new_edge.second;
     }
 
  protected:
@@ -227,6 +240,12 @@ class SEGNode {
     }
     //}}}
 
+    // LLVM RTTI support {{{
+    static bool classof(const SEGNode<id_type> *) {
+      return true;
+    }
+    //}}}
+
     // Modifiers {{{
     void addSucc(id_type id) {
       succs_.insert(id);
@@ -234,6 +253,15 @@ class SEGNode {
 
     void addPred(id_type id) {
       preds_.insert(id);
+    }
+
+    // Merges two nodes together, called on convert when two old_id's convert
+    // into a single new_id
+    virtual void merge(const SEGNode<id_type> &nd) {
+      auto &succs = nd.succs();
+      auto &preds = nd.preds();
+      succs_.insert(std::begin(succs), std::end(succs));
+      preds_.insert(std::begin(preds), std::end(preds));
     }
     //}}}
 
@@ -243,10 +271,6 @@ class SEGNode {
     //}}}
 
  private:
-    // For dfs traversal
-    friend class SEG<id_type>;
-
-
     // Private data {{{
     // For llvm RTTI
     const NodeKind kind_;
@@ -256,16 +280,6 @@ class SEGNode {
 
     // The id for this node
     id_type id_;
-
-    // Used for DFS traversal
-    int32_t dfsNumPred_ = std::numeric_limits<int32_t>::max();
-    int32_t dfsNumSucc_ = std::numeric_limits<int32_t>::max();
-    //}}}
-
-    // Private helpers {{{
-    void calcDFS(SEG<id_type> &graph,
-        bool dfs_succ, int32_t dfs,
-        std::set<std::reference_wrapper<SEGNode>> &visited);
     //}}}
 
  protected:
@@ -310,13 +324,61 @@ class UnifyNode : public SEGNode<id_type> {
     //}}}
 
     // Actual unite functionality {{{
-    virtual void unite(SEGNode<id_type> &n) {
+    virtual void unite(SEG<id_type> &graph, SEGNode<id_type> &n) {
+      // Retarget all edges pointing towards n
+      /*
       SEGNode<id_type>::preds().insert(std::begin(n.preds()),
           std::end(n.preds()));
+      */
+
+      std::for_each(std::begin(n.preds()), std::end(n.preds()),
+          [this, &graph, &n](id_type pred_id) {
+        auto old_id = std::make_pair(pred_id, n.id());
+        auto new_id = std::make_pair(pred_id, SEGNode<id_type>::id());
+
+
+        graph.retargetEdge(old_id, new_id);
+      });
+
+      /*
       SEGNode<id_type>::succs().insert(std::begin(n.succs()),
           std::end(n.succs()));
+      */
+      std::for_each(std::begin(n.succs()), std::end(n.succs()),
+          [this, &graph, &n](id_type succ_id) {
+        auto old_id = std::make_pair(n.id(), succ_id);
+        auto new_id = std::make_pair(SEGNode<id_type>::id(), succ_id);
 
-      reps_.insert(n.id());
+        graph.retargetEdge(old_id, new_id);
+      });
+
+      // Also replace the graph's index to n with our pointer
+      if (auto pun = llvm::dyn_cast<UnifyNode<id_type>>(&n)) {
+        auto &un = *pun;
+
+        std::for_each(un.rep_begin(), un.rep_end(),
+            [this, &graph](id_type rep_id) {
+          graph.retargetId(rep_id, SEGNode<id_type>::id());
+
+          // Add all rep ids to our "reps"
+          reps_.insert(rep_id);
+        });
+      } else {
+        graph.retargetId(n.id(), SEGNode<id_type>::id());
+        // Add n.id to our "reps"
+        reps_.insert(n.id());
+      }
+    }
+    //}}}
+
+    // merge functionality {{{
+    void merge(const SEGNode<id_type> &nd) override {
+      if (auto pun = llvm::dyn_cast<UnifyNode<id_type>>(&nd)) {
+        auto &un = *pun;
+
+        reps_.insert(un.rep_begin(), un.rep_end());
+      }
+      SEGNode<id_type>::merge(nd);
     }
     //}}}
 
@@ -416,6 +478,17 @@ class SCCNode : public UnifyNode<id_type> {
     void setOnStack(bool onStack) {
       onStack_ = onStack;
     }
+
+    void unite(SEG<id_type> &graph, SEGNode<id_type> &node) override {
+      // Just forward... we've already computed SCC, or our data is invalid
+      //   anyway
+      UnifyNode<id_type>::unite(graph, node);
+    }
+
+    // merge functionality
+    void merge(const SEGNode<id_type> &nd) override {
+      UnifyNode<id_type>::merge(nd);
+    }
     //}}}
 
     // For LLVM RTTI {{{
@@ -450,14 +523,155 @@ class SEG {
     //}}}
 
     // Iterators {{{
+    // Iterator Types {{{
+    class topo_iterator {
+      //{{{
+     public:
+        // Stuff to make it stl compatible {{{
+        typedef std::bidirectional_iterator_tag iterator_category;
+        typedef typename std::list<id_type>::value_type value_type;
+        typedef typename std::list<id_type>::difference_type difference_type;
+        typedef typename std::list<id_type>::pointer pointer;
+        typedef typename std::list<id_type>::reference reference;
+        //}}}
+
+        // Constructors {{{
+        // No arguments returns end()
+        topo_iterator() = default;
+
+        topo_iterator(const topo_iterator &) = default;
+        topo_iterator(topo_iterator &&) = default;
+
+        topo_iterator &operator=(const topo_iterator &) = default;
+        topo_iterator &operator=(topo_iterator &&) = default;
+
+        // With node, does reverse topo iteration for the node
+        topo_iterator(const SEG<id_type> &graph, id_type start_node,
+              bool reverse = false) :
+            end_(false), L_(std::make_shared<std::list<id_type>>()) {
+          std::set<id_type> mark;
+
+          // Generate L
+          auto &nd = graph.getNode(start_node);
+          visit(graph, mark, nd, reverse);
+
+          itr_ = std::begin(*L_);
+        }
+
+        // Without a node does iteration for the graph
+        explicit topo_iterator(const SEG<id_type> &graph,
+              bool reverse = false) :
+            end_(false),
+            L_(std::make_shared<std::list<id_type>>()) {
+          std::set<id_type> mark;
+
+          std::for_each(std::begin(graph), std::end(graph),
+              [this, &graph, &mark, reverse] (const node_iter_type &pr) {
+            auto &node = *pr.second;
+            visit(graph, mark, node, reverse);
+          });
+
+          itr_ = std::begin(*L_);
+        }
+        //}}}
+
+        // accessors {{{
+        bool operator==(const topo_iterator &it) const {
+          return (begin_ && it.begin_) || (end_ && it.end_) ||
+            (!begin_ && !end_ && (itr_ == it.itr_));
+        }
+        bool operator!=(const topo_iterator &it) const {
+          return !operator==(it);
+        }
+
+        id_type operator*() const {
+          return itr_.operator*();
+        }
+
+        id_type operator->() const {
+          return itr_.operator->();
+        }
+
+        topo_iterator &operator--() {
+          --itr_;
+          end_ = (itr_ == std::end(*L_));
+          begin_ = (itr_ == std::begin(*L_));
+
+          return *this;
+        }
+
+        topo_iterator operator--(int) {
+          topo_iterator tmp(*this);
+          --itr_;
+          end_ = (itr_ == std::end(*L_));
+          begin_ = (itr_ == std::begin(*L_));
+
+          return std::move(tmp);
+        }
+
+        topo_iterator &operator++() {
+          ++itr_;
+          end_ = (itr_ == std::end(*L_));
+          begin_ = (itr_ == std::begin(*L_));
+
+          return *this;
+        }
+
+        topo_iterator operator++(int) {
+          topo_iterator tmp(*this);
+          ++itr_;
+          end_ = (itr_ == std::end(*L_));
+          begin_ = (itr_ == std::begin(*L_));
+
+          return std::move(tmp);
+        }
+        //}}}
+
+     private:
+        // Private functions {{{
+        void visit(const SEG<id_type> &graph, std::set<id_type> &mark,
+            const SEGNode<id_type> &node, bool reverse) {
+          // ddevec -- TODO: Check for cycles???
+          if (mark.count(node.id()) == 0) {
+            // For cycles...
+            mark.insert(node.id());
+
+            std::for_each(std::begin(node.succs()), std::end(node.succs()),
+                [this, &graph, &mark, reverse](id_type id) {
+              visit(graph, mark, graph.getNode(id), reverse);
+            });
+
+            if (reverse) {
+              L_->push_back(node.id());
+            } else {
+              L_->push_front(node.id());
+            }
+          }
+        }
+        //}}}
+
+        // Private data {{{
+        bool end_ = true;
+        bool begin_ = true;
+
+        // The lsit we calculate we need to iterate over
+        std::shared_ptr<std::list<id_type>> L_;
+
+        // Our actual iterator
+        typename std::list<id_type>::iterator itr_;
+        //}}}
+      //}}}
+    };
+    //}}}
+
     // Typedefs {{{
     /*
-    typedef std::unordered_map<id_type, std::unique_ptr<SEGNode<id_type>>, typename SEGNode<id_type>::hasher>  // NOLINT
+    typedef std::unordered_map<id_type, std::shared_ptr<SEGNode<id_type>>, typename SEGNode<id_type>::hasher>  // NOLINT
       NodeMap;
     */
-    typedef std::map<id_type, std::unique_ptr<SEGNode<id_type>>>
+    typedef std::map<id_type, std::shared_ptr<SEGNode<id_type>>>
       NodeMap;
-    typedef std::pair<const id_type, std::unique_ptr<SEGNode<id_type>>>
+    typedef std::pair<const id_type, std::shared_ptr<SEGNode<id_type>>>
       node_iter_type;
     typedef typename NodeMap::iterator node_iterator;
     typedef typename NodeMap::const_iterator
@@ -507,76 +721,38 @@ class SEG {
     }
     //}}}
 
-    // dfs iterators (succ and pred) {{{
-    dfs_iterator dfs_succ_begin() {
-      if (!haveDFSSucc_) {
-        fillDFSSucc();
-      }
-      return std::begin(dfsSucc_);
+    // Topo iteration {{{
+    typedef topo_iterator reverse_topo_iterator;
+    topo_iterator topo_begin() const {
+      return topo_iterator(*this);
     }
 
-    dfs_iterator dfs_succ_end() {
-      if (!haveDFSSucc_) {
-        fillDFSSucc();
-      }
-      assert(haveDFSSucc_);
-      return std::end(dfsSucc_);
+    topo_iterator topo_end() const {
+      return topo_iterator();
     }
 
-    const_dfs_iterator dfs_succ_begin() const {
-      assert(haveDFSSucc_);
-      return std::begin(dfsSucc_);
+    topo_iterator topo_begin(id_type id) const {
+      return topo_iterator(*this, id);
     }
 
-    const_dfs_iterator dfs_succ_end() const {
-      assert(haveDFSSucc_);
-      return std::end(dfsSucc_);
+    topo_iterator topo_end(id_type) const {
+      return topo_iterator();
     }
 
-    const_dfs_iterator dfs_succ_cbegin() const {
-      assert(haveDFSSucc_);
-      return dfsSucc_.cbegin();
+    reverse_topo_iterator topo_rbegin() const {
+      return reverse_topo_iterator(topo_iterator(*this, true));
     }
 
-    const_dfs_iterator dfs_succ_cend() const {
-      if (!haveDFSSucc_) {
-        fillDFSSucc();
-      }
-      return dfsSucc_.cend();
+    reverse_topo_iterator topo_rend() const {
+      return reverse_topo_iterator(topo_iterator());
     }
 
-    dfs_iterator dfs_pred_begin() {
-      if (!haveDFSPred_) {
-        fillDFSPred();
-      }
-      return std::begin(dfsPred_);
+    reverse_topo_iterator topo_rbegin(id_type id) const {
+      return reverse_topo_iterator(topo_iterator(*this, id, true));
     }
 
-    dfs_iterator dfs_pred_end() {
-      if (!haveDFSPred_) {
-        fillDFSPred();
-      }
-      return std::end(dfsPred_);
-    }
-
-    const_dfs_iterator dfs_pred_begin() const {
-      assert(haveDFSPred_);
-      return std::begin(dfsPred_);
-    }
-
-    const_dfs_iterator dfs_pred_end() const {
-      assert(haveDFSPred_);
-      return std::end(dfsPred_);
-    }
-
-    const_dfs_iterator dfs_pred_cbegin() const {
-      assert(haveDFSPred_);
-      return dfsPred_.cbegin();
-    }
-
-    const_dfs_iterator dfs_pred_cend() const {
-      assert(haveDFSPred_);
-      return dfsPred_.cend();
+    reverse_topo_iterator topo_rend(id_type) const {
+      return reverse_topo_iterator(topo_iterator());
     }
     //}}}
 
@@ -609,50 +785,74 @@ class SEG {
     //}}}
 
     // Modifiers {{{
-
-    // Constructors to transform between two SEGs
+    // Converters to transform between two SEGs {{{
     SEG() = default;
 
     template <typename node_type, typename edge_type>
     SEG<id_type> convert() const;
 
     template <typename node_type, typename edge_type,
-              typename new_id_type, typename id_converter>
+              typename new_id_type,
+              typename base_node_type = SEGNode<id_type>,
+              typename base_edge_type = SEGEdge<id_type>,
+              typename id_converter>
     SEG<new_id_type> convert(id_converter id_convert) const;
+    //}}}
 
-    // contructs new node of node_type and inserts it into our node list
-    template <typename node_type, typename... va_args>
-    SEGNode<id_type> &addNode(id_type id, va_args&... args) {
-      auto ret = nodes_.emplace(std::piecewise_construct,
-          std::forward_as_tuple(id),
-          std::forward_as_tuple(
-            std::unique_ptr<SEGNode<id_type>>(
-              new node_type(nodeNum_.next(), id, args...))));
-      // This had better have inserted
-      assert(ret.second);
-
-      return *ret.first->second;
-    }
-
+    // Edge Manipulation {{{
     // Adds edge of edge_type between two nodes
     template <typename edge_type, typename... va_args>
     void addEdge(id_type src, id_type dest, va_args&... args) {
       // Ensure that a node exists for each edge point..
-      getNode(src);
-      getNode(dest);
+      auto &src_node = getNode(src);
+      auto &dest_node = getNode(dest);
       edges_.emplace(std::piecewise_construct,
           std::forward_as_tuple(src, dest),
           std::forward_as_tuple(
             std::unique_ptr<SEGEdge<id_type>>(
               new edge_type(src, dest, args...))));
+
+      // FIXME: I need to handle inserting edges with the same key multiple
+      // times... although I really don't want two equivalent edges.... ugh
+      /*
+      if (!ret.second) {
+        llvm::dbgs() << "edge is: ( " << src << ", " << dest << " )\n";
+
+        llvm::dbgs() << "edges are:";
+        for (auto &edge : edges_) {
+          llvm::dbgs() << " ( " << edge.first.first << ", "
+            << edge.first.second << " )";
+        }
+        llvm::dbgs() << "\n";
+      }
+      assert(ret.second);
+      */
+
+      // Add succ/pred info for src/dest
+      src_node.succs().insert(dest);
+      dest_node.preds().insert(src);
     }
 
+
     void removeEdge(std::pair<id_type, id_type> edge_id) {
-      edges_.erase(edge_id);
+      size_t success = edges_.erase(edge_id);
+      assert(success == 1);
 
       // Also remove info from node:
+      /*
+      llvm::dbgs() << "edge_id is: ( " << edge_id.first << ", " <<
+        edge_id.second << " )\n";
+      */
       SEGNode<id_type> &src = *nodes_.at(edge_id.first);
       SEGNode<id_type> &dest = *nodes_.at(edge_id.second);
+
+      /*
+      llvm::dbgs() << "succs is:";
+      for (auto id : src.succs()) {
+        llvm::dbgs() << " " << id;
+      }
+      llvm::dbgs() << "\n";
+      */
 
       // Remove the pointer from src
       auto src_it = src.succs().find(edge_id.second);
@@ -663,6 +863,41 @@ class SEG {
       auto dest_it = dest.preds().find(edge_id.first);
       assert(dest_it != std::end(dest.preds()));
       dest.preds().erase(dest_it);
+    }
+
+    void retargetEdge(std::pair<id_type, id_type> &old_id,
+        std::pair<id_type, id_type> &new_id) {
+      // Remove the old edge
+      auto it = edges_.find(old_id);
+      assert(it != std::end(edges_));
+
+      auto pedge = std::move(it->second);
+
+      // Update edge src/dest
+      auto &edge = *pedge;
+      edge.retarget(new_id);
+
+      // Remove the edge
+      edges_.erase(it);
+
+      // Add the new edge
+      edges_.emplace(new_id, std::move(pedge));
+    }
+    //}}}
+
+    // Node Manipulation {{{
+    // contructs new node of node_type and inserts it into our node list
+    template <typename node_type, typename... va_args>
+    SEGNode<id_type> &addNode(id_type id, va_args&... args) {
+      auto ret = nodes_.emplace(std::piecewise_construct,
+          std::forward_as_tuple(id),
+          std::forward_as_tuple(
+            std::shared_ptr<SEGNode<id_type>>(
+              new node_type(nodeNum_.next(), id, args...))));
+      // This had better have inserted
+      assert(ret.second);
+
+      return *ret.first->second;
     }
 
     void removeNode(id_type id) {
@@ -691,11 +926,18 @@ class SEG {
 
       // Delete the node
       nodes_.erase(id);
-
-      // Need to recalcualte DFS info
-      haveDFSPred_ = false;
-      haveDFSSucc_ = false;
     }
+
+    // For use by unification operations only...
+    void retargetId(id_type old_id, id_type new_id) {
+      auto pnode = nodes_.at(new_id);
+
+      auto old_it = nodes_.find(old_id);
+
+      assert(old_it != std::end(nodes_));
+      old_it->second = pnode;
+    }
+    //}}}
     //}}}
 
     // Accessors {{{
@@ -711,16 +953,19 @@ class SEG {
     }
 
     // Gets the node
-    SEGNode<id_type> &getNode(id_type id) {
-      return *nodes_.at(id);
+    template <typename node_type = SEGNode<id_type>>
+    node_type &getNode(id_type id) {
+      return llvm::cast<node_type>(*nodes_.at(id));
     }
 
-    const SEGNode<id_type> &getNode(id_type id) const {
-      return *nodes_.at(id);
+    template <typename node_type = SEGNode<id_type>>
+    const node_type &getNode(id_type id) const {
+      return llvm::cast<node_type>(*nodes_.at(id));
     }
 
-    const SEGEdge<id_type> &getEdge(std::pair<id_type, id_type> &ids) const {
-      return *edges_.at(ids);
+    template <typename edge_type = SEGEdge<id_type>>
+    const edge_type &getEdge(std::pair<id_type, id_type> &ids) const {
+      return llvm::cast<edge_type>(*edges_.at(ids));
     }
 
     const_edge_iterator findEdge(std::pair<id_type, id_type> &id) const {
@@ -776,24 +1021,11 @@ class SEG {
 
     std::function<SEGNode<id_type> *(uint32_t, id_type)> nodeAlloc_;
 
-    // Required for dfs (dfs is calculated on visit)
-    bool haveDFSPred_ = false;
-    bool haveDFSSucc_ = false;
-
     UniqueIdentifier<uint32_t> nodeNum_;
     //}}}
 
-    // Private helpers {{{
-    std::unique_ptr<SEGNode<id_type>> *allocNode(id_type id) {
-      return std::unique_ptr<SEGNode<id_type>>(allocNode_(nodeNum_.next(), id));
-    }
+    // Private functions {{{
 
-    std::unique_ptr<SEGEdge<id_type>> *allocEdge() {
-      return std::unique_ptr<SEGEdge<id_type>>(allocEdge_(this));
-    }
-
-    void fillDFSPred();
-    void fillDFSSucc();
     // Tarjan's SCC algorithm to detect strongly connected components
     void sccStrongconnect(SCCNode<id_type> &nd, int &index,
         std::stack<std::reference_wrapper<SCCNode<id_type>>> &st,
@@ -804,34 +1036,6 @@ class SEG {
 
 // SEG Impl {{{
 // Node impl {{{
-// Visit helper {{{
-template <typename id_type>
-void SEGNode<id_type>::calcDFS(
-    SEG<id_type> &graph, bool dfs_succ,
-    int32_t dfs, std::set<std::reference_wrapper<SEGNode<id_type>>> &visited) {
-  // Also do dfs bookkeeping while we're at it
-  auto &dfsNum = dfs_succ ? dfsNumSucc_ : dfsNumPred_;
-
-
-  if (dfsNum < dfs) {
-    dfsNum = dfs;
-
-    visited.insert(*this);
-
-    auto &next = dfs_succ ? succs() : preds();
-
-    for (id_type node_id : next) {
-      SEGNode &node = graph.getNode(node_id);
-      // Only visit a node we haven't already visited
-      if (visited.count(node) == 0) {
-        node.calcDFS(graph, dfs_succ, dfs+1, visited);
-      }
-    }
-  }
-}
-//}}}
-//}}}
-
 // SEG converters {{{
 template <typename id_type>
 template <typename node_type, typename edge_type>
@@ -842,7 +1046,10 @@ SEG<id_type> SEG<id_type>::convert() const {
 
 template <typename id_type>
 template <typename node_type, typename edge_type,
-         typename new_id_type, typename id_converter>
+         typename new_id_type,
+         typename base_node_type,
+         typename base_edge_type,
+         typename id_converter>
 SEG<new_id_type> SEG<id_type>::convert(id_converter id_convert) const {
   SEG<new_id_type> ret;
 
@@ -854,16 +1061,17 @@ SEG<new_id_type> SEG<id_type>::convert(id_converter id_convert) const {
 
     // If this is a new id
     if (node_it == std::end(ret)) {
-      ret.addNode<node_type>(new_id, *pr.second, id_convert);
+      ret.addNode<node_type>(new_id,
+        llvm::cast<base_node_type>(*pr.second), id_convert);
     // Otherwise, this id has been merged
     } else {
       // ???
       SEGNode<new_id_type> &nd = *node_it->second;
-      assert(llvm::isa<UnifyNode<new_id_type>>(nd));
-      node_type tmp_node(nodeNum_.invalid(), new_id,
-        *pr.second, id_convert);
 
-      llvm::cast<UnifyNode<new_id_type>>(nd).unite(tmp_node);
+      node_type tmp_node(nodeNum_.invalid(), new_id,
+        llvm::cast<base_node_type>(*pr.second), id_convert);
+
+      nd.merge(tmp_node);
     }
   });
 
@@ -876,10 +1084,10 @@ SEG<new_id_type> SEG<id_type>::convert(id_converter id_convert) const {
 
     if (edge_it == ret.edges_cend()) {
       ret.addEdge<edge_type>(new_id.first, new_id.second,
-        *pr.second, ret, id_convert);
+        llvm::cast<base_edge_type>(*pr.second), ret, id_convert);
     } else {
       // ??? Ignore duplicate edges?
-      llvm::dbgs() << "WARNING: Ignoring duplicate edge!!!\n";
+      // llvm::dbgs() << "WARNING: Ignoring duplicate edge!!!\n";
     }
   });
 
@@ -935,7 +1143,7 @@ void SEG<id_type>::sccStrongconnect(
       st.pop();
 
       // Unite all of the SCCs with the one we just made
-      rep.unite(grp);
+      rep.unite(ret, grp);
 
       if (grp == nd) {
         break;
@@ -956,56 +1164,6 @@ void SEG<id_type>::createSCC() {
     auto &nd = llvm::cast<SCCNode<id_type>>(*pr.second);
     sccStrongconnect(nd, index, st, *this);
   });
-}
-
-// Calculate a valid DFS traversal order
-template <typename id_type>
-void SEG<id_type>::fillDFSSucc() {
-  // Okay, visit each node w/ dfs info
-  std::for_each(begin(), end(),
-      [this] (node_iter_type &pr) {
-    std::set<std::reference_wrapper<SEGNode<id_type>>> visited;
-    auto &node = *pr.second;
-    node.calcDFS(*this, true, 0, visited);
-  });
-
-  // Fill out our dfs traversal list, based on the node numbers
-  // dfsSucc_.insert(begin(), end());
-  for (auto &pair : *this) {
-    dfsSucc_.push_back(pair.second->id());
-  }
-  std::sort(std::begin(dfsSucc_), std::end(dfsSucc_),
-    [this] (id_type id1, id_type id2) -> bool {
-      const SEGNode<id_type> &n1 = getNode(id1);
-      const SEGNode<id_type> &n2 = getNode(id2);
-      return n1.dfsNumSucc_ < n2.dfsNumSucc_;
-    });
-  haveDFSSucc_ = true;
-}
-
-template <typename id_type>
-void SEG<id_type>::fillDFSPred() {
-  // Okay, visit each node w/ dfs info
-  std::for_each(begin(), end(),
-      [this] (node_iter_type &pr) {
-    std::set<std::reference_wrapper<SEGNode<id_type>>> visited;
-    auto &node = *pr.second;
-    node.calcDFS(*this, false, 0, visited);
-  });
-
-  // Fill out our dfs traversal list, based on the node numbers
-  // dfsPred_.insert(begin(), end());
-  for (auto &pair : *this) {
-    dfsPred_.push_back(pair.second->id());
-  }
-
-  std::sort(std::begin(dfsPred_), std::end(dfsPred_),
-    [this] (id_type id1, id_type id2) -> bool {
-      const SEGNode<id_type> &n1 = getNode(id1);
-      const SEGNode<id_type> &n2 = getNode(id2);
-      return n1.dfsNumPred_ < n2.dfsNumPred_;
-    });
-  haveDFSPred_ = true;
 }
 //}}}
 //}}}

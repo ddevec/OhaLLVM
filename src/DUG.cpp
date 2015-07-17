@@ -285,6 +285,34 @@ Constraint<id_type>::Constraint(id_type d, id_type s, ConstraintType t,
 //}}}
 
 DUG::ConsID DUG::add(ConstraintType type, ObjID d, ObjID s, int o) {
+  auto s_it = constraintGraph_.findNode(s);
+  if (s_it == std::end(constraintGraph_)) {
+    constraintGraph_.addNode<ConstraintNode>(s);
+  }
+
+  auto d_it = constraintGraph_.findNode(d);
+  if (d_it == std::end(constraintGraph_)) {
+    constraintGraph_.addNode<ConstraintNode>(d);
+  }
+
+  /*
+  llvm::dbgs() << "Adding edge ( " << s << ", " << d << " ) for con type: ";
+  switch (type) {
+    case ConstraintType::Load:
+      llvm::dbgs() << "load";
+      break;
+    case ConstraintType::Store:
+      llvm::dbgs() << "store";
+      break;
+    case ConstraintType::AddressOf:
+      llvm::dbgs() << "address_of";
+      break;
+    case ConstraintType::Copy:
+      llvm::dbgs() << "copy";
+      break;
+  }
+  llvm::dbgs() << "\n";
+  */
   constraintGraph_.addEdge<Constraint<ObjID>>(s, d, type, o);
 
   return ConsID(s, d);
