@@ -43,7 +43,7 @@ link_directories(${LLVM_LIBRARY_DIRS})
 list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
 
 #set(CMAKE_CXX_COMPILER "clang-3.6")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -pedantic -Wno-long-long -fno-exceptions ")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
 
 set(SOURCES
   src/SpecSFS.cpp
@@ -58,6 +58,7 @@ set(SOURCES
   src/IdentifyObjects.cpp
   src/Optimize.cpp
   src/ComputeSSA.cpp
+  src/Partition.cpp
   )
 
 set(HEADERS
@@ -66,6 +67,8 @@ set(HEADERS
   include/util.h
   include/SEG.h
   include/Debug.h
+
+  include/SolveHelpers.h
 
   include/ObjectMap.h
   include/DUG.h

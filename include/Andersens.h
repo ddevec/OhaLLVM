@@ -37,8 +37,6 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/IntrinsicInst.h"
 
-using namespace llvm; // NOLINT
-
 static const unsigned SelfRep = (unsigned)-1;
 static const unsigned Unvisited = (unsigned)-1;
 // Position of the function return node relative to the function node.
@@ -47,17 +45,17 @@ static const unsigned CallReturnPos = 1;
 static const unsigned CallFirstArgPos = 2;
 
 struct BitmapKeyInfo {
-  static inline SparseBitVector<> *getEmptyKey() {
-    return reinterpret_cast<SparseBitVector<> *>(-1);
+  static inline llvm::SparseBitVector<> *getEmptyKey() {
+    return reinterpret_cast<llvm::SparseBitVector<> *>(-1);
   }
-  static inline SparseBitVector<> *getTombstoneKey() {
-    return reinterpret_cast<SparseBitVector<> *>(-2);
+  static inline llvm::SparseBitVector<> *getTombstoneKey() {
+    return reinterpret_cast<llvm::SparseBitVector<> *>(-2);
   }
-  static unsigned getHashValue(const SparseBitVector<> *) {
+  static unsigned getHashValue(const llvm::SparseBitVector<> *) {
     return 0;
   }
-  static bool isEqual(const SparseBitVector<> *LHS,
-                      const SparseBitVector<> *RHS) {
+  static bool isEqual(const llvm::SparseBitVector<> *LHS,
+                      const llvm::SparseBitVector<> *RHS) {
     if (LHS == RHS)
       return true;
     else if (LHS == getEmptyKey() || RHS == getEmptyKey()
@@ -70,9 +68,9 @@ struct BitmapKeyInfo {
   static bool isPod() { return true; }
 };
 
-class Andersens : public ModulePass,
-                  public AliasAnalysis,
-                  private InstVisitor<Andersens> {
+class Andersens : public llvm::ModulePass,
+                  public llvm::AliasAnalysis,
+                  private llvm::InstVisitor<Andersens> {
   struct Node;
 
   /// Constraint - Objects of this structure are used to represent the various
@@ -160,23 +158,23 @@ class Andersens : public ModulePass,
   // for each location equivalent Node.
   struct Node {
    private:
-    static volatile sys::cas_flag Counter;
+    static volatile llvm::sys::cas_flag Counter;
 
    public:
-    Value *Val;
-    SparseBitVector<> *Edges;
-    SparseBitVector<> *PointsTo;
-    SparseBitVector<> *OldPointsTo;
+    llvm::Value *Val;
+    llvm::SparseBitVector<> *Edges;
+    llvm::SparseBitVector<> *PointsTo;
+    llvm::SparseBitVector<> *OldPointsTo;
     std::list<Constraint> Constraints;
 
     // Pointer and location equivalence labels
     unsigned PointerEquivLabel;
     unsigned LocationEquivLabel;
     // Predecessor edges, both real and implicit
-    SparseBitVector<> *PredEdges;
-    SparseBitVector<> *ImplicitPredEdges;
+    llvm::SparseBitVector<> *PredEdges;
+    llvm::SparseBitVector<> *ImplicitPredEdges;
     // Set of nodes that point to us, only use for location equivalence.
-    SparseBitVector<> *PointedToBy;
+    llvm::SparseBitVector<> *PointedToBy;
     // Number of incoming edges, used during variable substitution to early
     // free the points-to sets
     unsigned NumInEdges;
@@ -206,7 +204,7 @@ class Andersens : public ModulePass,
         StoredInHash(false), Direct(direct), AddressTaken(false),
         NodeRep(SelfRep), Timestamp(0) { }
 
-    Node *setValue(Value *V) {
+    Node *setValue(llvm::Value *V) {
       assert(Val == 0 && "Value already set for this node!");
       Val = V;
       return this;
@@ -214,7 +212,7 @@ class Andersens : public ModulePass,
 
     /// getValue - Return the LLVM value corresponding to this node.
     ///
-    Value *getValue() const { return Val; }
+    llvm::Value *getValue() const { return Val; }
 
     /// addPointerTo - Add a pointer to the list of pointees of this node,
     /// returning true if this caused a new pointer to be added, or false if
@@ -234,7 +232,7 @@ class Andersens : public ModulePass,
 
     // Timestamp a node (used for work list prioritization)
     void Stamp() {
-      Timestamp = sys::AtomicIncrement(&Counter);
+      Timestamp = llvm::sys::AtomicIncrement(&Counter);
       --Timestamp;
     }
 
@@ -295,21 +293,21 @@ class Andersens : public ModulePass,
 
   /// ValueNodes - This map indicates the Node that a particular Value* is
   /// represented by.  This contains entries for all pointers.
-  DenseMap<Value*, unsigned> ValueNodes;
+  llvm::DenseMap<llvm::Value*, unsigned> ValueNodes;
 
   /// ObjectNodes - This map contains entries for each memory object in the
   /// program: globals, alloca's and mallocs.
-  DenseMap<Value*, unsigned> ObjectNodes;
+  llvm::DenseMap<llvm::Value*, unsigned> ObjectNodes;
 
   /// ReturnNodes - This map contains an entry for each function in the
   /// program that returns a value.
-  DenseMap<Function*, unsigned> ReturnNodes;
+  llvm::DenseMap<llvm::Function*, unsigned> ReturnNodes;
 
   /// VarargNodes - This map contains the entry used to represent all pointers
   /// passed through the varargs portion of a function call for a particular
   /// function.  An entry is not present in this map for functions that do not
   /// take variable arguments.
-  DenseMap<Function*, unsigned> VarargNodes;
+  llvm::DenseMap<llvm::Function*, unsigned> VarargNodes;
 
 
   /// Constraints - This vector contains a list of all of the constraints
@@ -368,7 +366,8 @@ class Andersens : public ModulePass,
   // Current pointer equivalence class number
   unsigned PEClass;
   // Mapping from points-to sets to equivalence classes
-  typedef DenseMap<SparseBitVector<> *, unsigned, BitmapKeyInfo> BitVectorMap;
+  typedef llvm::DenseMap<llvm::SparseBitVector<> *, unsigned, BitmapKeyInfo>
+    BitVectorMap;
   BitVectorMap Set2PEClass;
   // Mapping from pointer equivalences to the representative node.  -1 if we
   // have no representative node for this pointer equivalence class yet.
@@ -389,20 +388,20 @@ class Andersens : public ModulePass,
   static char ID;
   Andersens() : ModulePass(ID) {}
 
-  virtual void *getAdjustedAnalysisPointer(AnalysisID PI) {
+  virtual void *getAdjustedAnalysisPointer(llvm::AnalysisID PI) {
     if (PI == &AliasAnalysis::ID) {
-      return reinterpret_cast<AliasAnalysis *>(this);
+      return reinterpret_cast<llvm::AliasAnalysis *>(this);
     }
     return this;
   }
 
-  static bool isMallocCall(const Value *V) {
-    const CallInst *CI = dyn_cast<CallInst>(V);
+  static bool isMallocCall(const llvm::Value *V) {
+    const llvm::CallInst *CI = llvm::dyn_cast<llvm::CallInst>(V);
     if (!CI) {
       return false;
     }
 
-    Function *Callee = CI->getCalledFunction();
+    llvm::Function *Callee = CI->getCalledFunction();
     if (Callee == 0 || !Callee->isDeclaration()) {
       return false;
     }
@@ -424,7 +423,7 @@ class Andersens : public ModulePass,
     return true;
   }
 
-  bool runOnModule(Module &M) {
+  bool runOnModule(llvm::Module &M) {
     // We don't run Andersens as a classic AA, so we disable this call
     // InitializeAliasAnalysis(this);
     IdentifyObjects(M);
@@ -471,50 +470,52 @@ class Andersens : public ModulePass,
   //
   AliasAnalysis::AliasResult alias(const AliasAnalysis::Location &L1,
       const AliasAnalysis::Location &L2);
-  virtual AliasAnalysis::ModRefResult getModRefInfo(ImmutableCallSite CS,
-                                     const AliasAnalysis::Location &Loc);
-  virtual AliasAnalysis::ModRefResult getModRefInfo(ImmutableCallSite CS1,
-                                     ImmutableCallSite CS2);
-  void getMustAliases(Value *P, std::vector<Value*> &RetVals);
+  virtual AliasAnalysis::ModRefResult getModRefInfo(llvm::ImmutableCallSite CS,
+                                     const llvm::AliasAnalysis::Location &Loc);
+  virtual AliasAnalysis::ModRefResult getModRefInfo(llvm::ImmutableCallSite CS1,
+                                     llvm::ImmutableCallSite CS2);
+  void getMustAliases(llvm::Value *P, std::vector<llvm::Value*> &RetVals);
   // Do not use it.
   bool pointsToConstantMemory(const AliasAnalysis::Location &Loc,
       bool OrLocal = false);
 
-  virtual void deleteValue(Value *V) {
+  virtual void deleteValue(llvm::Value *V) {
     ValueNodes.erase(V);
     getAnalysis<AliasAnalysis>().deleteValue(V);
   }
 
-  virtual void copyValue(Value *From, Value *To) {
+  virtual void copyValue(llvm::Value *From, llvm::Value *To) {
     ValueNodes[To] = ValueNodes[From];
     getAnalysis<AliasAnalysis>().copyValue(From, To);
   }
 
-  const SparseBitVector<> &getPointsTo(const llvm::Value *val) const {
-    return *GraphNodes[FindNode(getNode(const_cast<Value*>(val)))].PointsTo;
+  const llvm::SparseBitVector<> &getPointsTo(const llvm::Value *val) const {
+    return *GraphNodes[
+      FindNode(getNode(const_cast<llvm::Value*>(val)))].PointsTo;
   }
 
   unsigned valRep(const llvm::Value *val) const {
-    return FindNode(getNode(const_cast<Value*>(val)));
+    return FindNode(getNode(const_cast<llvm::Value*>(val)));
   }
 
   unsigned val(const llvm::Value *val) const {
-    return getNode(const_cast<Value*>(val));
+    return getNode(const_cast<llvm::Value*>(val));
   }
 
   unsigned obj(const llvm::Value *val) const {
-    return getObject(const_cast<Value*>(val));
+    return getObject(const_cast<llvm::Value*>(val));
   }
 
  private:
   /// getNode - Return the node corresponding to the specified pointer scalar.
   ///
-  unsigned getNode(Value *V) const {
-    if (Constant *C = dyn_cast<Constant>(V))
-      if (!isa<GlobalValue>(C))
+  unsigned getNode(llvm::Value *V) const {
+    if (llvm::Constant *C = llvm::dyn_cast<llvm::Constant>(V))
+      if (!llvm::isa<llvm::GlobalValue>(C))
         return getNodeForConstantPointer(C);
 
-    DenseMap<Value*, unsigned>::const_iterator I = ValueNodes.find(V);
+    llvm::DenseMap<llvm::Value*, unsigned>::const_iterator I =
+      ValueNodes.find(V);
     if (I == ValueNodes.end()) {
 #ifndef NDEBUG
       V->dump();
@@ -526,8 +527,9 @@ class Andersens : public ModulePass,
 
   /// getObject - Return the node corresponding to the memory object for the
   /// specified global or allocation instruction.
-  unsigned getObject(Value *V) const {
-    DenseMap<Value*, unsigned>::const_iterator I = ObjectNodes.find(V);
+  unsigned getObject(llvm::Value *V) const {
+    llvm::DenseMap<llvm::Value*, unsigned>::const_iterator I =
+      ObjectNodes.find(V);
     assert(I != ObjectNodes.end() &&
            "Value does not have an object in the points-to graph!");
     return I->second;
@@ -535,23 +537,25 @@ class Andersens : public ModulePass,
 
   /// getReturnNode - Return the node representing the return value for the
   /// specified function.
-  unsigned getReturnNode(Function *F) const {
-    DenseMap<Function*, unsigned>::const_iterator I = ReturnNodes.find(F);
+  unsigned getReturnNode(llvm::Function *F) const {
+    llvm::DenseMap<llvm::Function*, unsigned>::const_iterator I =
+      ReturnNodes.find(F);
     assert(I != ReturnNodes.end() && "Function does not return a value!");
     return I->second;
   }
 
   /// getVarargNode - Return the node representing the variable arguments
   /// formal for the specified function.
-  unsigned getVarargNode(Function *F) const {
-    DenseMap<Function*, unsigned>::const_iterator I = VarargNodes.find(F);
+  unsigned getVarargNode(llvm::Function *F) const {
+    llvm::DenseMap<llvm::Function*, unsigned>::const_iterator I =
+      VarargNodes.find(F);
     assert(I != VarargNodes.end() && "Function does not take var args!");
     return I->second;
   }
 
   /// getNodeValue - Get the node for the specified LLVM value and set the
   /// value for it to be the specified value.
-  unsigned getNodeValue(Value &V) {
+  unsigned getNodeValue(llvm::Value &V) {
     unsigned Index = getNode(&V);
     GraphNodes[Index].setValue(&V);
     return Index;
@@ -562,9 +566,9 @@ class Andersens : public ModulePass,
   unsigned FindNode(unsigned Node);
   unsigned FindNode(unsigned Node) const;
 
-  void IdentifyObjects(Module &M);
-  void CollectConstraints(Module &M);
-  bool AnalyzeUsesOfFunction(Value *);
+  void IdentifyObjects(llvm::Module &M);
+  void CollectConstraints(llvm::Module &M);
+  bool AnalyzeUsesOfFunction(llvm::Value *);
   void CreateConstraintGraph();
   void OptimizeConstraints();
   unsigned FindEquivalentNode(unsigned, unsigned);
@@ -580,15 +584,15 @@ class Andersens : public ModulePass,
   void Condense(unsigned Node);
   void HUValNum(unsigned Node);
   void HVNValNum(unsigned Node);
-  unsigned getNodeForConstantPointer(Constant *C) const;
-  unsigned getNodeForConstantPointerTarget(Constant *C);
-  void AddGlobalInitializerConstraints(unsigned, Constant *C);
+  unsigned getNodeForConstantPointer(llvm::Constant *C) const;
+  unsigned getNodeForConstantPointerTarget(llvm::Constant *C);
+  void AddGlobalInitializerConstraints(unsigned, llvm::Constant *C);
 
-  void AddConstraintsForNonInternalLinkage(Function *F);
-  void AddConstraintsForCall(CallSite CS, Function *F);
-  bool AddConstraintsForExternalCall(CallSite CS, Function *F);
-  void AddConstraintForStruct(Value *V);
-  void AddConstraintForConstantPointer(Value *V);
+  void AddConstraintsForNonInternalLinkage(llvm::Function *F);
+  void AddConstraintsForCall(llvm::CallSite CS, llvm::Function *F);
+  bool AddConstraintsForExternalCall(llvm::CallSite CS, llvm::Function *F);
+  void AddConstraintForStruct(llvm::Value *V);
+  void AddConstraintForConstantPointer(llvm::Value *V);
 
 
   void PrintNode(const Node *N) const;
@@ -601,30 +605,32 @@ class Andersens : public ModulePass,
   // Instruction visitation methods for adding constraints
   //
   friend class InstVisitor<Andersens>;
-  void visitReturnInst(ReturnInst &RI);
-  void visitInvokeInst(InvokeInst &II) { visitCallSite(CallSite(&II)); }
-  void visitCallInst(CallInst &CI) { visitCallSite(CallSite(&CI)); }
-  void visitCallSite(CallSite CS);
-  void visitAllocaInst(AllocaInst &AI);
-  void visitLoadInst(LoadInst &LI);
-  void visitStoreInst(StoreInst &SI);
-  void visitGetElementPtrInst(GetElementPtrInst &GEP);
-  void visitPHINode(PHINode &PN);
-  void visitCastInst(CastInst &CI);
-  void visitICmpInst(ICmpInst &) {}  // NOOP!
-  void visitFCmpInst(FCmpInst &) {}  // NOOP!
-  void visitSelectInst(SelectInst &SI);
-  void visitVAArg(VAArgInst &I);
-  void visitIntToPtrInst(IntToPtrInst &I);
-  void visitPtrToIntInst(PtrToIntInst &I);
-  void visitExtractValue(ExtractValueInst &I);
-  void visitInsertValue(InsertValueInst &I);
-  void visitInstruction(Instruction &I);
+  void visitReturnInst(llvm::ReturnInst &RI);
+  void visitInvokeInst(llvm::InvokeInst &II) {
+    visitCallSite(llvm::CallSite(&II));
+  }
+  void visitCallInst(llvm::CallInst &CI) { visitCallSite(llvm::CallSite(&CI)); }
+  void visitCallSite(llvm::CallSite CS);
+  void visitAllocaInst(llvm::AllocaInst &AI);
+  void visitLoadInst(llvm::LoadInst &LI);
+  void visitStoreInst(llvm::StoreInst &SI);
+  void visitGetElementPtrInst(llvm::GetElementPtrInst &GEP);
+  void visitPHINode(llvm::PHINode &PN);
+  void visitCastInst(llvm::CastInst &CI);
+  void visitICmpInst(llvm::ICmpInst &) {}  // NOOP!
+  void visitFCmpInst(llvm::FCmpInst &) {}  // NOOP!
+  void visitSelectInst(llvm::SelectInst &SI);
+  void visitVAArg(llvm::VAArgInst &I);
+  void visitIntToPtrInst(llvm::IntToPtrInst &I);
+  void visitPtrToIntInst(llvm::PtrToIntInst &I);
+  void visitExtractValue(llvm::ExtractValueInst &I);
+  void visitInsertValue(llvm::InsertValueInst &I);
+  void visitInstruction(llvm::Instruction &I);
 
   //===------------------------------------------------------------------===//
   // Implement Analyize interface
   //
-  void print(llvm::raw_ostream &, const Module *) const {
+  void print(llvm::raw_ostream &, const llvm::Module *) const {
     PrintPointsToGraph();
   }
 };

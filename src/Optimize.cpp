@@ -15,16 +15,13 @@
 #include <utility>
 #include <vector>
 
+#include "include/SpecSFS.h"
+
 // #define SPECSFS_DEBUG
 #include "include/Debug.h"
 
 #include "include/SEG.h"
-#include "include/SpecSFS.h"
 #include "include/util.h"
-
-#include "llvm/ADT/SparseBitVector.h"
-
-using namespace llvm;  // NOLINT
 
 namespace {
 
@@ -35,8 +32,6 @@ static int getIdx(DUG::ObjID id) {
   return id.val();
 }
 //}}}
-
-typedef SparseBitVector<> Bitmap;
 
 // Data for HU nodes {{{
 struct HUNode : public SEGNode<DUG::ObjID> {
@@ -77,9 +72,9 @@ struct HUNode : public SEGNode<DUG::ObjID> {
       const llvm::Value *val = pr.second;
       if (val == nullptr) {
         ofil << "temp node";
-      } else if (auto GV = dyn_cast<const llvm::GlobalValue>(val)) {
+      } else if (auto GV = llvm::dyn_cast<const llvm::GlobalValue>(val)) {
         ofil <<  GV->getName();
-      } else if (auto F = dyn_cast<const llvm::Function>(val)) {
+      } else if (auto F = llvm::dyn_cast<const llvm::Function>(val)) {
         ofil <<  F->getName();
       } else {
         ofil << *val;
@@ -319,40 +314,9 @@ static void visitHU(HUSeg &seg, HUNode &node, const ObjectMap &if_debug(omap)) {
 
 
 // Helper Functions {{{
-static DUG::PEid getNextPE() {
-  static UniqueIdentifier<int32_t> PENum;
-  return DUG::PEid(PENum.next());
-}
 
 
 // Comparrison fcn for bitmaps
-struct BitmapLT {
-  bool operator() (const Bitmap &b1, const Bitmap &b2) {
-    auto it1 = std::begin(b1);
-    auto it2 = std::begin(b2);
-    auto en1 = std::end(b1);
-    auto en2 = std::end(b2);
-
-    // True if any element b1 < b2
-    for (; it1 != en1 && it2 != en2; ++it1, ++it2) {
-      // if it1 < it2 : b1 < b2
-      if (*it1 < *it2) {
-        return true;
-      // If it1 > it2 : b1 > b2
-      } else if (*it1 > *it2) {
-        return false;
-      }
-      // Otherwise, they are equal, try the next element
-    }
-
-    // If they are equivalent but b1 is longer b1 is less than it b2
-    if (it1 != en1) {
-      return true;
-    }
-
-    return false;
-  }
-};
 //}}}
 
 }  // End anon namespace
@@ -439,6 +403,7 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
   //  Used to map objs to the PE class
   std::map<DUG::ObjID, DUG::PEid> obj_to_pe;
   std::map<Bitmap, DUG::PEid, BitmapLT> pts_to_pe;
+  IDGenerator<DUG::PEid> pe_id_generator;
 
   // Now create the pointer equivalency ids
   for (auto &pair : huSeg) {
@@ -448,10 +413,10 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
 
     DUG::PEid pe;
     if (node.indirect()) {
-      pe = getNextPE();
+      pe = pe_id_generator.next();
       dout << "pe for indirect node: " << pe.val() << "\n";
     } else if (it == std::end(pts_to_pe)) {
-      pe = getNextPE();
+      pe = pe_id_generator.next();
       pts_to_pe.insert(std::make_pair(node.ptsto(), pe));
       dout << "pe for ptsto: " << pe.val() << "\n";
     } else {
@@ -478,7 +443,7 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
     });
 
   // Export this data into the graph
-  graph.setupPE(obj_to_pe);
+  graph.setPEs(std::move(obj_to_pe));
 
   return false;
 }

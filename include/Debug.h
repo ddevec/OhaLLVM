@@ -51,7 +51,7 @@ class null_ostream : public llvm::raw_ostream {
 
 // printing
 #ifdef SPECSFS_DEBUG
-#define dout dbgs()
+#define dout llvm::dbgs()
 #else
 #define dout null_ostream::nullstream()
 #endif

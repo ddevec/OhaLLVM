@@ -12,9 +12,12 @@
 #include "include/DUG.h"
 
 
+// Ramalingams {{{
+// Transforms {{{
 // Combine all SCCs in Xp in G
 void T4(DUG::ControlFlowGraph &G, const DUG::ControlFlowGraph &Xp) {
   // For each SCC in Xp combine the nodes in G
+  llvm::dbgs() << "Running T4\n";
   std::for_each(std::begin(Xp), std::end(Xp),
       [&G](const DUG::ControlFlowGraph::node_iter_type &pr) {
     // Get the rep node in G
@@ -32,24 +35,35 @@ void T4(DUG::ControlFlowGraph &G, const DUG::ControlFlowGraph &Xp) {
       }
     });
   });
+  llvm::dbgs() << "Finished T4\n";
 }
 
 // Now, for each P-node in G1 (output from T4) with precise 1 predecessor,
 //   we combine that node with its predecessor
 void T2(DUG::ControlFlowGraph &G, const DUG::ControlFlowGraph &Xp) {
   // Visit Xp in topological order
+  llvm::dbgs() << "Running T2\n";
   std::for_each(Xp.topo_begin(), Xp.topo_end(),
       [&G](DUG::CFGid xp_id) {
+    // llvm::dbgs() << "visiting node: " << xp_id << "\n";
     auto &w_node = G.getNode<DUG::CFGNode>(xp_id);
+    // llvm::dbgs() << "preds().size() is: " << w_node.preds().size() << "\n";
     if (w_node.preds().size() == 1) {
       auto &pred_node = G.getNode<DUG::CFGNode>(*(std::begin(w_node.preds())));
+      /*
+      llvm::dbgs() << "Uniting with pred: " <<
+          *std::begin(w_node.preds()) << "\n";
+      */
       w_node.unite(G, pred_node);
     }
   });
+
+  llvm::dbgs() << "Finished T2\n";
 }
 
 void T7(DUG::ControlFlowGraph &G) {
-  std::for_each(std::begin(G), std::end(G),
+  llvm::dbgs() << "Running T7\n";
+  std::for_each(G.rep_begin(), G.rep_end(),
       [&G](DUG::ControlFlowGraph::node_iter_type &pr) {
       auto &node = llvm::cast<DUG::CFGNode>(*pr.second);
 
@@ -66,6 +80,7 @@ void T7(DUG::ControlFlowGraph &G) {
         });
       }
   });
+  llvm::dbgs() << "Finished T7\n";
 }
 
 // Okay, now remove any u-nodes (nodes that we don't directly care about) which
@@ -75,9 +90,11 @@ void T7(DUG::ControlFlowGraph &G) {
 void T6(DUG::ControlFlowGraph &G) {
   std::set<DUG::CFGid> visited;
   // For each R node
-  std::for_each(std::begin(G), std::end(G),
+  llvm::dbgs() << "Running T6\n";
+  std::for_each(G.rep_begin(), G.rep_end(),
       [&G, &visited](DUG::ControlFlowGraph::node_iter_type &pr) {
     auto &node = llvm::cast<DUG::CFGNode>(*pr.second);
+    // Only deal with marked non-rep nodes
     // Mark the reverse topolocial sort of each r-node
     // Note, we don't need to visit visited r nodes
     if (node.r() &&
@@ -94,7 +111,7 @@ void T6(DUG::ControlFlowGraph &G) {
 
   // Figure out which nodes are unused
   std::vector<DUG::CFGid> remove_list;
-  std::for_each(std::begin(G), std::end(G),
+  std::for_each(G.rep_begin(), G.rep_end(),
       [&G, &visited, &remove_list](DUG::ControlFlowGraph::node_iter_type &pr) {
     DUG::CFGid id = pr.first;
     if (visited.find(id) == std::end(visited)) {
@@ -107,6 +124,7 @@ void T6(DUG::ControlFlowGraph &G) {
       [&G](DUG::CFGid rm_id) {
     G.removeNode(rm_id);
   });
+  llvm::dbgs() << "Finished T6\n";
 }
 
 // merge all up-nodes with exactly one successor with their successor
@@ -114,21 +132,50 @@ void T5(DUG::ControlFlowGraph &G) {
   // Get a topological ordering of all up-nodes
   // For each up-node in said ordering
   // Visit each node topologically
-  std::vector<DUG::CFGid> unite_ids;
-  std::for_each(G.topo_begin(), G.topo_end(),
-      [&G, &unite_ids](DUG::CFGid topo_id) {
-    auto &nd = G.getNode<DUG::CFGNode>(topo_id);
-    // If the node is a up-node
-    if (nd.u() && nd.p()) {
-      // If the node has a unique successor:
-      if (nd.succs().size() == 1) {
-        // NOTE: I can't unite in the loop, it will screw with my iteration...
-        // so I create a unite list to do later
-        unite_ids.push_back(nd.id());
-      }
+  llvm::dbgs() << "Running T5\n";
+
+  // Create a new graph, with only up-nodes
+  // Start with Gup as a clone of G
+  DUG::ControlFlowGraph Gup = G.convert<DUG::CFGNode, DUG::CFGEdge>();
+
+  // Now, remove any non-up nodes
+  std::vector<DUG::CFGid> remove_list;
+  std::for_each(Gup.rep_begin(), Gup.rep_end(),
+      [&remove_list](DUG::ControlFlowGraph::node_iter_type &pr) {
+    auto &nd = llvm::cast<DUG::CFGNode>(*pr.second);
+    // Note any non-up node to be removed post iteration
+    if (!nd.u() || !nd.p()) {
+      remove_list.push_back(nd.id());
     }
   });
 
+  assert(std::unique(std::begin(remove_list), std::end(remove_list)) ==
+      std::end(remove_list));
+
+  // Remove any non-up-nodes from Gup
+  std::for_each(std::begin(remove_list), std::end(remove_list),
+      [&Gup] (DUG::CFGid id) {
+    Gup.removeNode(id);
+  });
+
+  // Now, visit each up-node in G in a topological order with repsect to the
+  //     up-nodes -- We use Gup for this
+  std::vector<DUG::CFGid> unite_ids;
+  std::for_each(Gup.topo_begin(), Gup.topo_end(),
+      [&G, &unite_ids](DUG::CFGid topo_id) {
+    auto &nd = G.getNode<DUG::CFGNode>(topo_id);
+    // This had better be a up-node...
+    assert(nd.u() && nd.p());
+
+    // If the node has a unique successor:
+    if (nd.succs().size() == 1) {
+      // NOTE: I can't unite in the loop, it will screw with my iteration...
+      // so I create a unite list to do later
+      unite_ids.push_back(nd.id());
+    }
+  });
+
+  // Now, unite any note that was denoted as being united
   std::for_each(std::begin(unite_ids), std::end(unite_ids),
     [&G](DUG::CFGid unite_id) {
     auto &unite_node = G.getNode<DUG::CFGNode>(unite_id);
@@ -137,12 +184,17 @@ void T5(DUG::ControlFlowGraph &G) {
 
     unite_node.unite(G, succ_node);
   });
+  llvm::dbgs() << "Finished T5\n";
 }
+//}}}
 
-void Ramalingam(DUG::ControlFlowGraph &G) {
+void Ramalingam(DUG::ControlFlowGraph &G, const ObjectMap &omap) {
   // Start by restricting G to only p-nodes, this gives is "Gp"
   // Make Gp a copy of G
+  G.printDotFile("G.dot", omap);
   DUG::ControlFlowGraph Gp = G.convert<DUG::CFGNode, DUG::CFGEdge>();
+
+  Gp.printDotFile("Gp_orig.dot", omap);
 
   std::vector<DUG::CFGid> remove_list;
   std::for_each(std::begin(Gp), std::end(Gp),
@@ -161,17 +213,25 @@ void Ramalingam(DUG::ControlFlowGraph &G) {
     Gp.removeNode(id);
   });
 
+  Gp.printDotFile("Gp.dot", omap);
+
   // Now get the SCC version of Gp
   // NOTE: This will merge the nodes for me
   Gp.createSCC();
+
+  Gp.printDotFile("Xp.dot", omap);
 
   // T4 -- This transform collapses a set of strongly connected p (preserving)
   // nodes into a single node.
   T4(G, Gp);
 
+  G.printDotFile("G4.dot", omap);
+
   // T2 -- If a node is a p-node and has precisely one predecessor, it may be
   // merged with that predecessor
   T2(G, Gp);
+
+  G.printDotFile("G2.dot", omap);
 
   // For the remainder of the transformations we are concerned with calculating
   // a "Partially Equivalent Flow Graph" or a graph for which the data-flow
@@ -187,15 +247,22 @@ void Ramalingam(DUG::ControlFlowGraph &G) {
   // delete the edges from the graph.
   T7(G);
 
+  G.printDotFile("G7.dot", omap);
+
   // T6 -- applys to any set of u-nodes without a successor (aka, the set of
   // nodes has no edge from a node to a node outside of the set).  We remove
   // the set X, as well as any edges incident on them.  (Incident in graph
   // theory means the edge is connected to a vertex, either in or out).
   T6(G);
 
+  G.printDotFile("G6.dot", omap);
+
   // T5 -- merges any up-node with exactly one predecessor with its predecessor
   T5(G);
+
+  G.printDotFile("G5.dot", omap);
 }
+//}}}
 
 // Here we preform Ramalingam's algorithm from the paper "On Sparse Evaluation
 // Representation" to create a SSA form of the graph.  This consists of a series
@@ -207,9 +274,10 @@ void Ramalingam(DUG::ControlFlowGraph &G) {
 DUG::ControlFlowGraph
 SpecSFS::computeSSA(const DUG::ControlFlowGraph &CFG) {
   // This essentially copies the CFG
+  ObjectMap omap;
   DUG::ControlFlowGraph ret = CFG.convert<DUG::CFGNode, DUG::CFGEdge>();
 
-  Ramalingam(ret);
+  Ramalingam(ret, omap);
 
   return std::move(ret);
 }

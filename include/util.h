@@ -36,10 +36,14 @@ class UniqueIdentifier {
     T val_ = initial_value;
 };
 
-template<class Tag, class impl, impl default_value>
+// NOTE: We use max as our bad value because min() may be 0 which is a common
+//   default value
+template<class Tag, class impl = int64_t,
+  impl invalid_value = std::numeric_limits<impl>::max()>
 class ID {
  public:
   typedef impl base_type;
+  static constexpr impl invalidValue = invalid_value;
   static ID invalid() { return ID(); }
 
   struct hasher {
@@ -93,7 +97,36 @@ class ID {
       const ID<T, T2, DV> &id);
 
  private:
-  impl m_val = default_value;
+  impl m_val = invalid_value;
+};
+
+// Quick wrapper for generating unique IDs
+template<typename id_type, typename id_type::base_type initial_value = 0>
+class IDGenerator {
+ public:
+    IDGenerator() = default;
+    explicit IDGenerator(const id_type &init) : val_(init) { }
+
+    static id_type invalid() {
+      return id_type::invalid();
+    }
+
+    static bool isInvalid(const id_type &val) {
+      return val == invalid();
+    }
+
+    bool check(const id_type &val) {
+      assert(val < val_);
+    }
+
+    id_type next() {
+      auto ret = id_type(val_);
+      val_++;
+      return ret;
+    }
+
+ private:
+    typename id_type::base_type val_ = initial_value;
 };
 
 template<class Tag, class impl, impl default_value>

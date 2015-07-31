@@ -20,15 +20,7 @@
 #include "include/util.h"
 #include "include/ObjectMap.h"
 #include "include/SEG.h"
-
-class PtsSet {
-  //{{{
- public:
-    PtsSet() = default;
-
- private:
-  //}}}
-};
+#include "include/SolveHelpers.h"
 
 
 enum class ConstraintType { Copy, Load, Store, AddressOf };
@@ -140,8 +132,9 @@ class DUG {
     // Id Types {{{
     typedef ObjectMap::ObjID ObjID;
 
+    // NOTE: I use int32_t's for size reasons...
     struct pe_id { };
-    typedef ID<pe_id, int32_t, -1> PEid;
+    typedef ID<pe_id, int32_t> PEid;
 
     /* -- We switched this to pair<ObjID, ObjID>
     struct con_id { };
@@ -152,8 +145,22 @@ class DUG {
     struct cfg_id { };
     typedef ID<cfg_id, int32_t, -1> CFGid;
 
+    struct part_id { };
+    typedef ID<part_id, int32_t> PartID;
+
     //}}}
 
+    // Constant ID values {{{
+    enum class CFGEnum : int32_t {
+      CFGInit = 0,
+      eLastEnumValue
+    };
+
+    static const CFGid CFGInit;
+    //}}}
+
+    // Internal classes {{{
+    // SEGNodeGroup {{{
     struct SEGNodeGroup : public UnifyNode<PEid> {
       //{{{
       // Constructors {{{
@@ -250,7 +257,9 @@ class DUG {
       std::set<ObjID> oids;
       //}}}
     };
+    //}}}
 
+    // ConstraintNode {{{
     struct ConstraintNode : public SEGNode<ObjID> {
       //{{{
       ConstraintNode(int32_t nodenum, ObjID id) :
@@ -292,12 +301,10 @@ class DUG {
       }
       //}}}
     };
+    //}}}
 
-
-
-    // Internal classes {{{
     // CFGNodes {{{
-    class CFGNode : public SCCNode<CFGid>{
+    class CFGNode : public SCCNode<CFGid> {
      public:
         CFGNode(int32_t nodenum, CFGid id) :
           SCCNode<CFGid>(NodeKind::CFGNode, nodenum, id) { }
@@ -339,6 +346,21 @@ class DUG {
         }
         //}}}
 
+        // Print support {{{
+        void print_label(llvm::raw_ostream &ofil,
+            const ObjectMap &) const override {
+          ofil << SEGNode<CFGid>::id() << " : {";
+
+          std::for_each(UnifyNode<CFGid>::rep_begin(),
+              UnifyNode<CFGid>::rep_end(),
+              [&ofil] (CFGid rep) {
+            ofil << " " << rep;
+          });
+
+          ofil << " } : m: " << m_ << " r: " << r_ << " c: " << c_;
+        }
+        //}}}
+
         // Setters {{{
         void setM() {
           m_ = true;
@@ -350,6 +372,18 @@ class DUG {
 
         void setC() {
           c_ = true;
+        }
+
+        void clearM() {
+          m_ = false;
+        }
+
+        void clearR() {
+          r_ = false;
+        }
+
+        void clearC() {
+          c_ = false;
         }
         //}}}
 
@@ -401,7 +435,6 @@ class DUG {
     typedef std::pair<ObjID, ObjID> ConsID;
     //}}}
 
-
     // Constructors {{{
     // Default constructor
     DUG() = default;
@@ -415,9 +448,7 @@ class DUG {
     //}}}
     //}}}
 
-    // DUG Construction Methods {{{
-    void prepare(const ObjectMap &) { }
-
+    // Top-level Construction Methods {{{
     ConsID add(ConstraintType, ObjID d, ObjID s, int32_t o = 0);
 
     const Constraint<ObjID>  &getConstraint(ConsID id) const {
@@ -426,9 +457,9 @@ class DUG {
 
     ObjID addNode(ObjectMap &omap);
 
-    void addUnusedFunction(ObjID fcn_id,
-        const std::vector<ConsID> &ids) {
-      unusedFunctions_.emplace(std::make_pair(fcn_id, ids));
+    void addUnusedFunction(ObjID fcn_id, std::vector<ConsID> ids) {
+      unusedFunctions_.emplace(std::piecewise_construct,
+          std::make_tuple(fcn_id), std::make_tuple(std::move(ids)));
     }
 
     bool removeUnusedFunction(ObjID fcn_id);
@@ -448,17 +479,53 @@ class DUG {
       return getConstraintGraph().convert<SEGNodeGroup, Constraint<PEid>, PEid>
         (std::bind(&DUG::getPE, this, std::placeholders::_1));
     }
+
+    // Populate the top level DUG information.
+    // This means creating a node for each Pointer Equivalent enetity (PEid),
+    //   and creating edges for each of the top level variables
+    void fillDUGTopLevel();
     //}}}
 
-    // CFG tracking {{{
+    // DUG Construction Methods {{{
+    ObjID addDUGphi();
+    void addDUGEdge(ObjID src, ObjID dest, PartID part);
+    //}}}
+
+    // Def/use/global tracking {{{
     // Setters {{{
     void addUse(CFGid cfg_id, ObjID cons_dest_id) {
       uses_[cfg_id].push_back(cons_dest_id);
+      objToCFG_[cons_dest_id] = std::make_pair(cfg_id, ConstraintType::Load);
     }
 
     void addDef(CFGid cfg_id, ObjID cons_dest_id) {
       defs_[cfg_id].push_back(cons_dest_id);
+      objToCFG_[cons_dest_id] = std::make_pair(cfg_id, ConstraintType::Store);
     }
+
+    void addGlobalInit(ObjID glbl_id) {
+      globalInits_.push_back(glbl_id);
+      objToCFG_[glbl_id] = std::make_pair(CFGInit, ConstraintType::Store);
+    }
+    //}}}
+
+    // Accessors {{{
+    CFGid getCFGid(ObjID obj_id) const {
+      return objToCFG_.at(obj_id).first;
+    }
+
+    ConstraintType getType(ObjID obj_id) const {
+      return objToCFG_.at(obj_id).second;
+    }
+
+    bool isStrong(ObjID) const {
+      return false;
+    }
+    //}}}
+    //}}}
+
+    // CFG tracking {{{
+    // Setters {{{
 
     void addCFGEdge(CFGid id1, CFGid id2) {
       CFG_.addEdge<CFGEdge>(id1, id2);
@@ -534,23 +601,19 @@ class DUG {
 
     // CFG Unique Identifier Generator {{{
     CFGid getCFGid() {
-      auto ret = CFGid(cfgIdGenerator_.next());
+      auto ret = cfgIdGenerator_.next();
 
       CFG_.addNode<CFGNode>(ret);
-      /*
-      cfgNodes_.emplace(std::piecewise_construct, std::make_tuple(ret),
-          std::make_tuple());
-      */
 
       return ret;
     }
     //}}}
     //}}}
 
-    // PE (Pointer Equivalence class) ids {{{
-    void setupPE(const std::map<ObjID, PEid> &mapping) {
-      objToPE_.clear();
-      objToPE_.insert(std::begin(mapping), std::end(mapping));
+    // Equivalence mappings {{{
+    // PE stuffs
+    void setPEs(std::map<ObjID, PEid> mapping) {
+      objToPE_ = std::move(mapping);
     }
 
     PEid getPE(ObjID id) const {
@@ -558,6 +621,25 @@ class DUG {
       auto it = objToPE_.find(id);
       if (it != std::end(objToPE_)) {
         ret = it->second;
+      }
+
+      return ret;
+    }
+
+
+    // Parititon stuffs:
+    void setPartitions(std::map<ObjID, PartID> mapping,
+        std::map<PartID, std::vector<ObjID>> rev_mapping) {
+      partitionMap_ = std::move(mapping);
+      revPartitionMap_ = std::move(rev_mapping);
+    }
+
+    PartID getPartition(ObjID id) const {
+      PartID ret;
+
+      auto it = partitionMap_.find(id);
+      if (it != std::end(partitionMap_)) {
+        return it->second;
       }
 
       return ret;
@@ -707,7 +789,39 @@ class DUG {
     }
     //}}}
 
-    // Def-use Iterators {{{
+    // Def/use/global init Iterators {{{
+    typedef std::map<CFGid, std::vector<ObjID>>::const_iterator
+      const_def_use_iterator;
+
+    typedef std::vector<ObjID>::const_iterator
+      const_glbl_init_iterator;
+
+    const_def_use_iterator defs_begin() const {
+      return std::begin(defs_);
+    }
+
+    const_def_use_iterator defs_end() const {
+      return std::end(defs_);
+    }
+
+    const_def_use_iterator uses_begin() const {
+      return std::begin(uses_);
+    }
+
+    const_def_use_iterator uses_end() const {
+      return std::end(uses_);
+    }
+
+    const_glbl_init_iterator global_inits_begin() const {
+      return std::begin(globalInits_);
+    }
+
+    const_glbl_init_iterator global_inits_end() const {
+      return std::end(globalInits_);
+    }
+    //}}}
+
+    // CFG Iterators {{{
     typedef ControlFlowGraph::edge_iterator cfg_iterator;
     typedef ControlFlowGraph::const_edge_iterator const_cfg_iterator;
 
@@ -741,6 +855,20 @@ class DUG {
       return CFG_.edges_cend();
     }
     //}}}
+
+    // Partition map iterators {{{
+    typedef std::map<PartID, std::vector<ObjID>>::const_iterator
+      const_part_iterator;
+
+    const_part_iterator part_begin() const {
+      return std::begin(revPartitionMap_);
+    }
+
+    const_part_iterator part_end() const {
+      return std::end(revPartitionMap_);
+    }
+
+    //}}}
     //}}}
 
     // For debugging {{{
@@ -753,38 +881,129 @@ class DUG {
 
  private:
     // An individual node within the DUG
-    class DUGNode {
+    class DUGNode : public SEGNode<PEid> {
       //{{{
      public:
-        DUGNode() = default;
+       // Constructors {{{
+        DUGNode(NodeKind kind, int32_t nodenum, PEid dest, PEid src) :
+          SEGNode<PEid>(kind, nodenum, dest), dest_(dest), src_(src) { }
+       //}}}
 
-        void setValue(const llvm::Value *val) {
-          value_ = val;
+        // For llvm RTTI {{{
+        bool classof(const SEGNode<PEid> *node) {
+          return node->getKind() >= NodeKind::DUGNode &&
+            node->getKind() < NodeKind::DUGNodeEnd;
         }
 
-        const llvm::Value *value() const {
-          return value_;
+        virtual void process(PtstoData &pts, Worklist &wl) = 0;
+        //}}}
+     protected:
+        // Private variables {{{
+        PEid dest_;
+        PEid src_;
+        //}}}
+      //}}}
+    };
+
+    // Different DUG node types {{{
+    class AllocNode : public DUGNode {
+      //{{{
+     public:
+        AllocNode(int32_t nodenum, PEid dest, PEid src) :
+          DUGNode(NodeKind::AllocNode, nodenum, dest, src) { }
+
+        void process(PtstoData &pts, Worklist &wl) override;
+
+        bool classof(const SEGNode<PEid> *node) {
+          return node->getKind() == NodeKind::AllocNode;
+        }
+      //}}}
+    };
+
+    class CopyNode : public DUGNode {
+      //{{{
+     public:
+        CopyNode(int32_t nodenum, PEid dest, PEid src, PtstoSet in) :
+          DUGNode(NodeKind::CopyNode, nodenum, dest, src),
+          in_(std::move(in)) { }
+
+
+        void process(PtstoData &pts, Worklist &wl) override;
+
+        bool classof(const SEGNode<PEid> *node) {
+          return node->getKind() == NodeKind::CopyNode;
         }
 
      private:
-        // The llvm values that this node represents
-        const llvm::Value *value_;
-
-        std::vector<PtsSet> to_;
-        std::vector<PtsSet> from_;
-
-        std::vector<DUGNode *> part_succ_;
-
-        ObjID rep_;
-
-        std::list<Constraint<ObjID>> constraints_;
+        PtstoSet in_;
       //}}}
     };
+
+    class LoadNode : public DUGNode {
+      //{{{
+     public:
+        LoadNode(int32_t nodenum, PEid dest, PEid src, PtstoSet in) :
+          DUGNode(NodeKind::LoadNode, nodenum, dest, src),
+          in_(std::move(in)) { }
+
+
+        void process(PtstoData &pts, Worklist &wl) override;
+
+        bool classof(const SEGNode<PEid> *node) {
+          return node->getKind() == NodeKind::LoadNode;
+        }
+
+     private:
+        PtstoSet in_;
+      //}}}
+    };
+
+    class StoreNode : public DUGNode {
+      //{{{
+     public:
+        StoreNode(int32_t nodenum, PEid dest, PEid src, PtstoSet in,
+            PtstoSet out, std::set<PEid> part_succ) :
+          DUGNode(NodeKind::StoreNode, nodenum, dest, src),
+          in_(std::move(in)), out_(std::move(out)),
+          part_succ_(std::move(part_succ)) { }
+
+
+        void process(PtstoData &pts, Worklist &wl) override;
+
+        bool classof(const SEGNode<PEid> *node) {
+          return node->getKind() == NodeKind::StoreNode;
+        }
+
+     private:
+        PtstoSet in_;
+        PtstoSet out_;
+
+        // Successor partitons -- Used to update worklist on process
+        std::set<PEid> part_succ_;
+      //}}}
+    };
+
+    class PhiNode : public DUGNode {
+      //{{{
+     public:
+        PhiNode(int32_t nodenum, PEid dest, PEid src, PtstoSet in) :
+          DUGNode(NodeKind::PhiNode, nodenum, dest, src),
+          in_(std::move(in)) { }
+
+        void process(PtstoData &pts, Worklist &wl) override;
+
+        bool classof(const SEGNode<PEid> *node) {
+          return node->getKind() == NodeKind::PhiNode;
+        }
+     private:
+        PtstoSet in_;
+      //}}}
+    };
+    //}}}
 
     // Private variables {{{
     // Constraint data
     ConstraintGraph constraintGraph_;
-    ConstraintPEGraph constraintPEGraph_;
 
     // Control Flow Graph data {{{
     ControlFlowGraph CFG_;
@@ -813,19 +1032,32 @@ class DUG {
 
     // Defs/uses represented at each CFG node, used to assicate calculated SSA
     // info back to contraints
+    // Also global variable inits... similar to defs... but only for GV initial
+    //   values
     std::map<CFGid, std::vector<ObjID>> defs_;
     std::map<CFGid, std::vector<ObjID>> uses_;
+    // Notation of ObjID's associated with global inits.  These inits are
+    //   each associated with the CFGInit CFGid (before main)
+    std::vector<ObjID> globalInits_;
 
     // ID Generator for CFGids
-    UniqueIdentifier<int32_t> cfgIdGenerator_;
+    IDGenerator<CFGid, static_cast<int32_t>(CFGEnum::eLastEnumValue)>
+      cfgIdGenerator_;
     //}}}
+
+    std::map<ObjID, std::pair<CFGid, ConstraintType>> objToCFG_;
 
     // The PE equivalent for each obj in the graph
     std::map<ObjID, PEid> objToPE_;
 
+    // The Partition equivalence for each object in the graph
+    std::map<ObjID, PartID> partitionMap_;
+    std::map<PartID, std::vector<ObjID>> revPartitionMap_;
+
     // List of functions that have no obvious uses
     std::map<ObjID, std::vector<ConsID>> unusedFunctions_;
 
+    SEG<PEid> DUG_;
     //}}}
   //}}}
 };

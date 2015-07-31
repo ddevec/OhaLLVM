@@ -7,30 +7,35 @@
 #include <utility>
 
 const ObjectMap::ObjID ObjectMap::NullValue =
-    ObjectMap::ObjID(ObjectMap::ObjEnum::eNullValue);
+    ObjectMap::ObjID(
+        static_cast<int32_t>(ObjectMap::ObjEnum::eNullValue));
 
 const ObjectMap::ObjID ObjectMap::NullObjectValue =
-    ObjectMap::ObjID(ObjectMap::ObjEnum::eNullObjectValue);
+    ObjectMap::ObjID(
+        static_cast<int32_t>(ObjectMap::ObjEnum::eNullObjectValue));
 
 const ObjectMap::ObjID ObjectMap::IntValue =
-    ObjectMap::ObjID(ObjectMap::ObjEnum::eIntValue);
+    ObjectMap::ObjID(static_cast<int32_t>(ObjectMap::ObjEnum::eIntValue));
 
 const ObjectMap::ObjID ObjectMap::UniversalValue =
-    ObjectMap::ObjID(ObjectMap::ObjEnum::eUniversalValue);
+    ObjectMap::ObjID(
+        static_cast<int32_t>(ObjectMap::ObjEnum::eUniversalValue));
 
 const ObjectMap::ObjID ObjectMap::PthreadSpecificValue =
-    ObjectMap::ObjID(ObjectMap::ObjEnum::ePthreadSpecificValue);
+    ObjectMap::ObjID(
+        static_cast<int32_t>(ObjectMap::ObjEnum::ePthreadSpecificValue));
 
 
 ObjectMap::ObjectMap() {
-  for (int32_t i = 0; i < eNumDefaultObjs; i++) {
+  for (int32_t i = 0; i < static_cast<int32_t>(ObjEnum::eNumDefaultObjs);
+      i++) {
     mapping_.push_back(nullptr);
   }
 }
 
 std::pair<ObjectMap::Type, const llvm::Value *>
 ObjectMap::getValueInfo(ObjectMap::ObjID id) const {
-  if (id.val() < eNumDefaultObjs) {
+  if (id.val() < static_cast<int32_t>(ObjEnum::eNumDefaultObjs)) {
     return std::make_pair(Type::Special, nullptr);
   }
 

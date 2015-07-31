@@ -26,8 +26,9 @@ class ObjectMap {
   //{{{
  public:
     // Internal types {{{
+    // NOTE: I use int32_t for size reasons
     struct omap_id { };
-    typedef ID<omap_id, int32_t, -1> ObjID;
+    typedef ID<omap_id, int32_t> ObjID;
     //}}}
 
     // Exported Constant ObjIDs {{{
@@ -39,7 +40,7 @@ class ObjectMap {
       VarArg
     };
 
-    static enum ObjEnum : int32_t {
+    enum class ObjEnum : int32_t {
       eNullValue = 0,
       eNullObjectValue,
       eIntValue,

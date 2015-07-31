@@ -22,8 +22,6 @@
 #include "include/Andersens.h"
 #include "include/ObjectMap.h"
 
-using namespace llvm; // NOLINT
-
 using std::swap;
 
 // Error handling functions
@@ -39,16 +37,16 @@ static void print_stack_trace(void) {
   size = backtrace(array, 10);
   strings = backtrace_symbols(array, size);
 
-  errs() << "BACKTRACE:\n";
+  llvm::errs() << "BACKTRACE:\n";
   for (i = 0; i < size; i++) {
-    errs() << "\t" << strings[i] << "\n";
+    llvm::errs() << "\t" << strings[i] << "\n";
   }
 
   free(strings);
 }
 
 static void error(const std::string &msg) {
-  errs() << "ERROR: " << msg << "\n";
+  llvm::errs() << "ERROR: " << msg << "\n";
   print_stack_trace();
   assert(0);
 }
@@ -57,12 +55,12 @@ static void error(const std::string &msg) {
 // Constructor
 char SpecSFS::ID = 0;
 SpecSFS::SpecSFS() : ModulePass(ID) { }
-static RegisterPass<SpecSFS>
+static llvm::RegisterPass<SpecSFS>
 X("SpecSFS", "Speculative Sparse Flow-sensitive Analysis", false, false);
 // static RegisterAnalysisGroup<AliasAnalysis> Y(X);
 
 // runOnModule, the primary pass
-bool SpecSFS::runOnModule(Module &M) {
+bool SpecSFS::runOnModule(llvm::Module &M) {
   // Set up our alias analysis
   // -- This is required for the llvm AliasAnalysis interface
   // InitializeAliasAnalysis(this);
@@ -76,9 +74,6 @@ bool SpecSFS::runOnModule(Module &M) {
   if (identifyObjects(omap, M)) {
     error("Identify objects failure!");
   }
-
-  // Now that I've filled the omap, prep the graph w/ it
-  graph.prepare(omap);
 
   // Get the initial (top-level) constraints set
   // This should also track the def/use info
@@ -117,6 +112,7 @@ bool SpecSFS::runOnModule(Module &M) {
 
   // The PE graph was updated by addIndirectCalls
   graph.getConstraintPEGraph().printDotFile("graphPE_indr.dot", omap);
+
   // We can also get a non-PE version:
   // graph.getConstraintGraph().printDotFile("graph_indr.dot", omap);
 
@@ -125,30 +121,25 @@ bool SpecSFS::runOnModule(Module &M) {
   DUG::ControlFlowGraph ssa = computeSSA(graph.getCFG());
 
   // ssa.printDotFile("ssa.dot", omap);
-#if 0
-  // Now that we have the top level info, we fill in the address-taken
-  // information
-  if (fillAddressTaken(graph, aux)) {
-    error("FillAddressTaken failure!");
-  }
 
   // Compute partitions, based on address equivalence
-  if (computePartitions(graph)) {
+  if (computePartitions(graph, aux, omap)) {
     error("ComputePartitions failure!");
   }
 
   // Compute SSA for each partition
-  if (computePartSSA(graph)) {
+  if (addPartitionsToDUG(graph, ssa)) {
     error("ComputePartSSA failure!");
   }
 
+#if 0
   // Finally, solve the graph
   if (solve(graph)) {
     error("Solve failure!");
   }
+#endif
 
   // We do not modify code, ever!
-#endif
   return false;
 }
 
