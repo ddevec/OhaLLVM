@@ -51,7 +51,7 @@ set(SOURCES
   src/Debug.cpp
 
   src/ObjectMap.cpp
-  src/DUG.cpp
+  src/ControlFlowGraph.cpp
 
   src/Andersens.cpp
 

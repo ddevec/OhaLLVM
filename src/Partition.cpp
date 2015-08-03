@@ -19,7 +19,7 @@
 
 // Computes "access equivalent" partitions as described in "Flow-Sensitive
 // Pointer ANalysis for Millions fo Lines of Code"
-bool SpecSFS::computePartitions(DUG &graph, const Andersens &aux,
+bool SpecSFS::computePartitions(CFG &cfg, const Andersens &aux,
     const ObjectMap &omap) {
   // Okay, heres what we do...
   // Let AE be a map from addr-taken variables to instructions
@@ -35,13 +35,13 @@ bool SpecSFS::computePartitions(DUG &graph, const Andersens &aux,
 
   // Note I break naming scheme to AE here to match paper description of
   //   algorithm
-  std::map<DUG::ObjID, Bitmap> AE;
-  auto calc_ae = [&graph, &aux, &omap, &AE]
-      (const std::pair<const DUG::CFGid, std::vector<DUG::ObjID>> &pr) {
+  std::map<ObjectMap::ObjID, Bitmap> AE;
+  auto calc_ae = [&cfg, &aux, &omap, &AE]
+      (const std::pair<const CFG::CFGid, std::vector<ObjectMap::ObjID>> &pr) {
     // For each instruction within that group
     std::for_each(std::begin(pr.second), std::end(pr.second),
-        [&graph, &aux, &omap, &AE]
-        (DUG::ObjID obj_id) {
+        [&cfg, &aux, &omap, &AE]
+        (ObjectMap::ObjID obj_id) {
       // Get the actual instruction
       const llvm::Value *val = omap.valueAtID(obj_id);
 
@@ -58,101 +58,101 @@ bool SpecSFS::computePartitions(DUG &graph, const Andersens &aux,
   };
 
   // For each store group
-  std::for_each(graph.defs_begin(), graph.defs_end(), calc_ae);
+  std::for_each(cfg.defs_begin(), cfg.defs_end(), calc_ae);
 
   // Do the same thing for loads
-  std::for_each(graph.uses_begin(), graph.uses_end(), calc_ae);
+  std::for_each(cfg.uses_begin(), cfg.uses_end(), calc_ae);
 
   // Okay, I now have a populated AE, fill out our parts
   // Create the mechanisms needed to generate partition ids:
   IDGenerator<DUG::PartID> part_id_generator;
 
-  std::map<Bitmap, std::vector<DUG::ObjID>, BitmapLT> part_finder;
+  std::map<Bitmap, std::vector<ObjectMap::ObjID>, BitmapLT> part_finder;
   // Now create partitions
   std::for_each(std::begin(AE), std::end(AE),
-      [&part_finder](std::pair<const DUG::ObjID, Bitmap> &pr) {
+      [&part_finder](std::pair<const ObjectMap::ObjID, Bitmap> &pr) {
     part_finder[pr.second].push_back(pr.first);
   });
 
   // Assign ID's to the partitons:
-  std::map<DUG::PartID, std::vector<DUG::ObjID>> rev_part_map;
+  std::map<DUG::PartID, std::vector<ObjectMap::ObjID>> rev_part_map;
   std::for_each(std::begin(part_finder), std::end(part_finder),
       [&rev_part_map, &part_id_generator]
-      (std::pair<const Bitmap, std::vector<DUG::ObjID>> &pr) {
+      (std::pair<const Bitmap, std::vector<ObjectMap::ObjID>> &pr) {
     rev_part_map.emplace(std::piecewise_construct,
           std::make_tuple(part_id_generator.next()),
           std::make_tuple(std::move(pr.second)));
   });
 
   // Now make a reverse mapping from id to partition:
-  std::map<DUG::ObjID, DUG::PartID> part_map;
+  std::map<ObjectMap::ObjID, DUG::PartID> part_map;
   std::for_each(rev_part_map.cbegin(), rev_part_map.cend(),
       [&part_map]
-      (const std::pair<const DUG::PartID, std::vector<DUG::ObjID>> &pr) {
+      (const std::pair<const DUG::PartID, std::vector<ObjectMap::ObjID>> &pr) {
     auto part_id = pr.first;
     std::for_each(std::begin(pr.second), std::end(pr.second),
-        [&part_map, part_id](const DUG::ObjID &obj_id) {
+        [&part_map, part_id](const ObjectMap::ObjID &obj_id) {
       part_map[obj_id] = part_id;
     });
   });
 
-  graph.setPartitions(std::move(part_map), std::move(rev_part_map));
+  // cfg.setPartitions(std::move(part_map), std::move(rev_part_map));
 
   // We now have our PartID to DUG::ObjID mapping in part_map
   return false;
 }
 
 
-bool SpecSFS::addPartitionsToDUG(DUG &graph, const DUG::ControlFlowGraph &ssa) {
+bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa) {
   // For each partition, calculate the SSA of any nodes in that partiton
   std::for_each(graph.part_begin(), graph.part_end(),
       [this, &graph, &ssa]
-      (const std::pair<const DUG::PartID, std::vector<DUG::ObjID>> &pr) {
-    std::map<DUG::CFGid, DUG::ObjID> part_rep;
+      (const std::pair<const DUG::PartID, std::vector<ObjectMap::ObjID>> &pr) {
+    std::map<CFG::CFGid, ObjectMap::ObjID> part_rep;
     // Create a clone of the ControlFlowGraph for this partition's ssa
-    DUG::ControlFlowGraph part_graph =
-      ssa.convert<DUG::CFGNode, DUG::CFGEdge>();
+    CFG::ControlFlowGraph part_graph =
+      ssa.getSEG().convert<CFG::Node, CFG::Edge>();
 
     // Okay, now clear out any r, p, or c info for the nodes in that graph
     std::for_each(part_graph.rep_begin(), part_graph.rep_end(),
-        [&part_graph](DUG::ControlFlowGraph::node_iter_type &pr) {
-      auto &node = llvm::cast<DUG::CFGNode>(*pr.second);
+        [&part_graph](CFG::ControlFlowGraph::node_iter_type &pr) {
+      auto &node = llvm::cast<CFG::Node>(*pr.second);
 
       node.clearM();
       node.clearR();
       node.clearC();
     });
 
-    std::map<DUG::CFGid, DUG::ObjID> pass_defs;
-    std::map<DUG::CFGid, std::vector<DUG::ObjID>> pass_uses;
+    std::map<CFG::CFGid, ObjectMap::ObjID> pass_defs;
+    std::map<CFG::CFGid, std::vector<ObjectMap::ObjID>> pass_uses;
 
     // Now calculate and fill in the info for each object
     //   in this partition
     const auto &obj_ids = pr.second;
     const auto &part_id = pr.first;
     std::for_each(std::begin(obj_ids), std::end(obj_ids),
-        [&graph, &pass_defs, &pass_uses, &part_graph]
-        (DUG::ObjID obj_id) {
+        [&ssa, &graph, &pass_defs, &pass_uses, &part_graph]
+        (ObjectMap::ObjID obj_id) {
       // Get the CFGid associated with this object:
-      auto type = graph.getType(obj_id);
+      auto type = ssa.getType(obj_id);
 
       // Okay, now that we have the CFGid, update its info:
       // If this is a load:
       if (type == ConstraintType::Load) {
-        auto cfg_id = graph.getCFGid(obj_id);
-        auto &nd = part_graph.getNode<DUG::CFGNode>(cfg_id);
+        auto cfg_id = ssa.getCFGid(obj_id);
+        auto &nd = part_graph.getNode<CFG::Node>(cfg_id);
         // Set R
         nd.setR();
         pass_uses[cfg_id].push_back(obj_id);
       // If its a store:
       } else if (type == ConstraintType::Store) {
-        auto cfg_id = graph.getCFGid(obj_id);
-        auto &nd = part_graph.getNode<DUG::CFGNode>(cfg_id);
+        auto cfg_id = ssa.getCFGid(obj_id);
+        auto &nd = part_graph.getNode<CFG::Node>(cfg_id);
         // Set M
         nd.setM();
 
         // Possibly set C
-        if (graph.isStrong(obj_id)) {
+        if (ssa.isStrong(obj_id)) {
           nd.setC();
         }
         assert(pass_defs.find(cfg_id) == std::end(pass_defs));
@@ -195,12 +195,12 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const DUG::ControlFlowGraph &ssa) {
     // Do a topo iteration of part_ssa, add each element to the DUG
     std::for_each(part_ssa.topo_begin(), part_ssa.topo_end(),
         [&graph, &part_ssa, &part_rep, &pass_uses, &pass_defs, &part_id]
-        (const DUG::CFGid cfg_id) {
+        (const CFG::CFGid cfg_id) {
       // Now, for this CFGid, get all associated ObjIDs in this partition:
       // There may be many if its a load (use)
       auto ld_it = pass_uses.find(cfg_id);
 
-      auto obj_id = DUG::ObjID();
+      auto obj_id = ObjectMap::ObjID();
 
       // There is only one if its a store (def)
       auto st_it = pass_defs.find(cfg_id);
@@ -235,12 +235,12 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const DUG::ControlFlowGraph &ssa) {
         }
       }
 
-      auto &node = part_ssa.getNode<DUG::CFGNode>(cfg_id);
+      auto &node = part_ssa.getNode<CFG::Node>(cfg_id);
       // Put an edge from each pred in G to the part leader
       // NOTE: Can assert(node.is_np() && !pred.empty())
       const auto &preds = node.preds();
       std::for_each(std::begin(preds), std::end(preds),
-          [&graph, &part_rep, &obj_id, &part_id](const DUG::CFGid pred_id) {
+          [&graph, &part_rep, &obj_id, &part_id](const CFG::CFGid pred_id) {
         // NOTE: if we were not doing a topo order we may have to evaluate the
         //   pred here
         auto pred_rep_it = part_rep.find(pred_id);

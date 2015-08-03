@@ -28,23 +28,24 @@ namespace {
 struct HUEdge;
 
 // Simple helpers needed later {{{
-static int getIdx(DUG::ObjID id) {
+static int getIdx(ConstraintGraph::ObjID id) {
   return id.val();
 }
 //}}}
 
 // Data for HU nodes {{{
-struct HUNode : public SEGNode<DUG::ObjID> {
+struct HUNode : public SEGNode<ConstraintGraph::ObjID> {
   //{{{
-  HUNode(int32_t nodenum, DUG::ObjID id) :
-    SEGNode<DUG::ObjID>(NodeKind::HUNode, nodenum, id) { }
+  HUNode(int32_t nodenum, ConstraintGraph::ObjID id) :
+    SEGNode<ConstraintGraph::ObjID>(NodeKind::HUNode, nodenum, id) { }
 
   template <typename id_converter>
-  HUNode(int32_t nodenum, DUG::ObjID id, const SEGNode<DUG::ObjID> &nd,
-        id_converter convert) :
-      SEGNode<DUG::ObjID>(NodeKind::HUNode, nodenum, id, nd, convert) { }
+  HUNode(int32_t nodenum, ConstraintGraph::ObjID id,
+      const SEGNode<ConstraintGraph::ObjID> &nd, id_converter convert) :
+      SEGNode<ConstraintGraph::ObjID>(NodeKind::HUNode, nodenum,
+          id, nd, convert) { }
 
-  void addPtsTo(DUG::ObjID id) {
+  void addPtsTo(ConstraintGraph::ObjID id) {
     ptsto_.set(getIdx(id));
   }
 
@@ -66,7 +67,7 @@ struct HUNode : public SEGNode<DUG::ObjID> {
 
   void print_label(llvm::raw_ostream &ofil,
       const ObjectMap &omap) const override {
-    DUG::ObjID id = SEGNode<DUG::ObjID>::id();
+    ConstraintGraph::ObjID id = SEGNode<ConstraintGraph::ObjID>::id();
     auto pr = omap.getValueInfo(id);
     if (pr.first != ObjectMap::Type::Special) {
       const llvm::Value *val = pr.second;
@@ -97,7 +98,7 @@ struct HUNode : public SEGNode<DUG::ObjID> {
   }
 
   // For LLVM RTTI {{{
-  static bool classof(const SEGNode<DUG::ObjID> *n) {
+  static bool classof(const SEGNode<ConstraintGraph::ObjID> *n) {
     return n->getKind() == NodeKind::HUNode;
   }
   //}}}
@@ -111,12 +112,13 @@ struct HUNode : public SEGNode<DUG::ObjID> {
 // FIXME: HAX to be removed later
 ObjectMap *g_omap;
 
-struct HUEdge : public SEGEdge<DUG::ObjID> {
+struct HUEdge : public SEGEdge<ConstraintGraph::ObjID> {
   //{{{
  public:
     // Construction from Constraint {{{
-    HUEdge(DUG::ObjID src, DUG::ObjID dest, SEG<DUG::ObjID> &graph,
-          const Constraint<DUG::ObjID> &con) :
+    HUEdge(ConstraintGraph::ObjID src, ConstraintGraph::ObjID dest,
+        SEG<ConstraintGraph::ObjID> &graph,
+        const Constraint<ConstraintGraph::ObjID> &con) :
         SEGEdge(EdgeKind::HUEdge, src, dest),
         type_(con.type()), offs_(con.offs()) {
       // Get our two HU nodes
@@ -174,11 +176,11 @@ struct HUEdge : public SEGEdge<DUG::ObjID> {
 
     /*
     template <typename id_converter>
-    HUEdge(DUG::ObjID src, DUG::ObjID dest, const SEGEdge<DUG::ObjID> &node,
-        SEG<DUG::ObjID> &graph, id_converter) :
+    HUEdge(ConstraintGraph::ObjID src, ConstraintGraph::ObjID dest, const SEGEdge<ConstraintGraph::ObjID> &node,
+        SEG<ConstraintGraph::ObjID> &graph, id_converter) :
         SEGEdge(EdgeKind::HUEdge, src, dest),
-        type_(llvm::cast<Constraint<DUG::ObjID>>(node).type()),
-        offs_(llvm::cast<Constraint<DUG::ObjID>>(node).offs()) {
+        type_(llvm::cast<Constraint<ConstraintGraph::ObjID>>(node).type()),
+        offs_(llvm::cast<Constraint<ConstraintGraph::ObjID>>(node).offs()) {
       // Get our two HU nodes
       auto &dest_node = llvm::cast<HUNode>(graph.getNode(dest));
       auto &src_node = llvm::cast<HUNode>(graph.getNode(src));
@@ -277,7 +279,7 @@ struct HUEdge : public SEGEdge<DUG::ObjID> {
 //}}}
 
 // Typedefs for the HU Sparse Evaluation Graph {{{
-typedef SEG<DUG::ObjID> HUSeg;
+typedef SEG<ConstraintGraph::ObjID> HUSeg;
 //}}}
 
 // Acutal HU visit impl {{{
@@ -287,7 +289,7 @@ static void visitHU(HUSeg &seg, HUNode &node, const ObjectMap &if_debug(omap)) {
     node.print_label(dout, omap);
     dout << "\n");
   // Union our past ptsto sets
-  for (DUG::ObjID node_id : node.preds()) {
+  for (ConstraintGraph::ObjID node_id : node.preds()) {
     HUNode &pred = llvm::cast<HUNode>(seg.getNode(node_id));
     if_debug(
       dout << "\tOn pred: (" << idToString(pred.id()) << ") ";
@@ -297,12 +299,12 @@ static void visitHU(HUSeg &seg, HUNode &node, const ObjectMap &if_debug(omap)) {
     if_debug(
       dout << "Unioning src ptsto: ";
       for (auto int_id : node.ptsto()) {
-        dout << " " << idToString(DUG::ObjID(int_id));
+        dout << " " << idToString(ConstraintGraph::ObjID(int_id));
       }
       dout << "\n";
       dout << "with pred ptsto: ";
       for (auto int_id : pred.ptsto()) {
-        dout << " " << idToString(DUG::ObjID(int_id));
+        dout << " " << idToString(ConstraintGraph::ObjID(int_id));
       }
       dout << "\n");
 
@@ -322,7 +324,8 @@ static void visitHU(HUSeg &seg, HUNode &node, const ObjectMap &if_debug(omap)) {
 }  // End anon namespace
 
 // optimizeConstraints {{{
-bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
+bool SpecSFS::optimizeConstraints(ConstraintGraph &graph,
+    const ObjectMap &omap) {
   // FIXME: HAX to be removed later
   g_omap = const_cast<ObjectMap *>(&omap);
   // Okay, we run HU here, over the constraints
@@ -348,16 +351,16 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
   // Instead, create it fresh:
   HUSeg huSeg;
 
-  auto &conGraph = graph.getConstraintGraph();
+  auto &conGraph = graph.getSEG();
   // create a HUNode per ConstraintNode:
   std::for_each(conGraph.cbegin(), conGraph.cend(),
-      [&huSeg](const DUG::ConstraintGraph::node_iter_type &pr) {
+      [&huSeg](const ConstraintGraph::ConstraintSEG::node_iter_type &pr) {
     huSeg.addNode<HUNode>(pr.first);
   });
 
   std::for_each(conGraph.edges_cbegin(), conGraph.edges_cend(),
-      [&huSeg](const DUG::ConstraintGraph::edge_iter_type &pr) {
-    auto &cons = llvm::cast<Constraint<DUG::ObjID>>(*pr.second);
+      [&huSeg](const ConstraintGraph::ConstraintSEG::edge_iter_type &pr) {
+    auto &cons = llvm::cast<Constraint<ConstraintGraph::ObjID>>(*pr.second);
     huSeg.addEdge<HUEdge>(pr.first.first, pr.first.second, huSeg, cons);
   });
 
@@ -368,14 +371,14 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
       dout << "initial ptsto for node " << idToString(pair.second->id()) <<
         " is:";
       for (auto int_id : node.ptsto()) {
-        dout << " " << idToString(DUG::ObjID(int_id));
+        dout << " " << idToString(ConstraintGraph::ObjID(int_id));
       }
       dout << "\n";
     });
 
   // Now iterate in topological order (start w/ root, end w/ leaf)
   std::for_each(huSeg.topo_begin(), huSeg.topo_end(),
-      [&huSeg, &omap](DUG::ObjID node_id) {
+      [&huSeg, &omap](ConstraintGraph::ObjID node_id) {
     // Do the HU visit (pred collection) on each node in reverse
     //    topological order
     visitHU(huSeg, llvm::cast<HUNode>(huSeg.getNode(node_id)), omap);
@@ -393,7 +396,7 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
       dout << ") node " << idToString(node.id()) <<
         " is:";
       for (auto int_id : node.ptsto()) {
-        dout << " " << idToString(DUG::ObjID(int_id));
+        dout << " " << idToString(ConstraintGraph::ObjID(int_id));
       }
       dout << "\n";
     });
@@ -401,9 +404,7 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
   huSeg.printDotFile("optimize.dot", omap);
 
   //  Used to map objs to the PE class
-  std::map<DUG::ObjID, DUG::PEid> obj_to_pe;
-  std::map<Bitmap, DUG::PEid, BitmapLT> pts_to_pe;
-  IDGenerator<DUG::PEid> pe_id_generator;
+  std::map<Bitmap, ConstraintGraph::ObjID, BitmapLT> pts_to_pe;
 
   // Now create the pointer equivalency ids
   for (auto &pair : huSeg) {
@@ -411,39 +412,15 @@ bool SpecSFS::optimizeConstraints(DUG &graph, const ObjectMap &omap) {
 
     auto it = pts_to_pe.find(node.ptsto());
 
-    DUG::PEid pe;
     if (node.indirect()) {
-      pe = pe_id_generator.next();
-      dout << "pe for indirect node: " << pe.val() << "\n";
+      dout << "Obj for indirect node: " << node.id() << "\n";
     } else if (it == std::end(pts_to_pe)) {
-      pe = pe_id_generator.next();
-      pts_to_pe.insert(std::make_pair(node.ptsto(), pe));
-      dout << "pe for ptsto: " << pe.val() << "\n";
+      pts_to_pe.insert(std::make_pair(node.ptsto(), node.id()));
+      dout << "pe for ptsto: " << node.id() << "\n";
     } else {
-      pe = it->second;
-      dout << "pe gathered: " << pe.val() << "\n";
+      graph.getNode(it->second).unite(conGraph, graph.getNode(node.id()));
     }
-
-    obj_to_pe.insert(std::make_pair(pair.first, pe));
   }
-
-  if_debug(
-    std::map<DUG::PEid, std::vector<DUG::ObjID>> pe_to_obj;
-    for (auto &pair : obj_to_pe) {
-      pe_to_obj[pair.second].push_back(pair.first);
-    }
-
-    for (auto &pair : pe_to_obj) {
-      dout << "id remapping is now PE (" << pair.first.val() << "): "
-        << idToString((pair.first)) << " is:";
-      for (auto obj_id : pair.second) {
-        dout << " " << idToString(obj_id);
-      }
-      dout << "\n";
-    });
-
-  // Export this data into the graph
-  graph.setPEs(std::move(obj_to_pe));
 
   return false;
 }

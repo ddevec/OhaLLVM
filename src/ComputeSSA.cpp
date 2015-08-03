@@ -9,26 +9,26 @@
 #include "include/SpecSFS.h"
 
 #include "include/SEG.h"
-#include "include/DUG.h"
+#include "include/ControlFlowGraph.h"
 
 
 // Ramalingams {{{
 // Transforms {{{
 // Combine all SCCs in Xp in G
-void T4(DUG::ControlFlowGraph &G, const DUG::ControlFlowGraph &Xp) {
+void T4(CFG::ControlFlowGraph &G, const CFG::ControlFlowGraph &Xp) {
   // For each SCC in Xp combine the nodes in G
   llvm::dbgs() << "Running T4\n";
   std::for_each(std::begin(Xp), std::end(Xp),
-      [&G](const DUG::ControlFlowGraph::node_iter_type &pr) {
+      [&G](const CFG::ControlFlowGraph::node_iter_type &pr) {
     // Get the rep node in G
     // Get the rep in Xp
-    const DUG::CFGNode &nd = llvm::cast<DUG::CFGNode>(*pr.second);
+    const CFG::Node &nd = llvm::cast<CFG::Node>(*pr.second);
 
     // Get the node to unite from G
-    auto &rep_node = G.getNode<DUG::CFGNode>(nd.id());
+    auto &rep_node = G.getNode<CFG::Node>(nd.id());
 
     std::for_each(nd.rep_begin(), nd.rep_end(),
-        [&G, &rep_node](DUG::CFGid rep_id) {
+        [&G, &rep_node](CFG::CFGid rep_id) {
       // Don't unite rep with itself... thats silly
       if (rep_id != rep_node.id()) {
         rep_node.unite(G, G.getNode(rep_id));
@@ -40,16 +40,16 @@ void T4(DUG::ControlFlowGraph &G, const DUG::ControlFlowGraph &Xp) {
 
 // Now, for each P-node in G1 (output from T4) with precise 1 predecessor,
 //   we combine that node with its predecessor
-void T2(DUG::ControlFlowGraph &G, const DUG::ControlFlowGraph &Xp) {
+void T2(CFG::ControlFlowGraph &G, const CFG::ControlFlowGraph &Xp) {
   // Visit Xp in topological order
   llvm::dbgs() << "Running T2\n";
   std::for_each(Xp.topo_begin(), Xp.topo_end(),
-      [&G](DUG::CFGid xp_id) {
+      [&G](CFG::CFGid xp_id) {
     // llvm::dbgs() << "visiting node: " << xp_id << "\n";
-    auto &w_node = G.getNode<DUG::CFGNode>(xp_id);
+    auto &w_node = G.getNode<CFG::Node>(xp_id);
     // llvm::dbgs() << "preds().size() is: " << w_node.preds().size() << "\n";
     if (w_node.preds().size() == 1) {
-      auto &pred_node = G.getNode<DUG::CFGNode>(*(std::begin(w_node.preds())));
+      auto &pred_node = G.getNode<CFG::Node>(*(std::begin(w_node.preds())));
       /*
       llvm::dbgs() << "Uniting with pred: " <<
           *std::begin(w_node.preds()) << "\n";
@@ -61,20 +61,20 @@ void T2(DUG::ControlFlowGraph &G, const DUG::ControlFlowGraph &Xp) {
   llvm::dbgs() << "Finished T2\n";
 }
 
-void T7(DUG::ControlFlowGraph &G) {
+void T7(CFG::ControlFlowGraph &G) {
   llvm::dbgs() << "Running T7\n";
   std::for_each(G.rep_begin(), G.rep_end(),
-      [&G](DUG::ControlFlowGraph::node_iter_type &pr) {
-      auto &node = llvm::cast<DUG::CFGNode>(*pr.second);
+      [&G](CFG::ControlFlowGraph::node_iter_type &pr) {
+      auto &node = llvm::cast<CFG::Node>(*pr.second);
 
       // If its a c-node, remove all preceeding edges
       if (node.c()) {
         // Note, we're copying node.preds here... so we can delete it
-        std::vector<DUG::CFGid> preds(std::begin(node.preds()),
+        std::vector<CFG::CFGid> preds(std::begin(node.preds()),
           std::end(node.preds()));
 
         std::for_each(std::begin(preds), std::end(preds),
-            [&G, &node](DUG::CFGid pred_id) {
+            [&G, &node](CFG::CFGid pred_id) {
           auto pr = std::make_pair(pred_id, node.id());
           G.removeEdge(pr);
         });
@@ -87,13 +87,13 @@ void T7(DUG::ControlFlowGraph &G) {
 // don't effect any r-nodes (nodes that we do care about)
 // To do this we do a reverse topological visit of the graph from each R node,
 // and mark all visited nodes as needed.  We then remove any unmarked nodes.
-void T6(DUG::ControlFlowGraph &G) {
-  std::set<DUG::CFGid> visited;
+void T6(CFG::ControlFlowGraph &G) {
+  std::set<CFG::CFGid> visited;
   // For each R node
   llvm::dbgs() << "Running T6\n";
   std::for_each(G.rep_begin(), G.rep_end(),
-      [&G, &visited](DUG::ControlFlowGraph::node_iter_type &pr) {
-    auto &node = llvm::cast<DUG::CFGNode>(*pr.second);
+      [&G, &visited](CFG::ControlFlowGraph::node_iter_type &pr) {
+    auto &node = llvm::cast<CFG::Node>(*pr.second);
     // Only deal with marked non-rep nodes
     // Mark the reverse topolocial sort of each r-node
     // Note, we don't need to visit visited r nodes
@@ -103,17 +103,17 @@ void T6(DUG::ControlFlowGraph &G) {
       std::for_each(
           G.topo_rbegin(node.id()),
           G.topo_rend(node.id()),
-          [&G, &visited](DUG::CFGid visit_id) {
+          [&G, &visited](CFG::CFGid visit_id) {
         visited.insert(visit_id);
       });
     }
   });
 
   // Figure out which nodes are unused
-  std::vector<DUG::CFGid> remove_list;
+  std::vector<CFG::CFGid> remove_list;
   std::for_each(G.rep_begin(), G.rep_end(),
-      [&G, &visited, &remove_list](DUG::ControlFlowGraph::node_iter_type &pr) {
-    DUG::CFGid id = pr.first;
+      [&G, &visited, &remove_list](CFG::ControlFlowGraph::node_iter_type &pr) {
+    CFG::CFGid id = pr.first;
     if (visited.find(id) == std::end(visited)) {
       remove_list.push_back(id);
     }
@@ -121,14 +121,14 @@ void T6(DUG::ControlFlowGraph &G) {
 
   // Remove any nodes not marked as needed
   std::for_each(std::begin(remove_list), std::end(remove_list),
-      [&G](DUG::CFGid rm_id) {
+      [&G](CFG::CFGid rm_id) {
     G.removeNode(rm_id);
   });
   llvm::dbgs() << "Finished T6\n";
 }
 
 // merge all up-nodes with exactly one successor with their successor
-void T5(DUG::ControlFlowGraph &G) {
+void T5(CFG::ControlFlowGraph &G) {
   // Get a topological ordering of all up-nodes
   // For each up-node in said ordering
   // Visit each node topologically
@@ -136,13 +136,13 @@ void T5(DUG::ControlFlowGraph &G) {
 
   // Create a new graph, with only up-nodes
   // Start with Gup as a clone of G
-  DUG::ControlFlowGraph Gup = G.convert<DUG::CFGNode, DUG::CFGEdge>();
+  CFG::ControlFlowGraph Gup = G.convert<CFG::Node, CFG::Edge>();
 
   // Now, remove any non-up nodes
-  std::vector<DUG::CFGid> remove_list;
+  std::vector<CFG::CFGid> remove_list;
   std::for_each(Gup.rep_begin(), Gup.rep_end(),
-      [&remove_list](DUG::ControlFlowGraph::node_iter_type &pr) {
-    auto &nd = llvm::cast<DUG::CFGNode>(*pr.second);
+      [&remove_list](CFG::ControlFlowGraph::node_iter_type &pr) {
+    auto &nd = llvm::cast<CFG::Node>(*pr.second);
     // Note any non-up node to be removed post iteration
     if (!nd.u() || !nd.p()) {
       remove_list.push_back(nd.id());
@@ -154,16 +154,16 @@ void T5(DUG::ControlFlowGraph &G) {
 
   // Remove any non-up-nodes from Gup
   std::for_each(std::begin(remove_list), std::end(remove_list),
-      [&Gup] (DUG::CFGid id) {
+      [&Gup] (CFG::CFGid id) {
     Gup.removeNode(id);
   });
 
   // Now, visit each up-node in G in a topological order with repsect to the
   //     up-nodes -- We use Gup for this
-  std::vector<DUG::CFGid> unite_ids;
+  std::vector<CFG::CFGid> unite_ids;
   std::for_each(Gup.topo_begin(), Gup.topo_end(),
-      [&G, &unite_ids](DUG::CFGid topo_id) {
-    auto &nd = G.getNode<DUG::CFGNode>(topo_id);
+      [&G, &unite_ids](CFG::CFGid topo_id) {
+    auto &nd = G.getNode<CFG::Node>(topo_id);
     // This had better be a up-node...
     assert(nd.u() && nd.p());
 
@@ -177,10 +177,10 @@ void T5(DUG::ControlFlowGraph &G) {
 
   // Now, unite any note that was denoted as being united
   std::for_each(std::begin(unite_ids), std::end(unite_ids),
-    [&G](DUG::CFGid unite_id) {
-    auto &unite_node = G.getNode<DUG::CFGNode>(unite_id);
+    [&G](CFG::CFGid unite_id) {
+    auto &unite_node = G.getNode<CFG::Node>(unite_id);
     assert(unite_node.succs().size() == 1);
-    auto &succ_node = G.getNode<DUG::CFGNode>(*std::begin(unite_node.succs()));
+    auto &succ_node = G.getNode<CFG::Node>(*std::begin(unite_node.succs()));
 
     unite_node.unite(G, succ_node);
   });
@@ -188,19 +188,19 @@ void T5(DUG::ControlFlowGraph &G) {
 }
 //}}}
 
-void Ramalingam(DUG::ControlFlowGraph &G, const ObjectMap &omap) {
+void Ramalingam(CFG::ControlFlowGraph &G, const ObjectMap &omap) {
   // Start by restricting G to only p-nodes, this gives is "Gp"
   // Make Gp a copy of G
   G.printDotFile("G.dot", omap);
-  DUG::ControlFlowGraph Gp = G.convert<DUG::CFGNode, DUG::CFGEdge>();
+  CFG::ControlFlowGraph Gp = G.convert<CFG::Node, CFG::Edge>();
 
   Gp.printDotFile("Gp_orig.dot", omap);
 
-  std::vector<DUG::CFGid> remove_list;
+  std::vector<CFG::CFGid> remove_list;
   std::for_each(std::begin(Gp), std::end(Gp),
       [&remove_list]
-      (DUG::ControlFlowGraph::node_iter_type &pr) {
-    auto &node = llvm::cast<DUG::CFGNode>(*pr.second);
+      (CFG::ControlFlowGraph::node_iter_type &pr) {
+    auto &node = llvm::cast<CFG::Node>(*pr.second);
     // If the node is non-preserving, remove it
     if (!node.p()) {
       remove_list.push_back(pr.first);
@@ -209,7 +209,7 @@ void Ramalingam(DUG::ControlFlowGraph &G, const ObjectMap &omap) {
 
   // Remove all non-preserving nodes from Gp
   std::for_each(std::begin(remove_list), std::end(remove_list),
-      [&Gp](DUG::CFGid id) {
+      [&Gp](CFG::CFGid id) {
     Gp.removeNode(id);
   });
 
@@ -271,11 +271,11 @@ void Ramalingam(DUG::ControlFlowGraph &G, const ObjectMap &omap) {
 
 // I suppose this requires knowing the set of nodes we care about... as we're
 // calculating the "Partially Equivalent Flow Graph" (PEFG) representation
-DUG::ControlFlowGraph
-SpecSFS::computeSSA(const DUG::ControlFlowGraph &CFG) {
+CFG::ControlFlowGraph
+SpecSFS::computeSSA(const CFG::ControlFlowGraph &cfg) {
   // This essentially copies the CFG
   ObjectMap omap;
-  DUG::ControlFlowGraph ret = CFG.convert<DUG::CFGNode, DUG::CFGEdge>();
+  CFG::ControlFlowGraph ret = cfg.convert<CFG::Node, CFG::Edge>();
 
   Ramalingam(ret, omap);
 

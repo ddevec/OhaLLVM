@@ -68,6 +68,8 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   // Clear the def-use graph
   // It should already be cleared, but I'm paranoid
   DUG graph;
+  ConstraintGraph cg;
+  CFG cfg;
   ObjectMap omap;
 
   // Identify all of the objects in the source
@@ -80,22 +82,23 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   // NOTE: This function will create a graph of all top-level variables,
   //   and a def/use mapping, but it will not fill in address-taken edges.
   //   Those will be populated later, once we have AUX info available.
-  if (createConstraints(graph, omap, M)) {
+  if (createConstraints(cg, cfg, omap, M)) {
     error("CreateConstraints failure!");
   }
 
-  graph.getConstraintGraph().printDotFile("graph.dot", omap);
+  cg.getSEG().printDotFile("graph.dot", omap);
 
   // Initial optimization pass
   // Runs HU on the graph as it stands, w/ only top level info filled in
   // Removes any nodes deemed to be non-ptr (definitely null), and merges nodes
   //   with statically equivalent ptsto sets
-  if (optimizeConstraints(graph, omap)) {
+  if (optimizeConstraints(cg, omap)) {
     error("OptimizeConstraints failure!");
   }
 
-  graph.getConstraintPEGraph().printDotFile("graphPE.dot", omap);
+  cg.getSEG().printDotFile("graphPE.dot", omap);
 
+  cfg.getSEG().printDotFile("CFG.dot", omap);
 
   // Get AUX info, in this instance we choose Andersens
   dout << "Running Andersens\n";
@@ -106,29 +109,30 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   assert(ret == false);
 
   // Now, fill in the indirect function calls
-  if (addIndirectCalls(graph, aux, omap)) {
+  if (addIndirectCalls(cg, cfg, aux, omap)) {
     error("AddIndirectCalls failure!");
   }
 
   // The PE graph was updated by addIndirectCalls
-  graph.getConstraintPEGraph().printDotFile("graphPE_indr.dot", omap);
+  cg.getSEG().printDotFile("graphPE_indr.dot", omap);
 
-  // We can also get a non-PE version:
-  // graph.getConstraintGraph().printDotFile("graph_indr.dot", omap);
+  cfg.getSEG().printDotFile("CFG_indir.dot", omap);
 
   // Now, compute the SSA form for the top-level variables
   // We translate any PHI nodes into copy nodes... b/c the paper says so
-  DUG::ControlFlowGraph ssa = computeSSA(graph.getCFG());
+  CFG::ControlFlowGraph ssa = computeSSA(cfg.getSEG());
 
-  // ssa.printDotFile("ssa.dot", omap);
+  ssa.printDotFile("CFG_ssa.dot", omap);
 
   // Compute partitions, based on address equivalence
-  if (computePartitions(graph, aux, omap)) {
+  if (computePartitions(cfg, aux, omap)) {
     error("ComputePartitions failure!");
   }
 
+  cfg.setSEG(std::move(ssa));
+
   // Compute SSA for each partition
-  if (addPartitionsToDUG(graph, ssa)) {
+  if (addPartitionsToDUG(graph, cfg)) {
     error("ComputePartSSA failure!");
   }
 

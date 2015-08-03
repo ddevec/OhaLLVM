@@ -2,7 +2,9 @@
  * Copyright (C) 2015 David Devecsery
  */
 
-#include "include/DUG.h"
+#include "include/ControlFlowGraph.h"
+
+#include <cstdint>
 
 #include <string>
 #include <iostream>
@@ -19,17 +21,18 @@
 #include "llvm/Support/raw_os_ostream.h"
 
 // DUG Static variable(s) {{{
-const DUG::CFGid DUG::CFGInit =
-  DUG::CFGid(static_cast<int32_t>(DUG::CFGEnum::CFGInit));
+const CFG::CFGid CFG::CFGInit =
+  CFG::CFGid(static_cast<int32_t>(CFG::CFGEnum::CFGInit));
 //}}}
 
 // DUG modification functions {{{
-bool DUG::removeUnusedFunction(DUG::ObjID fcn_id) {
+bool CFG::removeUnusedFunction(ConstraintGraph &cg,
+    ObjectMap::ObjID fcn_id) {
   auto it = unusedFunctions_.find(fcn_id);
 
   if (it != std::end(unusedFunctions_)) {
     for (auto id : it->second) {
-      constraintGraph_.removeEdge(id);
+      cg.removeConstraint(id);
     }
 
     unusedFunctions_.erase(fcn_id);

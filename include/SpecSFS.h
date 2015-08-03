@@ -71,31 +71,31 @@ class SpecSFS : public llvm::ModulePass,
 
   // Creates constraints for each top-lvel operatioon in the module
   // Also populates Def/Use info for later address-taken constraints
-  bool createConstraints(DUG &graph, ObjectMap &omap,
+  bool createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
       const llvm::Module &M);
 
   // Optimizes the top-level constraints in the DUG
   // This requires the omap, so it knows which ids are objects, and doesn't
   //   group them
-  bool optimizeConstraints(DUG &graph, const ObjectMap &omap);
+  bool optimizeConstraints(ConstraintGraph &graph, const ObjectMap &omap);
 
   // Adds additional indirect call info, given an AUX analysis
   //   (in this case, Andersens analysis)
-  bool addIndirectCalls(DUG &graph, const Andersens &aux,
-      ObjectMap &omap);
+  bool addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
+      const Andersens &aux, ObjectMap &omap);
 
   // Computes SSA form of the DUG, given its current edge set
   //   Used to compute SSA for top lvl
-  DUG::ControlFlowGraph computeSSA(const DUG::ControlFlowGraph &cfg);
+  CFG::ControlFlowGraph computeSSA(const CFG::ControlFlowGraph &cfg);
 
   // Computes partitons based on the conservative address-taken info, the
   //   partitions are based on "access-equivalence"
   // NOTE: ObjectMap is required to convert DUG::ObjID to llvm::Value as
   //   Andersens works with llvm::Value's
-  bool computePartitions(DUG &, const Andersens &, const ObjectMap &omap);
+  bool computePartitions(CFG &cfg, const Andersens &aux, const ObjectMap &omap);
 
   // Computes the SSA form of each partition
-  bool addPartitionsToDUG(DUG &, const DUG::ControlFlowGraph &cfg);
+  bool addPartitionsToDUG(DUG &graph, const CFG &cfg);
 
   // Solves the remaining graph, providing full flow-sensitive inclusion-based
   // points-to analysis
