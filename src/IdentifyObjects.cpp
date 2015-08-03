@@ -18,7 +18,7 @@
 #include "include/ConstraintGraph.h"
 #include "include/DUG.h"
 
-// #define SPECSFS_DEBUG
+#define SPECSFS_DEBUG
 #include "include/Debug.h"
 
 #include "llvm/Constants.h"
@@ -35,7 +35,7 @@ namespace {
 // Debugging functions {{{
 if_debug(
   static void smart_print(const llvm::Value *val) {
-    if (auto GV = dyn_cast<GlobalValue>(val)) {
+    if (auto GV = llvm::dyn_cast<llvm::GlobalValue>(val)) {
       dout << GV->getName();
     } else {
       dout << *val;
@@ -173,7 +173,7 @@ void addCFGStore(CFG &graph, CFG::CFGid *store_id,
   graph.addDef(*store_id, dest);
 }
 
-void addCFGCallsite(CFG &graph, ObjectMap &omap,
+void addCFGCallsite(CFG &cfg, ObjectMap &omap,
     llvm::Function *fcn, llvm::Instruction *ci, CFG::CFGid *pcall_id) {
 
   // Ignore the llvm debug function...
@@ -183,7 +183,7 @@ void addCFGCallsite(CFG &graph, ObjectMap &omap,
 
   // Add a new node into the graph
   CFG::CFGid call_id = *pcall_id;
-  CFG::CFGid next_id = graph.nextNode();
+  CFG::CFGid next_id = cfg.nextNode();
   *pcall_id = next_id;
 
   if (fcn) {
@@ -193,7 +193,7 @@ void addCFGCallsite(CFG &graph, ObjectMap &omap,
     // objects, only some are associated with values
     dout << "Adding direct call to: " << fcn->getName() << " id: "
         << omap.getObject(fcn) << "\n";
-    graph.addCallsite(call_id, omap.getObject(fcn), next_id);
+    cfg.addCallsite(call_id, omap.getFunction(fcn), next_id);
   } else {
     // We also don't add edges between the call_id and the callsite for indirect
     //    calls because we don't know the destination until we run our AUX
@@ -207,7 +207,7 @@ void addCFGCallsite(CFG &graph, ObjectMap &omap,
     }
     dout << "ci has id: " << obj_id << "\n";
     assert(obj_id != ObjectMap::NullValue);
-    graph.addIndirectCall(call_id, obj_id, next_id);
+    cfg.addIndirectCall(call_id, obj_id, next_id);
   }
 }
 //}}}
@@ -1310,11 +1310,9 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
     std::for_each(pair.second.cbegin(), pair.second.cend(),
         [&cg, &cfg, &omap, &call_id, &ret_id]
         (const ConstraintGraph::ObjID &ins_id){
-      const llvm::CallInst *ci =
-        llvm::dyn_cast<llvm::CallInst>(omap.valueAtID(ins_id));
-      llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
+      dout << "Got value: " << *omap.valueAtID(ins_id) << "\n";
 
-      ConstraintGraph::ObjID fcn_id = omap.getFunction(CS.getCalledFunction());
+      ConstraintGraph::ObjID fcn_id = ins_id;
       CFG::CFGid fcn_call_id =
         cfg.getFunctionStart(fcn_id);
       CFG::CFGid fcn_ret_id = cfg.getFunctionReturn(fcn_id);
@@ -1329,7 +1327,7 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
   if_debug(
     dout << "Post insert unused functions are: ";
     std::for_each(cfg.unused_function_begin(), cfg.unused_function_end(),
-        [&cfg, &omap] (DUG::const_unused_function_iterator::reference pr) {
+        [&cfg, &omap] (CFG::const_unused_function_iterator::reference pr) {
       const llvm::Function *fcn =
           llvm::cast<llvm::Function>(omap.valueAtID(pr.first));
       dout << " " << fcn->getName();

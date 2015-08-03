@@ -99,7 +99,7 @@ class SpecSFS : public llvm::ModulePass,
 
   // Solves the remaining graph, providing full flow-sensitive inclusion-based
   // points-to analysis
-  bool solve(DUG &) { return false; }
+  bool solve(DUG &);
 };
 
 #endif  // INCLUDE_SPECSFS_H_

@@ -59,6 +59,7 @@ set(SOURCES
   src/Optimize.cpp
   src/ComputeSSA.cpp
   src/Partition.cpp
+  src/Solve.cpp
   )
 
 set(HEADERS

@@ -69,10 +69,6 @@ class Constraint : public SEGEdge<id_type> {
           return true;
         case ConstraintType::Copy:
           return false;
-        /*
-        case Type::Noop:
-          return false;
-          */
         default:
           llvm_unreachable("Unrecognized constraint type");
       }
@@ -219,6 +215,10 @@ class ConstraintGraph {
     void associateNode(ObjID, ObjID) { }
 
     ConstraintSEG &getSEG() {
+      return constraintGraph_;
+    }
+
+    const ConstraintSEG &getSEG() const {
       return constraintGraph_;
     }
     //}}}

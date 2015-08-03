@@ -215,7 +215,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa) {
         obj_id = ld_it->second.front();
       // There may also be none (in this case its an phi node)
       } else {
-        obj_id = graph.addDUGphi();
+        obj_id = graph.addPhi();
       }
 
       // Update our part_rep map, so we can fill in preds later
@@ -231,7 +231,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa) {
             first = false;
             continue;
           }
-          graph.addDUGEdge(obj_id, ld_id, part_id);
+          graph.addEdge(obj_id, ld_id, part_id);
         }
       }
 
@@ -248,7 +248,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa) {
 
         auto &pred_rep_id = pred_rep_it->second;
 
-        graph.addDUGEdge(pred_rep_id, obj_id, part_id);
+        graph.addEdge(pred_rep_id, obj_id, part_id);
       });
     });
   });

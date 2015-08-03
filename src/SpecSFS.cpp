@@ -86,7 +86,7 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
     error("CreateConstraints failure!");
   }
 
-  cg.getSEG().printDotFile("graph.dot", omap);
+  cg.getSEG().printDotFile("top.dot", omap);
 
   // Initial optimization pass
   // Runs HU on the graph as it stands, w/ only top level info filled in
@@ -96,7 +96,7 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
     error("OptimizeConstraints failure!");
   }
 
-  cg.getSEG().printDotFile("graphPE.dot", omap);
+  cg.getSEG().printDotFile("top_HU.dot", omap);
 
   cfg.getSEG().printDotFile("CFG.dot", omap);
 
@@ -114,7 +114,7 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   }
 
   // The PE graph was updated by addIndirectCalls
-  cg.getSEG().printDotFile("graphPE_indr.dot", omap);
+  cg.getSEG().printDotFile("top_indir.dot", omap);
 
   cfg.getSEG().printDotFile("CFG_indir.dot", omap);
 
@@ -124,24 +124,22 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
 
   ssa.printDotFile("CFG_ssa.dot", omap);
 
+  cfg.setSEG(std::move(ssa));
+
   // Compute partitions, based on address equivalence
   if (computePartitions(cfg, aux, omap)) {
     error("ComputePartitions failure!");
   }
-
-  cfg.setSEG(std::move(ssa));
 
   // Compute SSA for each partition
   if (addPartitionsToDUG(graph, cfg)) {
     error("ComputePartSSA failure!");
   }
 
-#if 0
   // Finally, solve the graph
   if (solve(graph)) {
     error("Solve failure!");
   }
-#endif
 
   // We do not modify code, ever!
   return false;

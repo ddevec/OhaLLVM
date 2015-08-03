@@ -23,6 +23,10 @@ int main(void) {
   do_pr = print;
 
   for (i = 0; i < 3; i++) {
+    if (i == 1) {
+      print("first: ");
+      d = a;
+    }
     do_pr(d);
     d = b;
     do_pr(e);

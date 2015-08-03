@@ -98,10 +98,9 @@ enum class NodeKind {
   CopyNode,
   PhiNode,
   DUGNodeEnd,
-  HUNode,
   Unify,
+  HUNode,
   ConstraintNode,
-  SEGNodeGroup,
   SCC,
   CFGNode,
   SCCEnd,
@@ -110,6 +109,7 @@ enum class NodeKind {
 
 enum class EdgeKind {
   Constraint,
+  DUG,
   CFGEdge,
   HUEdge
 };
@@ -820,6 +820,84 @@ class SEG {
         //}}}
       //}}}
     };
+
+    class const_rep_iterator {
+      //{{{
+     public:
+        // Stuff to make it stl compatible {{{
+        typedef std::forward_iterator_tag iterator_category;
+        typedef typename const_node_iterator::value_type value_type;
+        typedef typename const_node_iterator::difference_type difference_type;
+        typedef typename const_node_iterator::pointer pointer;
+        typedef typename const_node_iterator::reference reference;
+        //}}}
+
+        // Constructor {{{
+        explicit const_rep_iterator(const SEG<id_type> &G, bool begin) :
+            itr_((begin) ? std::begin(G) : std::end(G)),
+            eitr_(std::end(G)) {
+          if (begin) {
+            advance_to_rep(false);
+          }
+        }
+        //}}}
+
+        // Operators {{{
+        bool operator==(const const_rep_iterator &it) const {
+          return (itr_ == it.itr_);
+        }
+
+        bool operator!=(const const_rep_iterator &it) const {
+          return !operator==(it);
+        }
+
+        reference operator*() const {
+          return itr_.operator*();
+        }
+
+        reference operator->() const {
+          return itr_.operator->();
+        }
+
+        const_rep_iterator &operator++() {
+          advance_to_rep();
+
+          return *this;
+        }
+
+        const_rep_iterator operator++(int) {
+          rep_iterator tmp(*this);
+          advance_to_rep();
+
+          return std::move(tmp);
+        }
+        //}}}
+
+     private:
+        // Private functions {{{
+        void advance_to_rep(bool advance_first = true) {
+          if (advance_first && itr_ != eitr_) {
+            ++itr_;
+          }
+
+          while (itr_ != eitr_) {
+            auto nd = llvm::cast<UnifyNode<id_type>>(*itr_->second);
+
+            // If this node actually represents itself...
+            if (nd.id() == itr_->first) {
+              break;
+            }
+            ++itr_;
+          }
+        }
+        //}}}
+
+        // Private data {{{
+        const_node_iterator itr_;
+        const_node_iterator eitr_;
+        //}}}
+      //}}}
+    };
     //}}}
 
     // Node iteration (pair<id, node>) {{{
@@ -884,6 +962,22 @@ class SEG {
     //}}}
 
     // Rep iteration {{{
+    const_rep_iterator rep_cbegin() const {
+      return const_rep_iterator(*this, true);
+    }
+
+    const_rep_iterator rep_cend() const {
+      return const_rep_iterator(*this, false);
+    }
+
+    const_rep_iterator rep_begin() const {
+      return const_rep_iterator(*this, true);
+    }
+
+    const_rep_iterator rep_end() const {
+      return const_rep_iterator(*this, false);
+    }
+
     rep_iterator rep_begin() {
       return rep_iterator(*this, true);
     }
