@@ -145,6 +145,7 @@ void T5(CFG::ControlFlowGraph &G) {
     auto &nd = llvm::cast<CFG::Node>(*pr.second);
     // Note any non-up node to be removed post iteration
     if (!nd.u() || !nd.p()) {
+      llvm::dbgs() << "Adding node to rm list: " << nd.id() << "\n";
       remove_list.push_back(nd.id());
     }
   });
@@ -155,8 +156,16 @@ void T5(CFG::ControlFlowGraph &G) {
   // Remove any non-up-nodes from Gup
   std::for_each(std::begin(remove_list), std::end(remove_list),
       [&Gup] (CFG::CFGid id) {
+    llvm::dbgs() << "Removing node: " << id << "\n";
     Gup.removeNode(id);
   });
+
+  llvm::dbgs() << "Gup has nodes:";
+  std::for_each(std::begin(Gup), std::end(Gup),
+      [] (SEG<CFG::CFGid>::node_iter_type &pr) {
+      llvm::dbgs() << " " << pr.first;
+  });
+  llvm::dbgs() << "\n";
 
   // Now, visit each up-node in G in a topological order with repsect to the
   //     up-nodes -- We use Gup for this
@@ -164,6 +173,7 @@ void T5(CFG::ControlFlowGraph &G) {
   std::for_each(Gup.topo_begin(), Gup.topo_end(),
       [&G, &unite_ids](CFG::CFGid topo_id) {
     auto &nd = G.getNode<CFG::Node>(topo_id);
+    llvm::dbgs() << "Checking node: " << topo_id << "\n";
     // This had better be a up-node...
     assert(nd.u() && nd.p());
 

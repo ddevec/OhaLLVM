@@ -24,6 +24,48 @@
 #include "include/SEG.h"
 #include "include/SolveHelpers.h"
 
+class DUG;
+// An individual node within the DUG
+class DUGNode : public SEGNode<ObjectMap::ObjID> {
+  //{{{
+ public:
+    // Constructors {{{
+     DUGNode(NodeKind kind, int32_t nodenum, ObjectMap::ObjID dest,
+        ObjectMap::ObjID src) :
+      SEGNode<ObjectMap::ObjID>(kind, nodenum, dest),
+      dest_(dest), src_(src) { }
+    //}}}
+
+    // For llvm RTTI {{{
+    static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
+      return node->getKind() >= NodeKind::DUGNode &&
+        node->getKind() < NodeKind::DUGNodeEnd;
+    }
+
+    virtual void process(DUG &dug, PtstoGraph &pts, Worklist &wl) = 0;
+
+    virtual PtstoGraph &in() {
+      static PtstoGraph bad;
+      llvm_unreachable("Shouldn't get here...");
+      return bad;
+    }
+
+    ObjectMap::ObjID dest() const {
+      return dest_;
+    }
+
+    ObjectMap::ObjID src() const {
+      return src_;
+    }
+
+    //}}}
+ protected:
+    // Private variables {{{
+    ObjectMap::ObjID dest_;
+    ObjectMap::ObjID src_;
+    //}}}
+  //}}}
+};
 
 // Each entry in the DUG has its own DUGid
 // Each entry represents an operation (store/load/etc)
@@ -152,16 +194,31 @@ class DUG {
       if (part == PartID::invalid()) {
         DUG_.addEdge<DUGEdge>(src, dest);
       } else {
-        auto &st = DUG_.getNode<StoreNode>(dest);
+        // FIXME: This can happen on more than store nodes (also load nodes).
+        auto &pn = DUG_.getNode<PartNode>(src);
 
         // Okay, we have the node, add a named edge
-        st.addSucc(dest, part);
+        pn.addPartitionSuccessor(part);
       }
+    }
+    //}}}
+
+    // Accessors {{{
+    DUGNode &getNode(DUGid id) {
+      return DUG_.getNode<DUGNode>(id);
     }
     //}}}
 
     // Equivalence mappings {{{
     // Parititon stuffs:
+    void setPartitionToObjects(
+        std::map<PartID, std::vector<ObjectMap::ObjID>> mapping) {
+      partitionMap_ = std::move(mapping);
+    }
+
+    std::vector<ObjectMap::ObjID> &getObjs(PartID part_id) {
+      return partitionMap_.at(part_id);
+    }
     /*
     void setPartitions(std::map<ObjectMap::ObjID, PartID> mapping,
         std::map<PartID, std::vector<ObjectMap::ObjID>> rev_mapping) {
@@ -188,11 +245,42 @@ class DUG {
       const_part_iterator;
 
     const_part_iterator part_begin() const {
-      return std::begin(revPartitionMap_);
+      return std::begin(partitionMap_);
     }
 
     const_part_iterator part_end() const {
-      return std::end(revPartitionMap_);
+      return std::end(partitionMap_);
+    }
+
+    //}}}
+
+    // Node iteration {{{
+    typedef SEG<DUGid>::rep_iterator node_iterator;
+    typedef SEG<DUGid>::const_rep_iterator const_node_iterator;
+    typedef SEG<DUGid>::node_iter_type node_iter_type;
+
+    node_iterator nodes_begin() {
+      return DUG_.rep_begin();
+    }
+
+    node_iterator nodes_end() {
+      return DUG_.rep_end();
+    }
+
+    const_node_iterator nodes_begin() const {
+      return DUG_.rep_begin();
+    }
+
+    const_node_iterator nodes_end() const {
+      return DUG_.rep_end();
+    }
+
+    const_node_iterator nodes_cbegin() const {
+      return DUG_.rep_cbegin();
+    }
+
+    const_node_iterator nodes_cend() const {
+      return DUG_.rep_cend();
     }
 
     //}}}
@@ -200,34 +288,6 @@ class DUG {
 
     // For debugging {{{
     //}}}
-
- private:
-    // An individual node within the DUG
-    class DUGNode : public SEGNode<ObjectMap::ObjID> {
-      //{{{
-     public:
-       // Constructors {{{
-        DUGNode(NodeKind kind, int32_t nodenum, ObjectMap::ObjID dest,
-            ObjectMap::ObjID src) :
-          SEGNode<ObjectMap::ObjID>(kind, nodenum, dest),
-          dest_(dest), src_(src) { }
-       //}}}
-
-        // For llvm RTTI {{{
-        static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
-          return node->getKind() >= NodeKind::DUGNode &&
-            node->getKind() < NodeKind::DUGNodeEnd;
-        }
-
-        virtual void process(PtstoData &pts, Worklist &wl) = 0;
-        //}}}
-     protected:
-        // Private variables {{{
-        ObjectMap::ObjID dest_;
-        ObjectMap::ObjID src_;
-        //}}}
-      //}}}
-    };
 
     // Different DUG node types {{{
     class AllocNode : public DUGNode {
@@ -237,7 +297,8 @@ class DUG {
             ObjectMap::ObjID src) :
           DUGNode(NodeKind::AllocNode, nodenum, dest, src) { }
 
-        void process(PtstoData &pts, Worklist &wl) override;
+        // NOTE: Process implemented in "Solve.cpp"
+        void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
 
         static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
           return node->getKind() == NodeKind::AllocNode;
@@ -248,107 +309,121 @@ class DUG {
     class CopyNode : public DUGNode {
       //{{{
      public:
-        CopyNode(int32_t nodenum, ObjectMap::ObjID dest, ObjectMap::ObjID src,
-            PtstoSet in) :
-          DUGNode(NodeKind::CopyNode, nodenum, dest, src),
-          in_(std::move(in)) { }
-
         CopyNode(int32_t nodenum, ObjectMap::ObjID dest, ObjectMap::ObjID src)
           : DUGNode(NodeKind::CopyNode, nodenum, dest, src) { }
 
-
-        void process(PtstoData &pts, Worklist &wl) override;
+        // NOTE: Process implemented in "Solve.cpp"
+        void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
 
         static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
           return node->getKind() == NodeKind::CopyNode;
         }
-
-     private:
-        PtstoSet in_;
       //}}}
     };
 
-    class LoadNode : public DUGNode {
+    class PartNode : public DUGNode {
       //{{{
      public:
-        LoadNode(int32_t nodenum, ObjectMap::ObjID dest, ObjectMap::ObjID src,
-            PtstoSet in) :
-          DUGNode(NodeKind::LoadNode, nodenum, dest, src),
-          in_(std::move(in)) { }
+      PartNode(NodeKind kind, int32_t nodenum, ObjectMap::ObjID src,
+          ObjectMap::ObjID dest) : DUGNode(kind, nodenum, dest, src) {
+        assert(kind > NodeKind::PartNode && kind < NodeKind::PartNodeEnd);
+      }
 
+      PtstoGraph &in() override {
+        return in_;
+      }
+
+      void addPartitionSuccessor(PartID id) {
+        part_succs_.insert(id);
+      }
+
+      bool hasNoPartitionSuccessors() const {
+        return part_succs_.size() == 0;
+      }
+
+      virtual void setupPartGraph(const std::vector<DUG::ObjID> &vars) {
+        in_ = PtstoGraph(vars);
+      }
+
+      static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
+        return node->getKind() >= NodeKind::PartNode &&
+          node->getKind() < NodeKind::PartNodeEnd;
+      }
+
+     protected:
+        // Successor partitons
+        std::set<DUG::PartID> part_succs_;
+
+        PtstoGraph in_;
+      //}}}
+    };
+
+    class LoadNode : public PartNode {
+      //{{{
+     public:
         LoadNode(int32_t nodenum, ObjectMap::ObjID dest, ObjectMap::ObjID src)
-          : DUGNode(NodeKind::LoadNode, nodenum, dest, src) { }
+          : PartNode(NodeKind::LoadNode, nodenum, dest, src) { }
 
-        void process(PtstoData &pts, Worklist &wl) override;
+        // NOTE: Process implemented in "Solve.cpp"
+        void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
 
         static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
           return node->getKind() == NodeKind::LoadNode;
         }
-
-     private:
-        PtstoSet in_;
       //}}}
     };
 
-    class StoreNode : public DUGNode {
+    class StoreNode : public PartNode {
       //{{{
      public:
-        StoreNode(int32_t nodenum, ObjectMap::ObjID dest, ObjectMap::ObjID src,
-            PtstoSet in, PtstoSet out, std::set<ObjectMap::ObjID> part_succ) :
-          DUGNode(NodeKind::StoreNode, nodenum, dest, src),
-          in_(std::move(in)), out_(std::move(out)),
-          part_succ_(std::move(part_succ)) { }
-
         StoreNode(int32_t nodenum, ObjectMap::ObjID dest, ObjectMap::ObjID src)
-          : DUGNode(NodeKind::StoreNode, nodenum, dest, src) { }
+          : PartNode(NodeKind::StoreNode, nodenum, dest, src) { }
 
-        void addSucc(ObjectMap::ObjID dest, PartID) {
-          part_succ_.insert(dest);
-        }
-
-        void process(PtstoData &pts, Worklist &wl) override;
+        // NOTE: Process implemented in "Solve.cpp"
+        void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
 
         static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
           return node->getKind() == NodeKind::StoreNode;
         }
 
+        void setupPartGraph(const std::vector<DUG::ObjID> &vars)
+            override {
+          PartNode::setupPartGraph(vars);
+          out_ = PtstoGraph(vars);
+        }
+
+        bool strong() const {
+          return strong_;
+        }
+
      private:
-        PtstoSet in_;
-        PtstoSet out_;
+        PtstoGraph out_;
 
         bool strong_ = false;
-
-        // Successor partitons -- Used to update worklist on process
-        std::set<ObjectMap::ObjID> part_succ_;
       //}}}
     };
 
-    class PhiNode : public DUGNode {
+    class PhiNode : public PartNode {
       //{{{
      public:
         PhiNode(int32_t nodenum, ObjectMap::ObjID dest, ObjectMap::ObjID src)
-          : DUGNode(NodeKind::PhiNode, nodenum, dest, src) { }
+          : PartNode(NodeKind::PhiNode, nodenum, dest, src) { }
 
-        PhiNode(int32_t nodenum, ObjectMap::ObjID dest, ObjectMap::ObjID src,
-            PtstoSet in) :
-          DUGNode(NodeKind::PhiNode, nodenum, dest, src),
-          in_(std::move(in)) { }
-
-        void process(PtstoData &pts, Worklist &wl) override;
+        // NOTE: Process implemented in "Solve.cpp"
+        void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
 
         static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
           return node->getKind() == NodeKind::PhiNode;
         }
-     private:
-        PtstoSet in_;
       //}}}
     };
     //}}}
 
+ private:
     // Private variables {{{
     // The Partition equivalence for each object in the graph
-    std::map<ObjectMap::ObjID, PartID> partitionMap_;
-    std::map<PartID, std::vector<ObjectMap::ObjID>> revPartitionMap_;
+    // std::map<ObjectMap::ObjID, PartID> partitionMap_;
+    std::map<PartID, std::vector<ObjectMap::ObjID>> partitionMap_;
 
     SEG<DUGid> DUG_;
     //}}}

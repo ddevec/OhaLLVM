@@ -93,10 +93,12 @@ class SEG;
 enum class NodeKind {
   DUGNode,
   AllocNode,
+  PartNode,
   LoadNode,
   StoreNode,
-  CopyNode,
   PhiNode,
+  PartNodeEnd,
+  CopyNode,
   DUGNodeEnd,
   Unify,
   HUNode,
@@ -269,6 +271,35 @@ class SEGNode {
       auto &preds = nd.preds();
       succs_.insert(std::begin(succs), std::end(succs));
       preds_.insert(std::begin(preds), std::end(preds));
+    }
+    //}}}
+
+    // Iterators {{{
+    typedef typename std::set<id_type>::iterator iterator;
+    typedef typename std::set<id_type>::const_iterator const_iterator;
+
+    iterator succ_begin() {
+      return std::begin(succs_);
+    }
+
+    iterator succ_end() {
+      return std::end(succs_);
+    }
+
+    const_iterator succ_begin() const {
+      return std::begin(succs_);
+    }
+
+    const_iterator succ_end() const {
+      return std::end(succs_);
+    }
+
+    const_iterator succ_cbegin() const {
+      return succs_.cbegin();
+    }
+
+    const_iterator succ_cend() const {
+      return succs_.cend();
     }
     //}}}
 
@@ -1160,8 +1191,10 @@ class SEG {
       auto &preds = node.preds();
       std::for_each(std::begin(preds), std::end(preds),
           [&remove_edges, id](id_type pred_id) {
+          /*
         llvm::dbgs() << "Adding pred edge: (" << pred_id << ", "
             << id << ")\n";
+            */
         remove_edges.emplace_back(pred_id, id);
       });
 
@@ -1169,8 +1202,10 @@ class SEG {
       auto &succs = node.succs();
       std::for_each(std::begin(succs), std::end(succs),
           [&remove_edges, id](id_type succ_id) {
+          /*
         llvm::dbgs() << "Adding succ edge: (" << id << ", "
             << succ_id << ")\n";
+            */
         remove_edges.emplace_back(id, succ_id);
       });
 
@@ -1185,22 +1220,27 @@ class SEG {
         removeEdge(edge);
       }
 
+      llvm::dbgs() << "calling nodes_.erase on id: " << id << "\n";
       // Delete the node
-      nodes_.erase(id);
+      int rm = nodes_.erase(id);
+      llvm::dbgs() << "Deleted: " << rm << "element(s)\n";
     }
 
     // For use by unification operations only...
     void retargetId(id_type old_id, id_type new_id) {
       auto pnode = nodes_.at(new_id);
 
+      /*
       auto old_it = nodes_.find(old_id);
 
       // NOTE: This assertion could legally happen when doing a replace on
       //   convert
-      // assert(old_it != std::end(nodes_));
+      assert(old_it != std::end(nodes_));
       if (old_it != std::end(nodes_)) {
-        old_it->second = pnode;
+        old_it->second = std::move(pnode);
       }
+      */
+      nodes_[old_id] = std::move(pnode);
     }
     //}}}
     //}}}
@@ -1331,8 +1371,11 @@ SEG<new_id_type> SEG<id_type>::convert(id_converter id_convert) const {
   std::for_each(cbegin(), cend(),
       [this, &id_convert, &ret]
       (const node_iter_type &pr) {
+    llvm::dbgs() << "input id is " << pr.first << "\n";
     new_id_type new_id = id_convert(pr.first);
+    llvm::dbgs() << "new_id is " << new_id << "\n";
     new_id_type rep_id = id_convert(pr.second->id());
+    llvm::dbgs() << "rep_id is " << rep_id << "\n";
     // Check if the rep for this node exists
     auto rep_it = ret.findNode(rep_id);
 
@@ -1343,6 +1386,7 @@ SEG<new_id_type> SEG<id_type>::convert(id_converter id_convert) const {
 
     // If we havent' created this rep yet, do so
     if (rep_it == std::end(ret)) {
+      llvm::dbgs() << "Creating rep node at " << rep_id << "\n";
       // Add this node at the rep location
       pnode = &ret.addNode<node_type>(rep_id,
         llvm::cast<base_node_type>(*pr.second), id_convert);
@@ -1352,6 +1396,7 @@ SEG<new_id_type> SEG<id_type>::convert(id_converter id_convert) const {
 
     // If this is a rep that doesn't exist, re-target it
     if (new_id != rep_id && node_it == std::end(ret)) {
+      llvm::dbgs() << "Retargeting " << new_id << " to " << rep_id << "\n";
       ret.retargetId(new_id, rep_id);
     }
 
@@ -1367,6 +1412,7 @@ SEG<new_id_type> SEG<id_type>::convert(id_converter id_convert) const {
       node_type tmp_node(nodeNum_.invalid(), rep_id,
         llvm::cast<base_node_type>(*pr.second), id_convert);
 
+      llvm::dbgs() << "Merging " << new_id << " to " << rep_id << "\n";
       nd.merge(tmp_node);
     }
   });

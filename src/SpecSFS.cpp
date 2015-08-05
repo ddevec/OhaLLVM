@@ -67,10 +67,9 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
 
   // Clear the def-use graph
   // It should already be cleared, but I'm paranoid
-  DUG graph;
   ConstraintGraph cg;
   CFG cfg;
-  ObjectMap omap;
+  ObjectMap &omap = omap_;
 
   // Identify all of the objects in the source
   if (identifyObjects(omap, M)) {
@@ -127,7 +126,8 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   cfg.setSEG(std::move(ssa));
 
   // Compute partitions, based on address equivalence
-  if (computePartitions(cfg, aux, omap)) {
+  DUG graph;
+  if (computePartitions(graph, cfg, aux, omap)) {
     error("ComputePartitions failure!");
   }
 
