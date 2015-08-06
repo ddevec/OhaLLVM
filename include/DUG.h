@@ -109,9 +109,9 @@ class DUG {
     //}}}
 
     // Internal Classes {{{
-    class DUGEdge : public SEGEdge<ObjID> {
+    class DUGEdge : public SEGEdge<DUGid> {
      public:
-        DUGEdge(ObjID s, ObjID d) : SEGEdge<ObjID>(EdgeKind::DUG, s, d) { }
+        DUGEdge(DUGid s, DUGid d) : SEGEdge<ObjID>(EdgeKind::DUG, s, d) { }
 
         // For LLVM RTTI {{{
         static bool classof(const SEGEdge<ObjID> *id) {
@@ -175,8 +175,8 @@ class DUG {
       std::for_each(seg.edges_begin(), seg.edges_end(),
           [this](const SEG<ObjID>::edge_iter_type &pr) {
         auto &edge = llvm::cast<Constraint<ObjID>>(*pr.second);
-        ObjectMap::ObjID dest = edge.dest();
-        ObjectMap::ObjID src = edge.src();
+        DUGid dest = edge.dest();
+        DUGid src = edge.src();
         DUG_.addEdge<DUGEdge>(dest, src);
       });
     }

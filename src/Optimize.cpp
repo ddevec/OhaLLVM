@@ -381,7 +381,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph,
       [&huSeg, &omap](ConstraintGraph::ObjID node_id) {
     // Do the HU visit (pred collection) on each node in reverse
     //    topological order
-    visitHU(huSeg, llvm::cast<HUNode>(huSeg.getNode(node_id)), omap);
+    visitHU(huSeg, huSeg.getNode<HUNode>(node_id), omap);
   });
 
   if_debug(

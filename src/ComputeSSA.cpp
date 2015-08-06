@@ -40,7 +40,7 @@ void T4(CFG::ControlFlowGraph &G, const CFG::ControlFlowGraph &Xp) {
 
 // Now, for each P-node in G1 (output from T4) with precise 1 predecessor,
 //   we combine that node with its predecessor
-void T2(CFG::ControlFlowGraph &G, const CFG::ControlFlowGraph &Xp) {
+void T2(CFG::ControlFlowGraph &G, CFG::ControlFlowGraph &Xp) {
   // Visit Xp in topological order
   llvm::dbgs() << "Running T2\n";
   std::for_each(Xp.topo_begin(), Xp.topo_end(),

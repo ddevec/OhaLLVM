@@ -249,6 +249,8 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa) {
 
         auto &pred_rep_id = pred_rep_it->second;
 
+        dout << "Adding edge {" << pred_rep_id << " -(" << part_id << ")-> "
+        << obj_id << "}\n";
         graph.addEdge(pred_rep_id, obj_id, part_id);
       });
     });

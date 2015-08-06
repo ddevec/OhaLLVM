@@ -411,12 +411,23 @@ class UnifyNode : public SEGNode<id_type> {
           // Add all rep ids to our "reps"
           reps_.insert(rep_id);
         });
+
+        un.set_del();
       } else {
         graph.retargetId(n.id(), SEGNode<id_type>::id());
         // Add n.id to our "reps"
         reps_.insert(n.id());
       }
     }
+
+    bool del() const {
+      return del_;
+    }
+
+    void set_del() {
+      del_ = true;
+    }
+
     //}}}
 
     // merge functionality {{{
@@ -469,6 +480,7 @@ class UnifyNode : public SEGNode<id_type> {
  private:
     // Private data for supporting unification {{{
     std::set<id_type> reps_;
+    bool del_ = false;
     //}}}
   //}}}
 };
@@ -643,7 +655,7 @@ class SEG {
         }
 
         // Without a node does iteration for the graph
-        explicit topo_iterator(const SEG<id_type> &graph,
+        explicit topo_iterator(SEG<id_type> &graph,
               bool reverse = false) :
             end_(false),
             begin_(true),
@@ -651,10 +663,40 @@ class SEG {
           std::set<id_type> mark;
           // llvm::dbgs() << "topo iterator create\n";
 
+          /*
           std::for_each(std::begin(graph), std::end(graph),
               [this, &graph, &mark, reverse] (const node_iter_type &pr) {
             auto &node = *pr.second;
+            llvm::dbgs() << "visit node: " << pr.first << ", node.id(): "
+                << node.id() << "\n";
             visit(graph, mark, node, reverse, true);
+          });
+          */
+
+
+          std::list<SEG<id_type>::node_iterator> erase_list;
+          for (auto itr = std::begin(graph), en = std::end(graph);
+              itr != en; ++itr) {
+            auto &node = *(itr->second);
+
+            // Remove any deleted references
+            if (auto pun = llvm::dyn_cast<UnifyNode<id_type>>(&node)) {
+              if (pun->del()) {
+                erase_list.push_back(itr);
+                continue;
+              }
+            }
+
+            /*
+            llvm::dbgs() << "visit node: " << itr->first << ", node.id(): "
+                << node.id() << "\n";
+                */
+            visit(graph, mark, node, reverse, true);
+          }
+
+          std::for_each(std::begin(erase_list), std::end(erase_list),
+              [&graph] (SEG<id_type>::node_iterator itr) {
+            graph.nodes_.erase(itr);
           });
 
           /* NOTE: This assertion doesn't work, because nodes can be
@@ -742,8 +784,18 @@ class SEG {
         // Private functions {{{
         void visit(const SEG<id_type> &graph, std::set<id_type> &mark,
             const SEGNode<id_type> &node, bool reverse, bool print = false) {
+          // Don't visit deleted nodes!
+          if (auto pun = llvm::dyn_cast<UnifyNode<id_type>>(&node)) {
+            if (pun->del()) {
+              return;
+            }
+          }
+
           // ddevec -- TODO: Check for cycles???
           if (mark.count(node.id()) == 0) {
+            /*
+            llvm::dbgs() << "Checking node: " << node.id() << "\n";
+            */
             // For cycles...
             mark.insert(node.id());
 
@@ -787,7 +839,7 @@ class SEG {
 
         // Constructor {{{
         explicit rep_iterator(SEG<id_type> &G, bool begin) :
-            itr_((begin) ? std::begin(G) : std::end(G)),
+            G_(G), itr_((begin) ? std::begin(G) : std::end(G)),
             eitr_(std::end(G)) {
           if (begin) {
             advance_to_rep(false);
@@ -833,19 +885,31 @@ class SEG {
             ++itr_;
           }
 
+          std::list<SEG<id_type>::node_iterator> erase_list;
           while (itr_ != eitr_) {
             auto nd = llvm::cast<UnifyNode<id_type>>(*itr_->second);
+
+            if (nd.del()) {
+              erase_list.push_back(itr_);
+            }
 
             // If this node actually represents itself...
             if (nd.id() == itr_->first) {
               break;
             }
+
             ++itr_;
           }
+
+          std::for_each(std::begin(erase_list), std::end(erase_list),
+              [this] (SEG<id_type>::node_iterator itr) {
+            G_.nodes_.erase(itr);
+          });
         }
         //}}}
 
         // Private data {{{
+        SEG<id_type> &G_;
         node_iterator itr_;
         node_iterator eitr_;
         //}}}
@@ -959,11 +1023,11 @@ class SEG {
 
     // Topo iteration {{{
     typedef topo_iterator reverse_topo_iterator;
-    topo_iterator topo_begin() const {
+    topo_iterator topo_begin() {
       return topo_iterator(*this);
     }
 
-    topo_iterator topo_end() const {
+    topo_iterator topo_end() {
       return topo_iterator();
     }
 
@@ -975,11 +1039,11 @@ class SEG {
       return topo_iterator();
     }
 
-    reverse_topo_iterator topo_rbegin() const {
+    reverse_topo_iterator topo_rbegin() {
       return topo_iterator(*this, true);
     }
 
-    reverse_topo_iterator topo_rend() const {
+    reverse_topo_iterator topo_rend() {
       return topo_iterator();
     }
 
@@ -1215,15 +1279,23 @@ class SEG {
       remove_edges.erase(it, std::end(remove_edges));
 
       for (auto &edge : remove_edges) {
+        /*
         llvm::dbgs() << "Removing edge: (" << edge.first << ", "
           << edge.second << ")\n";
+          */
         removeEdge(edge);
       }
 
-      llvm::dbgs() << "calling nodes_.erase on id: " << id << "\n";
+      // llvm::dbgs() << "calling nodes_.erase on id: " << id << "\n";
+
       // Delete the node
-      int rm = nodes_.erase(id);
-      llvm::dbgs() << "Deleted: " << rm << "element(s)\n";
+      // If its a unify node, we need to mark it as deleted... because multiple
+      //   ids may point to it
+      if (auto pun = llvm::dyn_cast<UnifyNode<id_type>>(&node)) {
+        pun->set_del();
+      }
+
+      nodes_.erase(id);
     }
 
     // For use by unification operations only...
@@ -1371,11 +1443,8 @@ SEG<new_id_type> SEG<id_type>::convert(id_converter id_convert) const {
   std::for_each(cbegin(), cend(),
       [this, &id_convert, &ret]
       (const node_iter_type &pr) {
-    llvm::dbgs() << "input id is " << pr.first << "\n";
     new_id_type new_id = id_convert(pr.first);
-    llvm::dbgs() << "new_id is " << new_id << "\n";
     new_id_type rep_id = id_convert(pr.second->id());
-    llvm::dbgs() << "rep_id is " << rep_id << "\n";
     // Check if the rep for this node exists
     auto rep_it = ret.findNode(rep_id);
 
@@ -1386,7 +1455,6 @@ SEG<new_id_type> SEG<id_type>::convert(id_converter id_convert) const {
 
     // If we havent' created this rep yet, do so
     if (rep_it == std::end(ret)) {
-      llvm::dbgs() << "Creating rep node at " << rep_id << "\n";
       // Add this node at the rep location
       pnode = &ret.addNode<node_type>(rep_id,
         llvm::cast<base_node_type>(*pr.second), id_convert);
@@ -1396,7 +1464,6 @@ SEG<new_id_type> SEG<id_type>::convert(id_converter id_convert) const {
 
     // If this is a rep that doesn't exist, re-target it
     if (new_id != rep_id && node_it == std::end(ret)) {
-      llvm::dbgs() << "Retargeting " << new_id << " to " << rep_id << "\n";
       ret.retargetId(new_id, rep_id);
     }
 
@@ -1412,7 +1479,6 @@ SEG<new_id_type> SEG<id_type>::convert(id_converter id_convert) const {
       node_type tmp_node(nodeNum_.invalid(), rep_id,
         llvm::cast<base_node_type>(*pr.second), id_convert);
 
-      llvm::dbgs() << "Merging " << new_id << " to " << rep_id << "\n";
       nd.merge(tmp_node);
     }
   });
