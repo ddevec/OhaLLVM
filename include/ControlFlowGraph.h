@@ -32,13 +32,15 @@ class CFG {
 
     // Graph types {{{
     typedef SEG<CFGid> ControlFlowGraph;
+    typedef SEG<CFGid>::NodeID NodeID;
+    typedef SEG<CFGid>::EdgeID EdgeID;
     //}}}
 
     // Constructors {{{
     CFG() = default;
 
     CFG(const CFG &other) :
-      CFG_(other.getSEG().convert<Node, Edge>()) { }
+      CFG_(other.getSEG().clone<Node, Edge>()) { }
     CFG(CFG &&) = default;
 
     CFG &operator=(const CFG &) = delete;
@@ -46,17 +48,10 @@ class CFG {
     //}}}
 
     // Nodes {{{
-    class Node : public SCCNode<CFGid> {
+    class Node : public UnifyNode<CFGid> {
      public:
-        Node(int32_t nodenum, CFGid id) :
-          SCCNode<CFGid>(NodeKind::CFGNode, nodenum, id) { }
-
-        template <typename id_converter>
-        Node(int32_t  nodenum, CFGid id, const SEGNode<CFGid> &nd,
-              id_converter convert) :
-            SCCNode<CFGid>(NodeKind::CFGNode, nodenum, id, nd, convert),
-            m_(llvm::cast<Node>(nd).m()), r_(llvm::cast<Node>(nd).r()),
-            c_(llvm::cast<Node>(nd).c()) { }
+        Node(SEG<CFGid>::NodeID node_id, CFGid id) :
+          UnifyNode<CFGid>(NodeKind::CFGNode, node_id, id) { }
 
         // No Copy/move {{{
         Node(const Node &) = default;
@@ -91,7 +86,7 @@ class CFG {
         // Print support {{{
         void print_label(llvm::raw_ostream &ofil,
             const ObjectMap &) const override {
-          ofil << SEGNode<CFGid>::id() << " : {";
+          ofil << SEGNode<CFGid>::extId() << " : {";
 
           std::for_each(UnifyNode<CFGid>::rep_begin(),
               UnifyNode<CFGid>::rep_end(),
@@ -137,7 +132,7 @@ class CFG {
           r_ |= node.r_;
           c_ |= node.c_;
 
-          SCCNode<CFGid>::unite(graph, n);
+          UnifyNode<CFGid>::unite(graph, n);
         }
         //}}}
 
@@ -156,12 +151,8 @@ class CFG {
     // Edges {{{
     class Edge : public SEGEdge<CFGid> {
      public:
-        Edge(CFGid dest, CFGid src) :
-            SEGEdge<CFGid>(EdgeKind::CFGEdge, dest, src) { }
-
-        template <typename id_converter>
-        Edge(CFGid dest, CFGid src, const SEGEdge<CFGid> &,
-              SEG<CFGid> &, id_converter) :
+        typedef typename SEG<CFGid>::NodeID NodeID;
+        Edge(NodeID dest, NodeID src) :
             SEGEdge<CFGid>(EdgeKind::CFGEdge, dest, src) { }
 
      private:
@@ -170,8 +161,10 @@ class CFG {
 
     // Setters {{{
 
-    void addEdge(CFGid id1, CFGid id2) {
-      CFG_.addEdge<Edge>(id1, id2);
+    void addEdge(CFGid cfg_id1, CFGid cfg_id2) {
+      auto node_id1 = getNode(cfg_id1).id();
+      auto node_id2 = getNode(cfg_id2).id();
+      CFG_.addEdge<Edge>(node_id1, node_id2);
     }
 
     void addCallsite(CFGid call_id, ConstraintGraph::ObjID fcn_id, CFGid ret_id) {
@@ -218,14 +211,18 @@ class CFG {
     //}}}
 
     // Accessors {{{
+    Node &getNode(NodeID id) {
+      return CFG_.getNode<Node>(id);
+    }
+
     Node &getNode(CFGid id) {
       // return cfgNodes_.at(id);
-      return llvm::cast<Node>(CFG_.getNode(id));
+      return CFG_.getNode<Node>(id);
     }
 
     const Node &getNode(CFGid id) const {
       // return cfgNodes_.at(id);
-      return llvm::cast<const Node>(CFG_.getNode(id));
+      return CFG_.getNode<Node>(id);
     }
 
     const std::pair<CFGid, CFGid> &

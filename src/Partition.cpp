@@ -71,18 +71,19 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, const Andersens &aux,
   // Create the mechanisms needed to generate partition ids:
   IDGenerator<DUG::PartID> part_id_generator;
 
-  std::map<Bitmap, std::vector<ObjectMap::ObjID>, BitmapLT> part_finder;
+  std::map<Bitmap, std::vector<DUG::DUGid>, BitmapLT> part_finder;
   // Now create partitions
   std::for_each(std::begin(AE), std::end(AE),
-      [&part_finder](std::pair<const ObjectMap::ObjID, Bitmap> &pr) {
-    part_finder[pr.second].push_back(pr.first);
+      [&part_finder, &dug](std::pair<const ObjectMap::ObjID, Bitmap> &pr) {
+    DUG::DUGid dug_id = dug.getNode(pr.first).id();
+    part_finder[pr.second].push_back(dug_id);
   });
 
   // Assign ID's to the partitons:
-  std::map<DUG::PartID, std::vector<ObjectMap::ObjID>> rev_part_map;
+  std::map<DUG::PartID, std::vector<DUG::DUGid>> rev_part_map;
   std::for_each(std::begin(part_finder), std::end(part_finder),
       [&rev_part_map, &part_id_generator]
-      (std::pair<const Bitmap, std::vector<ObjectMap::ObjID>> &pr) {
+      (std::pair<const Bitmap, std::vector<DUG::DUGid>> &pr) {
     rev_part_map.emplace(std::piecewise_construct,
           std::make_tuple(part_id_generator.next()),
           std::make_tuple(std::move(pr.second)));
@@ -90,7 +91,7 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, const Andersens &aux,
 
   dout << "Running computePartitions\n";
 
-  dug.setPartitionToObjects(std::move(rev_part_map));
+  dug.setPartitionToNodes(std::move(rev_part_map));
 
   // We now have our PartID to DUG::ObjID mapping in part_map
   return false;
@@ -98,53 +99,60 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, const Andersens &aux,
 
 
 bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa) {
-  // For each partition, calculate the SSA of any nodes in that partiton
+  // Map to track which partitions each DUG node is in
   std::map<DUG::DUGid, std::vector<DUG::PartID>> node_to_partition;
+  // For each partition, calculate the SSA of any nodes in that partiton
   std::for_each(graph.part_begin(), graph.part_end(),
       [this, &graph, &ssa, &node_to_partition]
-      (const std::pair<const DUG::PartID, std::vector<ObjectMap::ObjID>> &pr) {
-    std::map<CFG::CFGid, ObjectMap::ObjID> part_rep;
+      (const std::pair<const DUG::PartID, std::vector<DUG::DUGid>> &pr) {
+    std::map<CFG::CFGid, DUG::DUGid> part_rep;
 
     dout << "ssa contains cfg ids:";
     std::for_each(std::begin(ssa.getSEG()), std::end(ssa.getSEG()),
-        [] (const SEG<CFG::CFGid>::node_iter_type &ty) {
-      dout << " " << ty.first;
+        [] (const SEG<CFG::CFGid>::node_iter_type &pnode) {
+      if (pnode != nullptr) {
+        dout << " " << pnode->id();
+      }
     });
     dout << "\n";
 
     // Create a clone of the ControlFlowGraph for this partition's ssa
     CFG::ControlFlowGraph part_graph =
-      ssa.getSEG().convert<CFG::Node, CFG::Edge>();
+      ssa.getSEG().clone<CFG::Node, CFG::Edge>();
 
     // FIXME: DEBUGGING -- remove
     dout << "part_graph contains cfg ids:";
     std::for_each(std::begin(part_graph), std::end(part_graph),
-        [] (SEG<CFG::CFGid>::node_iter_type &ty) {
-      dout << " " << ty.first;
+        [] (SEG<CFG::CFGid>::node_iter_type &pnode) {
+      if (pnode != nullptr) {
+        dout << " " << pnode->id();
+      }
     });
     dout << "\n";
 
     // Okay, now clear out any r, p, or c info for the nodes in that graph
-    std::for_each(part_graph.rep_begin(), part_graph.rep_end(),
-        [&part_graph](CFG::ControlFlowGraph::node_iter_type &pr) {
-      auto &node = llvm::cast<CFG::Node>(*pr.second);
+    std::for_each(std::begin(part_graph), std::end(part_graph),
+        [&part_graph](CFG::ControlFlowGraph::node_iter_type &pnode) {
+      auto &node = llvm::cast<CFG::Node>(*pnode);
 
       node.clearM();
       node.clearR();
       node.clearC();
     });
 
-    std::map<CFG::CFGid, ObjectMap::ObjID> part_defs;
-    std::map<CFG::CFGid, std::vector<ObjectMap::ObjID>> part_uses;
+    std::map<CFG::CFGid, DUG::DUGid> part_defs;
+    std::map<CFG::CFGid, std::vector<DUG::DUGid>> part_uses;
 
     // Now calculate and fill in the info for each object
     //   in this partition
-    const auto &obj_ids = pr.second;
+    const auto &dug_ids = pr.second;
     const auto &part_id = pr.first;
-    std::for_each(std::begin(obj_ids), std::end(obj_ids),
+    std::for_each(std::begin(dug_ids), std::end(dug_ids),
         [&ssa, &graph, &part_defs, &part_uses, &part_id,
             &part_graph, &node_to_partition]
-        (ObjectMap::ObjID obj_id) {
+        (DUG::DUGid dug_id) {
+      // Get graph DUGid from ObjID
+      ObjectMap::ObjID obj_id = graph.getNode(dug_id).extId();
       // Get the CFGid associated with this object:
       auto type = ssa.getType(obj_id);
 
@@ -154,25 +162,32 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa) {
         dout << "Getting cfg node for obj_id: " << obj_id << "\n";
         auto cfg_id = ssa.getCFGid(obj_id);
         dout << "Got node: " << cfg_id << "\n";
-        auto &nd = part_graph.getNode<CFG::Node>(cfg_id);
+        auto &node = part_graph.getNode<CFG::Node>(cfg_id);
         // Set R
-        nd.setR();
-        part_uses[cfg_id].push_back(obj_id);
-        node_to_partition[obj_id].push_back(part_id);
+        node.setR();
+
+        // Denote this CFG node maps to this DUG node
+        part_uses[cfg_id].push_back(dug_id);
+
+        // Denote that this DUG node is part of this partition
+        node_to_partition[dug_id].push_back(part_id);
       // If its a store:
       } else if (type == ConstraintType::Store) {
         auto cfg_id = ssa.getCFGid(obj_id);
-        auto &nd = part_graph.getNode<CFG::Node>(cfg_id);
+        auto &node = part_graph.getNode<CFG::Node>(cfg_id);
         // Set M
-        nd.setM();
+        node.setM();
 
         // Possibly set C
         if (ssa.isStrong(obj_id)) {
-          nd.setC();
+          node.setC();
         }
+
+        // Denote this CFGid references this DUG entry
         assert(part_defs.find(cfg_id) == std::end(part_defs));
-        part_defs[cfg_id] = obj_id;
-        node_to_partition[obj_id].push_back(part_id);
+        part_defs[cfg_id] = dug_id;
+
+        node_to_partition[dug_id].push_back(part_id);
       }
     });
 
@@ -186,12 +201,16 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa) {
     std::for_each(part_ssa.topo_begin(), part_ssa.topo_end(),
         [&graph, &part_ssa, &part_rep,
             &part_uses, &part_defs, &part_id]
-        (const CFG::CFGid cfg_id) {
-      // Now, for this CFGid, get all associated ObjIDs in this partition:
+        (const CFG::NodeID node_id) {
+      // Get the CFGid of this node:
+      auto &part_node = part_ssa.getNode(node_id);
+      auto cfg_id = part_node.extId();
+
+      // Now, for this CFGid, get all associated DUG Nodes in this partition:
       // There may be many if its a load (use)
       auto ld_it = part_uses.find(cfg_id);
 
-      auto obj_id = ObjectMap::ObjID();
+      auto dug_id = DUG::DUGid();
 
       // There is only one if its a store (def)
       auto st_it = part_defs.find(cfg_id);
@@ -201,16 +220,16 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa) {
 
       // Elect a "leader" id for each part
       if (have_st) {
-        obj_id = st_it->second;
+        dug_id = st_it->second;
       } else if (have_ld) {
-        obj_id = ld_it->second.front();
+        dug_id = ld_it->second.front();
       // There may also be none (in this case its an phi node)
       } else {
-        obj_id = graph.addPhi();
+        dug_id = graph.addPhi();
       }
 
       // Update our part_rep map, so we can fill in preds later
-      part_rep[cfg_id] = obj_id;
+      part_rep[cfg_id] = dug_id;
 
       // Put an edge from the part's "leader" to its members
       bool skip_first = !have_st;
@@ -225,7 +244,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa) {
             continue;
           }
 
-          graph.addEdge(obj_id, ld_id, part_id);
+          graph.addEdge(dug_id, ld_id, part_id);
         }
       }
 
@@ -241,17 +260,21 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa) {
 
       // Put an edge from each pred in G to the part leader
       std::for_each(std::begin(preds), std::end(preds),
-          [&graph, &part_rep, &obj_id, &part_id](const CFG::CFGid pred_id) {
+          [&graph, &part_rep, &dug_id, &part_id, &part_ssa]
+          (const CFG::EdgeID pred_edge_id) {
+        auto pred_node_id = part_ssa.getEdge(pred_edge_id).src();
+        auto pred_cfg_id = part_ssa.getNode<CFG::Node>(pred_node_id).extId();
+
         // NOTE: if we were not doing a topo order we may have to evaluate the
         //   pred here
-        auto pred_rep_it = part_rep.find(pred_id);
+        auto pred_rep_it = part_rep.find(pred_cfg_id);
         assert(pred_rep_it != std::end(part_rep));
 
-        auto &pred_rep_id = pred_rep_it->second;
+        DUG::DUGid &pred_rep_id = pred_rep_it->second;
 
         dout << "Adding edge {" << pred_rep_id << " -(" << part_id << ")-> "
-        << obj_id << "}\n";
-        graph.addEdge(pred_rep_id, obj_id, part_id);
+            << dug_id << "}\n";
+        graph.addEdge(pred_rep_id, dug_id, part_id);
       });
     });
   });
@@ -265,9 +288,9 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa) {
   std::for_each(std::begin(node_to_partition), std::end(node_to_partition),
       [&graph]
       (std::pair<const DUG::DUGid, std::vector<DUG::PartID>> &pr) {
-    auto &nd = llvm::cast<DUG::PartNode>(graph.getNode(pr.first));
+    auto &part_node = llvm::cast<DUG::PartNode>(graph.getNode(pr.first));
     auto &parts = pr.second;
-    std::vector<DUG::ObjID> vars;
+    std::vector<DUG::DUGid> vars;
 
     std::for_each(std::begin(parts), std::end(parts),
         [&graph, &vars] (DUG::PartID part_id) {
@@ -275,14 +298,13 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa) {
       vars.insert(vars.end(), std::begin(objs), std::end(objs));
     });
 
-    nd.setupPartGraph(vars);
+    part_node.setupPartGraph(vars);
   });
   //   For each part containing this id:
   //     For each obj in part
   //       add obj to dug_mapping
   //
   //   Add dug_mapping to node ptsto
-
 
   return false;
 }

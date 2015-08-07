@@ -71,6 +71,7 @@ class Worklist {
 class PtstoSet {
   //{{{
  public:
+    typedef typename SEG<ObjectMap::ObjID>::NodeID NodeID;
     bool set(ObjectMap::ObjID id) {
       return ptsto_.test_and_set(id.val());
     }
@@ -157,11 +158,13 @@ class PtstoSet {
 class PtstoGraph {
   //{{{
  public:
+    typedef typename SEG<ObjectMap::ObjID>::NodeID NodeID;
+
     PtstoGraph() = default;
 
-    explicit PtstoGraph(const std::vector<ObjectMap::ObjID> &objs) {
+    explicit PtstoGraph(const std::vector<NodeID> &objs) {
       std::for_each(std::begin(objs), std::end(objs),
-          [this] (const ObjectMap::ObjID &id) {
+          [this] (const NodeID &id) {
         data_.emplace(std::piecewise_construct, std::make_tuple(id),
           std::make_tuple());
       });
@@ -176,7 +179,7 @@ class PtstoGraph {
     PtstoGraph &operator=(const PtstoGraph &) = delete;
     //}}}
 
-    PtstoSet &at(ObjectMap::ObjID id) {
+    PtstoSet &at(NodeID id) {
       return data_.at(id);
     }
 
@@ -184,19 +187,19 @@ class PtstoGraph {
       // Oh goody...
       bool ret = false;
       std::for_each(std::begin(rhs.data_), std::end(rhs.data_),
-          [this, &ret] (const std::pair<const ObjectMap::ObjID, PtstoSet> &pr) {
+          [this, &ret] (const std::pair<const NodeID, PtstoSet> &pr) {
         ret |= (data_.at(pr.first) |= pr.second);
       });
 
       return ret;
     }
 
-    void clear(ObjectMap::ObjID id) {
+    void clear(NodeID id) {
       data_.at(id).clear();
     }
 
-    typedef std::map<ObjectMap::ObjID, PtstoSet>::iterator iterator;
-    typedef std::map<ObjectMap::ObjID, PtstoSet>::const_iterator const_iterator;
+    typedef std::map<NodeID, PtstoSet>::iterator iterator;
+    typedef std::map<NodeID, PtstoSet>::const_iterator const_iterator;
 
     iterator begin() {
       return std::begin(data_);
@@ -223,7 +226,7 @@ class PtstoGraph {
     }
 
  private:
-    std::map<ObjectMap::ObjID, PtstoSet> data_;
+    std::map<NodeID, PtstoSet> data_;
   //}}}
 };
 

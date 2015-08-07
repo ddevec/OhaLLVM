@@ -13,21 +13,20 @@ bool SpecSFS::solve(DUG &dug) {
   Worklist work;
   // Add allocs to worklist -- The ptstoset for the alloc will be updated on
   //   solve evaluation
-  std::vector<ObjectMap::ObjID> dests;
+  std::vector<DUG::DUGid> dests;
 
   std::for_each(dug.nodes_begin(), dug.nodes_end(),
       [this, &work, &dests]
-      (DUG::node_iter_type &pr) {
-    auto pnd = pr.second.get();
+      (DUG::node_iter_type &pnd) {
+    auto pnode = pnd.get();
+    DUGNode &node = llvm::cast<DUGNode>(*pnode);
 
-    DUGNode &nd = llvm::cast<DUGNode>(*pnd);
-
-    if (llvm::isa<DUG::AllocNode>(pnd)) {
-      llvm::dbgs() << "Adding node: " << nd.id() << " to worklist\n";
-      work.push(&nd);
+    if (llvm::isa<DUG::AllocNode>(pnode)) {
+      llvm::dbgs() << "Adding node: " << node.id() << " to worklist\n";
+      work.push(&node);
     }
 
-    dests.push_back(nd.dest());
+    dests.push_back(node.dest());
   });
 
   PtstoGraph pts_top(dests);

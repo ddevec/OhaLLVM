@@ -17,10 +17,12 @@ template <typename id_type>
 class Constraint : public SEGEdge<id_type> {
   //{{{
  public:
+    typedef typename SEG<id_type>::NodeID NodeID;
+    typedef typename SEG<id_type>::EdgeID EdgeID;
     // Constructors {{{
-    Constraint(id_type s, id_type d, ConstraintType t) :
+    Constraint(NodeID s, NodeID d, ConstraintType t) :
       Constraint(s, d, t, 0) { }
-    Constraint(id_type s, id_type d, ConstraintType t, int32_t o) :
+    Constraint(NodeID s, NodeID d, ConstraintType t, int32_t o) :
       SEGEdge<id_type>(EdgeKind::Constraint, s, d),
       type_(t), offs_(o) { }
 
@@ -74,7 +76,7 @@ class Constraint : public SEGEdge<id_type> {
       }
     }
 
-    id_type getTarget() const {
+    NodeID getTarget() const {
       if (targetIsDest()) {
         return SEGEdge<id_type>::dest();
       } else {
@@ -118,20 +120,21 @@ class ConstraintGraph {
   //{{{
  public:
     // Typedefs {{{
+    // SEG
+    typedef SEG<ObjectMap::ObjID> ConstraintSEG;
+
     // ObjIDs
     typedef ObjectMap::ObjID ObjID;
-    typedef std::pair<ObjID, ObjID> ConsID;
-
-    // SEG
-    typedef SEG<ObjID> ConstraintSEG;
+    typedef ConstraintSEG::EdgeID ConsID;
+    typedef ConstraintSEG::NodeID NodeID;
     //}}}
 
     // Internal classes {{{
     // ConstraintNode {{{
     struct ConstraintNode : public UnifyNode<ObjID> {
       //{{{
-      ConstraintNode(int32_t nodenum, ObjID id) :
-        UnifyNode<ObjID>(NodeKind::ConstraintNode, nodenum, id) { }
+      ConstraintNode(SEG<ObjID>::NodeID node_id, ObjID id) :
+        UnifyNode<ObjID>(NodeKind::ConstraintNode, node_id, id) { }
 
       /*
       ConstraintNode(int32_t nodenum, ObjID id, const ConstraintNode &con) :
@@ -185,18 +188,20 @@ class ConstraintGraph {
 
     ConsID add(ConstraintType type, ObjID d, ObjID s, int o) {
       auto s_it = constraintGraph_.findNode(s);
-      if (s_it == std::end(constraintGraph_)) {
-        constraintGraph_.addNode<ConstraintNode>(s);
+      if (s_it == constraintGraph_.node_map_cend()) {
+        s_it = constraintGraph_.addNode<ConstraintNode>(s);
       }
 
       auto d_it = constraintGraph_.findNode(d);
-      if (d_it == std::end(constraintGraph_)) {
-        constraintGraph_.addNode<ConstraintNode>(d);
+      if (d_it == constraintGraph_.node_map_cend()) {
+        d_it = constraintGraph_.addNode<ConstraintNode>(d);
       }
 
-      constraintGraph_.addEdge<Constraint<ObjID>>(s, d, type, o);
+      auto src = constraintGraph_.getNode(s_it->second);
+      auto dest = constraintGraph_.getNode(d_it->second);
 
-      return ConsID(s, d);
+      return constraintGraph_.addEdge<Constraint<ObjID>>(src.id(), dest.id(),
+          type, o);
     }
 
     ObjID addNode(ObjectMap &omap) {
@@ -226,6 +231,10 @@ class ConstraintGraph {
     // Accessors {{{
     const Constraint<ObjID>  &getConstraint(ConsID id) const {
       return constraintGraph_.getEdge<Constraint<ObjID>>(id);
+    }
+
+    ConstraintNode &getNode(NodeID id) {
+      return constraintGraph_.getNode<ConstraintNode>(id);
     }
 
     ConstraintNode &getNode(ObjID id) {

@@ -30,9 +30,9 @@ class DUGNode : public SEGNode<ObjectMap::ObjID> {
   //{{{
  public:
     // Constructors {{{
-     DUGNode(NodeKind kind, int32_t nodenum, ObjectMap::ObjID dest,
+     DUGNode(NodeKind kind, SEG<ObjectMap::ObjID>::NodeID id, ObjectMap::ObjID dest,
         ObjectMap::ObjID src) :
-      SEGNode<ObjectMap::ObjID>(kind, nodenum, dest),
+      SEGNode<ObjectMap::ObjID>(kind, id, dest),
       dest_(dest), src_(src) { }
     //}}}
 
@@ -105,13 +105,14 @@ class DUG {
     */
 
     typedef ObjectMap::ObjID ObjID;
-    typedef ObjID DUGid;
+    typedef SEG<ObjID>::NodeID DUGid;
     //}}}
 
     // Internal Classes {{{
-    class DUGEdge : public SEGEdge<DUGid> {
+    class DUGEdge : public SEGEdge<ObjID> {
      public:
-        DUGEdge(DUGid s, DUGid d) : SEGEdge<ObjID>(EdgeKind::DUG, s, d) { }
+        DUGEdge(SEG<ObjID>::NodeID s, SEG<ObjID>::NodeID d) :
+          SEGEdge<ObjID>(EdgeKind::DUG, s, d) { }
 
         // For LLVM RTTI {{{
         static bool classof(const SEGEdge<ObjID> *id) {
@@ -147,11 +148,11 @@ class DUG {
       //   IN, OUT, part_succ, phi_succ, succ
       auto &seg = cg.getSEG();
       std::for_each(seg.edges_begin(), seg.edges_end(),
-          [this](const SEG<ObjID>::edge_iter_type &pr) {
-        auto &edge = llvm::cast<Constraint<ObjID>>(*pr.second);
+          [this, &seg](const SEG<ObjID>::edge_iter_type &pedge) {
+        auto &edge = llvm::cast<Constraint<ObjID>>(*pedge);
         // Insert the node into the seg
-        ObjectMap::ObjID dest = edge.dest();
-        ObjectMap::ObjID src = edge.src();
+        auto dest = getNode(edge.dest()).extId();
+        auto src = getNode(edge.src()).extId();
         switch (edge.type()) {
           case ConstraintType::AddressOf:
             // Add AllocNode
@@ -173,11 +174,9 @@ class DUG {
 
       // We add unnamed edges for top-level transitions
       std::for_each(seg.edges_begin(), seg.edges_end(),
-          [this](const SEG<ObjID>::edge_iter_type &pr) {
-        auto &edge = llvm::cast<Constraint<ObjID>>(*pr.second);
-        DUGid dest = edge.dest();
-        DUGid src = edge.src();
-        DUG_.addEdge<DUGEdge>(dest, src);
+          [this, &seg](const SEG<ObjID>::edge_iter_type &pedge) {
+        auto &edge = llvm::cast<Constraint<ObjID>>(*pedge);
+        DUG_.addEdge<DUGEdge>(edge.dest(), edge.src());
       });
     }
     //}}}
@@ -207,16 +206,20 @@ class DUG {
     DUGNode &getNode(DUGid id) {
       return DUG_.getNode<DUGNode>(id);
     }
+
+    DUGNode &getNode(ObjectMap::ObjID id) {
+      return DUG_.getNode<DUGNode>(id);
+    }
     //}}}
 
     // Equivalence mappings {{{
     // Parititon stuffs:
-    void setPartitionToObjects(
-        std::map<PartID, std::vector<ObjectMap::ObjID>> mapping) {
+    void setPartitionToNodes(
+        std::map<PartID, std::vector<DUG::DUGid>> mapping) {
       partitionMap_ = std::move(mapping);
     }
 
-    std::vector<ObjectMap::ObjID> &getObjs(PartID part_id) {
+    std::vector<DUG::DUGid> &getObjs(PartID part_id) {
       return partitionMap_.at(part_id);
     }
     /*
@@ -241,7 +244,7 @@ class DUG {
 
     // Iterators {{{
     // Partition map iterators {{{
-    typedef std::map<PartID, std::vector<ConstraintGraph::ObjID>>::const_iterator // NOLINT
+    typedef std::map<PartID, std::vector<DUG::DUGid>>::const_iterator // NOLINT
       const_part_iterator;
 
     const_part_iterator part_begin() const {
@@ -255,32 +258,32 @@ class DUG {
     //}}}
 
     // Node iteration {{{
-    typedef SEG<DUGid>::rep_iterator node_iterator;
-    typedef SEG<DUGid>::const_rep_iterator const_node_iterator;
-    typedef SEG<DUGid>::node_iter_type node_iter_type;
+    typedef SEG<ObjID>::node_iterator node_iterator;
+    typedef SEG<ObjID>::const_node_iterator const_node_iterator;
+    typedef SEG<ObjID>::node_iter_type node_iter_type;
 
     node_iterator nodes_begin() {
-      return DUG_.rep_begin();
+      return std::begin(DUG_);
     }
 
     node_iterator nodes_end() {
-      return DUG_.rep_end();
+      return std::end(DUG_);
     }
 
     const_node_iterator nodes_begin() const {
-      return DUG_.rep_begin();
+      return std::begin(DUG_);
     }
 
     const_node_iterator nodes_end() const {
-      return DUG_.rep_end();
+      return std::end(DUG_);
     }
 
     const_node_iterator nodes_cbegin() const {
-      return DUG_.rep_cbegin();
+      return std::begin(DUG_);
     }
 
     const_node_iterator nodes_cend() const {
-      return DUG_.rep_cend();
+      return std::end(DUG_);
     }
 
     //}}}
@@ -293,9 +296,9 @@ class DUG {
     class AllocNode : public DUGNode {
       //{{{
      public:
-        AllocNode(int32_t nodenum, ObjectMap::ObjID dest,
+        AllocNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest,
             ObjectMap::ObjID src) :
-          DUGNode(NodeKind::AllocNode, nodenum, dest, src) { }
+          DUGNode(NodeKind::AllocNode, node_id, dest, src) { }
 
         // NOTE: Process implemented in "Solve.cpp"
         void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
@@ -309,8 +312,8 @@ class DUG {
     class CopyNode : public DUGNode {
       //{{{
      public:
-        CopyNode(int32_t nodenum, ObjectMap::ObjID dest, ObjectMap::ObjID src)
-          : DUGNode(NodeKind::CopyNode, nodenum, dest, src) { }
+        CopyNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest, ObjectMap::ObjID src)
+          : DUGNode(NodeKind::CopyNode, node_id, dest, src) { }
 
         // NOTE: Process implemented in "Solve.cpp"
         void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
@@ -324,8 +327,8 @@ class DUG {
     class PartNode : public DUGNode {
       //{{{
      public:
-      PartNode(NodeKind kind, int32_t nodenum, ObjectMap::ObjID src,
-          ObjectMap::ObjID dest) : DUGNode(kind, nodenum, dest, src) {
+      PartNode(NodeKind kind, SEG<ObjID>::NodeID node_id, ObjectMap::ObjID src,
+          ObjectMap::ObjID dest) : DUGNode(kind, node_id, dest, src) {
         assert(kind > NodeKind::PartNode && kind < NodeKind::PartNodeEnd);
       }
 
@@ -341,7 +344,7 @@ class DUG {
         return part_succs_.size() == 0;
       }
 
-      virtual void setupPartGraph(const std::vector<DUG::ObjID> &vars) {
+      virtual void setupPartGraph(const std::vector<DUG::DUGid> &vars) {
         in_ = PtstoGraph(vars);
       }
 
@@ -361,8 +364,8 @@ class DUG {
     class LoadNode : public PartNode {
       //{{{
      public:
-        LoadNode(int32_t nodenum, ObjectMap::ObjID dest, ObjectMap::ObjID src)
-          : PartNode(NodeKind::LoadNode, nodenum, dest, src) { }
+        LoadNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest, ObjectMap::ObjID src)
+          : PartNode(NodeKind::LoadNode, node_id, dest, src) { }
 
         // NOTE: Process implemented in "Solve.cpp"
         void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
@@ -376,8 +379,8 @@ class DUG {
     class StoreNode : public PartNode {
       //{{{
      public:
-        StoreNode(int32_t nodenum, ObjectMap::ObjID dest, ObjectMap::ObjID src)
-          : PartNode(NodeKind::StoreNode, nodenum, dest, src) { }
+        StoreNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest, ObjectMap::ObjID src)
+          : PartNode(NodeKind::StoreNode, node_id, dest, src) { }
 
         // NOTE: Process implemented in "Solve.cpp"
         void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
@@ -386,7 +389,7 @@ class DUG {
           return node->getKind() == NodeKind::StoreNode;
         }
 
-        void setupPartGraph(const std::vector<DUG::ObjID> &vars)
+        void setupPartGraph(const std::vector<DUG::DUGid> &vars)
             override {
           PartNode::setupPartGraph(vars);
           out_ = PtstoGraph(vars);
@@ -406,8 +409,8 @@ class DUG {
     class PhiNode : public PartNode {
       //{{{
      public:
-        PhiNode(int32_t nodenum, ObjectMap::ObjID dest, ObjectMap::ObjID src)
-          : PartNode(NodeKind::PhiNode, nodenum, dest, src) { }
+        PhiNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest, ObjectMap::ObjID src)
+          : PartNode(NodeKind::PhiNode, node_id, dest, src) { }
 
         // NOTE: Process implemented in "Solve.cpp"
         void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
@@ -423,9 +426,9 @@ class DUG {
     // Private variables {{{
     // The Partition equivalence for each object in the graph
     // std::map<ObjectMap::ObjID, PartID> partitionMap_;
-    std::map<PartID, std::vector<ObjectMap::ObjID>> partitionMap_;
+    std::map<PartID, std::vector<DUG::DUGid>> partitionMap_;
 
-    SEG<DUGid> DUG_;
+    SEG<ObjID> DUG_;
     //}}}
   //}}}
 };
