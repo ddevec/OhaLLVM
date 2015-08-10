@@ -52,6 +52,28 @@ class Constraint : public SEGEdge<id_type> {
       return offs_;
     }
 
+    bool operator==(const SEGEdge<id_type> &rhs) const override {
+      auto &cons_rhs = llvm::cast<Constraint<id_type>>(rhs);
+      if (offs() != cons_rhs.offs() || type() != cons_rhs.type()) {
+        return false;
+      }
+
+      return SEGEdge<id_type>::operator==(rhs);
+    }
+
+    bool operator<(const SEGEdge<id_type> &rhs) const override {
+      auto &cons_rhs = llvm::cast<Constraint<id_type>>(rhs);
+      if (offs() != cons_rhs.offs()) {
+        return offs() < cons_rhs.offs();
+      }
+      
+      if (type() != cons_rhs.type()) {
+        return type() < cons_rhs.type();
+      }
+
+      return SEGEdge<id_type>::operator<(rhs);
+    }
+
     // For LLVM RTTI {{{
     static bool classof(const SEGEdge<id_type> *id) {
       return id->getKind() == EdgeKind::Constraint;

@@ -290,12 +290,16 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa) {
       (std::pair<const DUG::DUGid, std::vector<DUG::PartID>> &pr) {
     auto &part_node = llvm::cast<DUG::PartNode>(graph.getNode(pr.first));
     auto &parts = pr.second;
-    std::vector<DUG::DUGid> vars;
+    std::vector<ObjectMap::ObjID> vars;
 
     std::for_each(std::begin(parts), std::end(parts),
         [&graph, &vars] (DUG::PartID part_id) {
       auto &objs = graph.getObjs(part_id);
-      vars.insert(vars.end(), std::begin(objs), std::end(objs));
+      std::for_each(std::begin(objs), std::end(objs),
+          [&graph, &vars] (DUG::DUGid dug_id) {
+        // The var array is of ObjID, (or extIds)
+        vars.emplace_back(graph.getNode(dug_id).extId());
+      });
     });
 
     part_node.setupPartGraph(vars);

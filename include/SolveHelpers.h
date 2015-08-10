@@ -158,13 +158,13 @@ class PtstoSet {
 class PtstoGraph {
   //{{{
  public:
-    typedef typename SEG<ObjectMap::ObjID>::NodeID NodeID;
+    typedef ObjectMap::ObjID ObjID;
 
     PtstoGraph() = default;
 
-    explicit PtstoGraph(const std::vector<NodeID> &objs) {
+    explicit PtstoGraph(const std::vector<ObjID> &objs) {
       std::for_each(std::begin(objs), std::end(objs),
-          [this] (const NodeID &id) {
+          [this] (const ObjID &id) {
         data_.emplace(std::piecewise_construct, std::make_tuple(id),
           std::make_tuple());
       });
@@ -179,7 +179,7 @@ class PtstoGraph {
     PtstoGraph &operator=(const PtstoGraph &) = delete;
     //}}}
 
-    PtstoSet &at(NodeID id) {
+    PtstoSet &at(ObjID id) {
       return data_.at(id);
     }
 
@@ -187,19 +187,19 @@ class PtstoGraph {
       // Oh goody...
       bool ret = false;
       std::for_each(std::begin(rhs.data_), std::end(rhs.data_),
-          [this, &ret] (const std::pair<const NodeID, PtstoSet> &pr) {
+          [this, &ret] (const std::pair<const ObjID, PtstoSet> &pr) {
         ret |= (data_.at(pr.first) |= pr.second);
       });
 
       return ret;
     }
 
-    void clear(NodeID id) {
+    void clear(ObjID id) {
       data_.at(id).clear();
     }
 
-    typedef std::map<NodeID, PtstoSet>::iterator iterator;
-    typedef std::map<NodeID, PtstoSet>::const_iterator const_iterator;
+    typedef std::map<ObjID, PtstoSet>::iterator iterator;
+    typedef std::map<ObjID, PtstoSet>::const_iterator const_iterator;
 
     iterator begin() {
       return std::begin(data_);
@@ -226,7 +226,7 @@ class PtstoGraph {
     }
 
  private:
-    std::map<NodeID, PtstoSet> data_;
+    std::map<ObjID, PtstoSet> data_;
   //}}}
 };
 

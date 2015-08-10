@@ -30,8 +30,8 @@ class DUGNode : public SEGNode<ObjectMap::ObjID> {
   //{{{
  public:
     // Constructors {{{
-     DUGNode(NodeKind kind, SEG<ObjectMap::ObjID>::NodeID id, ObjectMap::ObjID dest,
-        ObjectMap::ObjID src) :
+     DUGNode(NodeKind kind, SEG<ObjectMap::ObjID>::NodeID id,
+         ObjectMap::ObjID dest, ObjectMap::ObjID src) :
       SEGNode<ObjectMap::ObjID>(kind, id, dest),
       dest_(dest), src_(src) { }
     //}}}
@@ -106,6 +106,7 @@ class DUG {
 
     typedef ObjectMap::ObjID ObjID;
     typedef SEG<ObjID>::NodeID DUGid;
+    typedef SEG<ObjID>::EdgeID EdgeID;
     //}}}
 
     // Internal Classes {{{
@@ -151,8 +152,8 @@ class DUG {
           [this, &seg](const SEG<ObjID>::edge_iter_type &pedge) {
         auto &edge = llvm::cast<Constraint<ObjID>>(*pedge);
         // Insert the node into the seg
-        auto dest = getNode(edge.dest()).extId();
-        auto src = getNode(edge.src()).extId();
+        auto dest = seg.getNode(edge.dest()).extId();
+        auto src = seg.getNode(edge.src()).extId();
         switch (edge.type()) {
           case ConstraintType::AddressOf:
             // Add AllocNode
@@ -176,7 +177,19 @@ class DUG {
       std::for_each(seg.edges_begin(), seg.edges_end(),
           [this, &seg](const SEG<ObjID>::edge_iter_type &pedge) {
         auto &edge = llvm::cast<Constraint<ObjID>>(*pedge);
-        DUG_.addEdge<DUGEdge>(edge.dest(), edge.src());
+
+        // Convert from seg id to DUG_ id via extId()
+        auto pdug_src = DUG_.getNodeOrNull(seg.getNode(edge.src()).extId());
+
+        // NOTE: Its possible there is no src node (think of addrof operators),
+        //   in this instance, we don't make a DUG edge, the info is encoded in
+        //   the node
+        if (pdug_src != nullptr) {
+          auto &dug_src = *pdug_src;
+          auto &dug_dest = DUG_.getNode(seg.getNode(edge.dest()).extId());
+
+          DUG_.addEdge<DUGEdge>(dug_src.id(), dug_dest.id());
+        }
       });
     }
     //}}}
@@ -203,6 +216,10 @@ class DUG {
     //}}}
 
     // Accessors {{{
+    DUGEdge &getEdge(EdgeID id) {
+      return DUG_.getEdge<DUGEdge>(id);
+    }
+
     DUGNode &getNode(DUGid id) {
       return DUG_.getNode<DUGNode>(id);
     }
@@ -312,7 +329,8 @@ class DUG {
     class CopyNode : public DUGNode {
       //{{{
      public:
-        CopyNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest, ObjectMap::ObjID src)
+        CopyNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest,
+            ObjectMap::ObjID src)
           : DUGNode(NodeKind::CopyNode, node_id, dest, src) { }
 
         // NOTE: Process implemented in "Solve.cpp"
@@ -344,7 +362,7 @@ class DUG {
         return part_succs_.size() == 0;
       }
 
-      virtual void setupPartGraph(const std::vector<DUG::DUGid> &vars) {
+      virtual void setupPartGraph(const std::vector<ObjectMap::ObjID> &vars) {
         in_ = PtstoGraph(vars);
       }
 
@@ -364,7 +382,8 @@ class DUG {
     class LoadNode : public PartNode {
       //{{{
      public:
-        LoadNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest, ObjectMap::ObjID src)
+        LoadNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest,
+            ObjectMap::ObjID src)
           : PartNode(NodeKind::LoadNode, node_id, dest, src) { }
 
         // NOTE: Process implemented in "Solve.cpp"
@@ -379,7 +398,8 @@ class DUG {
     class StoreNode : public PartNode {
       //{{{
      public:
-        StoreNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest, ObjectMap::ObjID src)
+        StoreNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest,
+            ObjectMap::ObjID src)
           : PartNode(NodeKind::StoreNode, node_id, dest, src) { }
 
         // NOTE: Process implemented in "Solve.cpp"
@@ -389,7 +409,7 @@ class DUG {
           return node->getKind() == NodeKind::StoreNode;
         }
 
-        void setupPartGraph(const std::vector<DUG::DUGid> &vars)
+        void setupPartGraph(const std::vector<ObjectMap::ObjID> &vars)
             override {
           PartNode::setupPartGraph(vars);
           out_ = PtstoGraph(vars);
@@ -409,7 +429,8 @@ class DUG {
     class PhiNode : public PartNode {
       //{{{
      public:
-        PhiNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest, ObjectMap::ObjID src)
+        PhiNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest,
+            ObjectMap::ObjID src)
           : PartNode(NodeKind::PhiNode, node_id, dest, src) { }
 
         // NOTE: Process implemented in "Solve.cpp"

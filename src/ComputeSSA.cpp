@@ -52,10 +52,10 @@ void T2(CFG::ControlFlowGraph &G, CFG::ControlFlowGraph &Xp) {
     if (w_node.preds().size() == 1) {
       auto &pred_edge = G.getEdge(*std::begin(w_node.preds()));
       auto &pred_node = G.getNode<CFG::Node>(pred_edge.src());
-      /*
-      llvm::dbgs() << "Uniting with pred: " <<
-          *std::begin(w_node.preds()) << "\n";
-      */
+
+      llvm::dbgs() << "Uniting node: " << w_node.id() << " with pred: "
+          << pred_node.id() << "\n";
+
       w_node.unite(G, pred_node);
     }
   });
@@ -117,7 +117,8 @@ void T6(CFG::ControlFlowGraph &G) {
   // Figure out which nodes are unused
   std::vector<CFG::NodeID> remove_list;
   std::for_each(std::begin(G), std::end(G),
-      [&G, &visited, &remove_list](CFG::ControlFlowGraph::node_iter_type &pnode) {
+      [&G, &visited, &remove_list]
+      (CFG::ControlFlowGraph::node_iter_type &pnode) {
     CFG::NodeID id = pnode->id();
     if (visited.find(id) == std::end(visited)) {
       remove_list.push_back(id);

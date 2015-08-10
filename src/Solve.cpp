@@ -13,7 +13,7 @@ bool SpecSFS::solve(DUG &dug) {
   Worklist work;
   // Add allocs to worklist -- The ptstoset for the alloc will be updated on
   //   solve evaluation
-  std::vector<DUG::DUGid> dests;
+  std::vector<ObjectMap::ObjID> dests;
 
   std::for_each(dug.nodes_begin(), dug.nodes_end(),
       [this, &work, &dests]
@@ -51,8 +51,9 @@ void DUG::AllocNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
   // Add all top level variables updated to worklist
   if (change) {
     std::for_each(succ_begin(), succ_end(),
-        [&dug, &work](DUG::ObjID id) {
-      work.push(&dug.getNode(id));
+        [&dug, &work](DUG::EdgeID id) {
+      auto &edge = dug.getEdge(id);
+      work.push(&dug.getNode(edge.dest()));
     });
   }
 }
@@ -63,8 +64,9 @@ void DUG::CopyNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
   // Add all updated successors to worklist
   if (change) {
     std::for_each(succ_begin(), succ_end(),
-        [&dug, &work](DUG::ObjID id) {
-      work.push(&dug.getNode(id));
+        [&dug, &work](DUG::EdgeID id) {
+      auto &edge = dug.getEdge(id);
+      work.push(&dug.getNode(edge.dest()));
     });
   }
 }
@@ -100,8 +102,8 @@ void DUG::LoadNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
     auto &part_to_obj = dug.getObjs(part_id);
 
     std::for_each(std::begin(part_to_obj), std::end(part_to_obj),
-        [this, &dug, &work] (DUG::ObjID obj_id) {
-      auto &nd = dug.getNode(obj_id);
+        [this, &dug, &work] (DUG::DUGid dug_id) {
+      auto &nd = dug.getNode(dug_id);
       bool ch = (nd.in() |= in_);
 
       if (ch) {
@@ -112,8 +114,9 @@ void DUG::LoadNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
 
   if (changed) {
     std::for_each(succ_begin(), succ_end(),
-        [&dug, &work](DUG::ObjID id) {
-      work.push(&dug.getNode(id));
+        [&dug, &work](DUG::EdgeID id) {
+      auto &edge = dug.getEdge(id);
+      work.push(&dug.getNode(edge.dest()));
     });
   }
 }
@@ -160,8 +163,8 @@ void DUG::StoreNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
       auto &part_to_obj = dug.getObjs(part_id);
 
       std::for_each(std::begin(part_to_obj), std::end(part_to_obj),
-          [this, &dug, &work] (DUG::ObjID obj_id) {
-        auto &nd = dug.getNode(obj_id);
+          [this, &dug, &work] (DUG::DUGid dug_id) {
+        auto &nd = dug.getNode(dug_id);
 
         std::for_each(std::begin(out_), std::end(out_),
             [this, &dug, &work, &nd]
@@ -184,10 +187,11 @@ void DUG::PhiNode::process(DUG &dug, PtstoGraph &, Worklist &work) {
   // if succ.IN.changed():
   //   worklist.add(succ.IN)
   std::for_each(succ_begin(), succ_end(),
-      [this, &work, &dug](DUG::ObjID id) {
+      [this, &work, &dug](DUG::EdgeID edge_id) {
     bool change = false;
+    auto dug_id = dug.getEdge(edge_id).dest();
 
-    auto &nd = dug.getNode(id);
+    auto &nd = dug.getNode(dug_id);
 
     change = (nd.in() |= in());
     if (change) {
