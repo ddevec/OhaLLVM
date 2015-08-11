@@ -215,14 +215,22 @@ class CFG {
       return CFG_.getNode<Node>(id);
     }
 
-    Node &getNode(CFGid id) {
-      // return cfgNodes_.at(id);
+    const Node &getNode(NodeID id) const {
       return CFG_.getNode<Node>(id);
     }
 
+    Node &getNode(CFGid id) {
+      auto pr = CFG_.getNodes(id);
+      assert(std::distance(pr.first, pr.second) == 1);
+
+      return getNode(pr.first->second);
+    }
+
     const Node &getNode(CFGid id) const {
-      // return cfgNodes_.at(id);
-      return CFG_.getNode<Node>(id);
+      auto pr = CFG_.getNodes(id);
+      assert(std::distance(pr.first, pr.second) == 1);
+
+      return getNode(pr.first->second);
     }
 
     const std::pair<CFGid, CFGid> &
@@ -428,6 +436,13 @@ class CFG {
     typedef ControlFlowGraph::edge_iterator cfg_iterator;
     typedef ControlFlowGraph::const_edge_iterator const_cfg_iterator;
 
+    typedef std::map<ObjectMap::ObjID, std::pair<CFGid, ConstraintType>>::iterator  // NOLINT
+      obj_to_cfg_iterator;
+    typedef std::map<ObjectMap::ObjID, std::pair<CFGid, ConstraintType>>::const_iterator  // NOLINT
+      const_obj_to_cfg_iterator;
+    typedef std::pair<ObjectMap::ObjID, std::pair<CFGid, ConstraintType>>
+      obj_to_cfg_type;
+
     cfg_iterator cfg_begin() {
       // return std::begin(cfgEdges_);
       return CFG_.edges_begin();
@@ -456,6 +471,22 @@ class CFG {
     const_cfg_iterator cfg_cend() const {
       // return cfgEdges_.cend();
       return CFG_.edges_cend();
+    }
+
+    const_obj_to_cfg_iterator obj_to_cfg_begin() const {
+      return std::begin(objToCFG_);
+    }
+
+    const_obj_to_cfg_iterator obj_to_cfg_end() const {
+      return std::end(objToCFG_);
+    }
+
+    const_obj_to_cfg_iterator obj_to_cfg_cbegin() const {
+      return std::begin(objToCFG_);
+    }
+
+    const_obj_to_cfg_iterator obj_to_cfg_cend() const {
+      return std::end(objToCFG_);
     }
     //}}}
     //}}}

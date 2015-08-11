@@ -23,6 +23,9 @@
 #include "include/SEG.h"
 #include "include/util.h"
 
+// FIXME: HAX to be removed later
+ObjectMap *g_omap;
+
 namespace {
 
 struct HUEdge;
@@ -105,9 +108,6 @@ struct HUNode : public SEGNode<ConstraintGraph::ObjID> {
   Bitmap ptsto_;
   //}}}
 };
-
-// FIXME: HAX to be removed later
-ObjectMap *g_omap;
 
 struct HUEdge : public SEGEdge<ConstraintGraph::ObjID> {
   //{{{
@@ -361,7 +361,20 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph,
       auto &src_node =
         graph.getNode(rev_remap[node.id()]);
 
+      auto src_ext_id = src_node.extId();
+      auto dest_ext_id = dest_node.extId();
+
+      llvm::dbgs() << "Merging obj_id: " << dest_ext_id << " with: " <<
+        src_ext_id << "\n";
       dest_node.unite(conGraph, src_node);
+      auto it1 = conGraph.findNode(src_ext_id);
+      auto it2 = conGraph.findNode(dest_ext_id);
+      assert(it2 != conGraph.node_map_end());
+      assert(it1 != conGraph.node_map_end());
+
+      llvm::dbgs() << "Remap gets: " << it1->second << ", " << it2->second <<
+        "\n";
+      assert(it1->second == it2->second);
     }
   }
 

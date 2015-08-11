@@ -222,6 +222,8 @@ class ConstraintGraph {
       auto src = constraintGraph_.getNode(s_it->second);
       auto dest = constraintGraph_.getNode(d_it->second);
 
+      llvm::dbgs() << "Adding edge: (" << src.id() << ", " << dest.id() <<
+        ") with type: " << static_cast<int32_t>(type) << "\n";
       return constraintGraph_.addEdge<Constraint<ObjID>>(src.id(), dest.id(),
           type, o);
     }
@@ -259,8 +261,15 @@ class ConstraintGraph {
       return constraintGraph_.getNode<ConstraintNode>(id);
     }
 
-    ConstraintNode &getNode(ObjID id) {
+    const ConstraintNode &getNode(NodeID id) const {
       return constraintGraph_.getNode<ConstraintNode>(id);
+    }
+
+    ConstraintNode &getNode(ObjID id) {
+      auto pr = constraintGraph_.getNodes(id);
+      assert(std::distance(pr.first, pr.second) == 1);
+
+      return getNode(pr.first->second);
     }
     //}}}
 

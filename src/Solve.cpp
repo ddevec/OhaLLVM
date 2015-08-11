@@ -102,8 +102,8 @@ void DUG::LoadNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
     auto &part_to_obj = dug.getObjs(part_id);
 
     std::for_each(std::begin(part_to_obj), std::end(part_to_obj),
-        [this, &dug, &work] (DUG::DUGid dug_id) {
-      auto &nd = dug.getNode(dug_id);
+        [this, &dug, &work] (std::pair<DUG::DUGid, ObjectMap::ObjID> &pr) {
+      auto &nd = dug.getNode(pr.first);
       bool ch = (nd.in() |= in_);
 
       if (ch) {
@@ -163,8 +163,8 @@ void DUG::StoreNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
       auto &part_to_obj = dug.getObjs(part_id);
 
       std::for_each(std::begin(part_to_obj), std::end(part_to_obj),
-          [this, &dug, &work] (DUG::DUGid dug_id) {
-        auto &nd = dug.getNode(dug_id);
+          [this, &dug, &work] (std::pair<DUG::DUGid, ObjectMap::ObjID> &pr) {
+        auto &nd = dug.getNode(pr.first);
 
         std::for_each(std::begin(out_), std::end(out_),
             [this, &dug, &work, &nd]
@@ -186,17 +186,23 @@ void DUG::PhiNode::process(DUG &dug, PtstoGraph &, Worklist &work) {
   //   succ.IN |= IN
   // if succ.IN.changed():
   //   worklist.add(succ.IN)
-  std::for_each(succ_begin(), succ_end(),
-      [this, &work, &dug](DUG::EdgeID edge_id) {
-    bool change = false;
-    auto dug_id = dug.getEdge(edge_id).dest();
+  std::for_each(std::begin(part_succs_), std::end(part_succs_),
+      [this, &work, &dug](DUG::PartID part_id) {
+    auto &part_to_obj = dug.getObjs(part_id);
 
-    auto &nd = dug.getNode(dug_id);
+    std::for_each(std::begin(part_to_obj), std::end(part_to_obj),
+        [this, &work, &dug] (std::pair<DUG::DUGid, ObjectMap::ObjID> &pr) {
+      bool change = false;
+      // auto dug_id = dug.getEdge(edge_id).dest();
+      auto dug_id = pr.first;
 
-    change = (nd.in() |= in());
-    if (change) {
-      work.push(&nd);
-    }
+      auto &nd = dug.getNode(dug_id);
+
+      change = (nd.in() |= in());
+      if (change) {
+        work.push(&nd);
+      }
+    });
   });
 }
 

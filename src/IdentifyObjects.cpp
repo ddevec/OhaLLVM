@@ -788,6 +788,7 @@ static void idStoreInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
   // put int value into the int pool
   } else if (llvm::isa<llvm::IntegerType>(st.getOperand(0)->getType()) &&
       llvm::isa<llvm::PointerType>(st.getOperand(1)->getType())) {
+    llvm::dbgs() << "IDing store: " << &inst << ": " << inst << "\n";
     cg.add(ConstraintType::Store,
         omap.getValue(st.getOperand(1)),
         ObjectMap::IntValue);
@@ -1192,8 +1193,10 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
             [&cg, &cfg, &omap, &con_ids](const llvm::Argument &arg) {
           auto arg_id = omap.getValue(&arg);
           auto id = omap.makeTempValue();
-          con_ids.emplace_back(
-            cg.add(ConstraintType::AddressOf, arg_id, id));
+
+          auto con_id = cg.add(ConstraintType::AddressOf, arg_id, id);
+          assert(con_id != ConstraintGraph::ConsID::invalid());
+          con_ids.emplace_back(con_id);
         });
         cfg.addUnusedFunction(omap.getFunction(&fcn), std::move(con_ids));
       }

@@ -67,6 +67,10 @@ class ObjectMap {
     //}}}
 
     // Value insertion {{{
+    // Used to create phony identifers for nodes that don't have values
+    ObjID createPhonyID() {
+      return phonyIdGen_.next();
+    }
     // Top level variable/node
     void addValueFunction(const llvm::Value *val) {
       auto id = __do_add(val, valToID_, idToVal_);
@@ -257,6 +261,8 @@ class ObjectMap {
     idToValMap idToObj_;
     idToValMap idToRet_;
     idToValMap idToVararg_;
+
+    IDGenerator<ObjID, 1<<30> phonyIdGen_;
     ///}}}
 
     // Internal helpers {{{

@@ -128,7 +128,7 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   // Compute partitions, based on address equivalence
   DUG graph;
 
-  graph.fillTopLevel(cg);
+  graph.fillTopLevel(cg, omap);
 
   if (computePartitions(graph, cfg, aux, omap)) {
     error("ComputePartitions failure!");
