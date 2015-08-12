@@ -158,8 +158,38 @@ class DUG {
         // Insert the node into the seg
         auto dest = seg.getNode(edge.dest()).extId();
         auto src = seg.getNode(edge.src()).extId();
-        llvm::dbgs() << "Adding node to DUG for obj_id: " << dest << "\n";
-        llvm::dbgs() << "  node src_obj_id: " << src << "\n";
+
+        extern ObjectMap &g_omap;
+        const llvm::Value *dest_val = g_omap.valueAtID(dest);
+        const llvm::Value *src_val = g_omap.valueAtID(src);
+
+        llvm::dbgs() << "Adding node to DUG for obj_id: " << dest << ": ";
+        if (dest_val != nullptr) {
+          if (auto gv = llvm::dyn_cast<const llvm::GlobalValue>(dest_val)) {
+            llvm::dbgs() << gv->getName() << "\n";
+          } else if (auto fcn =
+              llvm::dyn_cast<const llvm::Function>(dest_val)) {
+            llvm::dbgs() << fcn->getName() << "\n";
+          } else {
+            llvm::dbgs() << *dest_val << "\n";
+          }
+        } else {
+          llvm::dbgs() << "dest null???\n";
+        }
+
+        llvm::dbgs() << "  node src_obj_id: " << src << ": ";
+        if (src_val != nullptr) {
+          if (auto gv = llvm::dyn_cast<const llvm::GlobalValue>(src_val)) {
+            llvm::dbgs() << gv->getName() << "\n";
+          } else if (auto fcn = llvm::dyn_cast<const llvm::Function>(src_val)) {
+            llvm::dbgs() << fcn->getName() << "\n";
+          } else {
+            llvm::dbgs() << *src_val << "\n";
+          }
+        } else {
+          llvm::dbgs() << "dest null???\n";
+        }
+
         switch (edge.type()) {
           case ConstraintType::AddressOf:
             {
@@ -173,11 +203,15 @@ class DUG {
           case ConstraintType::Store:
             // NOTE: we don't actually have a dest for stores, so we don't add
             //   any mappings associated with them
+            // WRONG: We want the stores to be associated with the node that the
+            //   CFG would have given them (typically shared with an addressof
+            //     operator)
             // Make a phony dest for this store:
             {
               llvm::dbgs() << "  node is Store\n";
               auto ret =
-                DUG_.addNode<StoreNode>(omap.createPhonyID(), dest, src);
+                // DUG_.addNode<StoreNode>(omap.createPhonyID(), dest, src);
+                DUG_.addNode<StoreNode>(dest, dest, src);
               llvm::dbgs() << "  DUGid is " << ret->second << "\n";
             }
             break;
@@ -409,7 +443,18 @@ class DUG {
     const_node_iterator nodes_cend() const {
       return std::end(DUG_);
     }
+    //}}}
 
+    // Node Map iteration {{{
+    typedef SEG<ObjID>::const_node_map_iterator const_node_map_iterator;
+
+    const_node_map_iterator node_map_cbegin() const {
+      return DUG_.node_map_begin();
+    }
+
+    const_node_map_iterator node_map_cend() const {
+      return DUG_.node_map_end();
+    }
     //}}}
     //}}}
 

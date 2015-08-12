@@ -1724,7 +1724,17 @@ class SEG {
       // llvm::dbgs() << "Adding node: " << node_id << "\n";
       nodes_.emplace_back(new node_type(node_id, id, args...));
 
+      llvm::dbgs() << "Adding node_map_ entry for: (" << id << ", " << node_id
+        << ")\n";
       auto ret = node_map_.emplace(id, node_id);
+
+      llvm::dbgs() << "Entries for: " << id << " are now:";
+      auto pr = node_map_.equal_range(id);
+      std::for_each(pr.first, pr.second,
+          [] (std::pair<const id_type, NodeID> &id_pr) {
+        llvm::dbgs() << " " << id_pr.second;
+      });
+      llvm::dbgs() << "\n";
 
       return ret;
     }
@@ -1785,12 +1795,15 @@ class SEG {
       auto node_range = node_map_.equal_range(ext_id);
       if (std::distance(node_range.first, node_range.second) == 0) {
         node_map_.emplace(ext_id, mapped_node);
-      } else {
+      }
+      /* else {
+        
         std::for_each(node_range.first, node_range.second,
             [this, &mapped_node] (std::pair<const id_type, NodeID> &pr) {
           pr.second = mapped_node;
         });
       }
+      */
     }
 
     // For use by unification operations only...

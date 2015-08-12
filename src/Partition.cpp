@@ -76,20 +76,39 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, const Andersens &aux,
 
   std::map<Bitmap, std::vector<std::pair<DUG::DUGid, ObjectMap::ObjID>>, BitmapLT>  // NOLINT
     part_finder;
+
+  /*
+  llvm::dbgs() << "Dumping node_map for reference:\n";
+  std::for_each(dug.node_map_cbegin(), dug.node_map_cend(),
+      [](const std::pair<const ObjectMap::ObjID, DUG::DUGid> &pr) {
+    llvm::dbgs() << "  " << pr.first << " -> " << pr.second << "\n";
+  });
+  */
+
   // Now create partitions
   llvm::dbgs() << "Doing part creation loop!\n";
   std::for_each(std::begin(AE), std::end(AE),
       [&part_finder, &dug](std::pair<const ObjectMap::ObjID, Bitmap> &pr) {
     llvm::dbgs() << "  For obj_id: " << pr.first << "\n";
     auto node_set = dug.getNodes(pr.first);
+
+    bool found_node = false;
     std::for_each(node_set.first, node_set.second,
-        [&dug, &part_finder, &pr]
-        (std::pair<const ObjectMap::ObjID, SEG<ObjectMap::ObjID>::NodeID>
+        [&dug, &part_finder, &pr, &found_node]
+        (std::pair<const ObjectMap::ObjID, DUG::DUGid>
          &node_pair) {
-      llvm::dbgs() << "    got dug_id: " << node_pair.second << "\n";
       DUG::DUGid dug_id = node_pair.second;
-      part_finder[pr.second].push_back(std::make_pair(dug_id, pr.first));
+      auto &nd = dug.getNode(dug_id);
+      llvm::dbgs() << "    got dug_id: " << node_pair.second << "\n";
+      // Since we may have multiple mappings from an external id, we filter out
+      //   any non-load/store nodes
+      if (llvm::isa<DUG::StoreNode>(nd) || llvm::isa<DUG::LoadNode>(nd)) {
+        found_node = true;
+        llvm::dbgs() << "Is load or store node\n";
+        part_finder[pr.second].push_back(std::make_pair(dug_id, pr.first));
+      }
     });
+    assert(found_node);
   });
 
   // Assign ID's to the partitons:
@@ -226,6 +245,39 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa) {
         // Denote this CFGid references this DUG entry
         llvm::dbgs() << "Adding dug_node: " << dug_id <<
           " as part_def for cfg_id: " << cfg_id << "\n";
+
+        auto &dug_node = graph.getNode(dug_id);
+        auto dest_val = g_omap.valueAtID(dug_node.dest());
+        auto src_val = g_omap.valueAtID(dug_node.src());
+        llvm::dbgs() << "Adding node to DUG for obj_id: " <<
+          dug_node.dest() << ": ";
+        if (dest_val != nullptr) {
+          if (auto gv = llvm::dyn_cast<const llvm::GlobalValue>(dest_val)) {
+            llvm::dbgs() << gv->getName() << "\n";
+          } else if (auto fcn =
+              llvm::dyn_cast<const llvm::Function>(dest_val)) {
+            llvm::dbgs() << fcn->getName() << "\n";
+          } else {
+            llvm::dbgs() << *dest_val << "\n";
+          }
+        } else {
+          llvm::dbgs() << "dest null???\n";
+        }
+
+        llvm::dbgs() << "  node src_obj_id: " << dug_node.src() << ": ";
+        if (src_val != nullptr) {
+          if (auto gv = llvm::dyn_cast<const llvm::GlobalValue>(src_val)) {
+            llvm::dbgs() << gv->getName() << "\n";
+          } else if (auto fcn = llvm::dyn_cast<const llvm::Function>(src_val)) {
+            llvm::dbgs() << fcn->getName() << "\n";
+          } else {
+            llvm::dbgs() << *src_val << "\n";
+          }
+        } else {
+          llvm::dbgs() << "src null???\n";
+        }
+
+
         assert(part_defs.find(cfg_id) == std::end(part_defs));
         part_defs[cfg_id] = dug_id;
 
