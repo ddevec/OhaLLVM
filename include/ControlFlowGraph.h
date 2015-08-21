@@ -265,14 +265,19 @@ class CFG {
 
     // Def/use/global tracking {{{
     // Setters {{{
-    void addUse(CFGid cfg_id, ObjectMap::ObjID cons_dest_id) {
-      uses_[cfg_id].push_back(cons_dest_id);
-      objToCFG_[cons_dest_id] = std::make_pair(cfg_id, ConstraintType::Load);
+    void addUse(CFGid cfg_id, ObjectMap::ObjID load_dest_id) {
+      uses_[cfg_id].push_back(load_dest_id);
+      auto ret = objToCFG_.emplace(load_dest_id, std::make_pair(cfg_id,
+            ConstraintType::Load));
+      assert(ret.second);
     }
 
-    void addDef(CFGid cfg_id, ObjectMap::ObjID cons_dest_id) {
-      defs_[cfg_id].push_back(cons_dest_id);
-      objToCFG_[cons_dest_id] = std::make_pair(cfg_id, ConstraintType::Store);
+    void addDef(CFGid cfg_id, ObjectMap::ObjID store_id) {
+      defs_[cfg_id].push_back(store_id);
+      assert(defs_.at(cfg_id).size() == 1);
+      auto ret = objToCFG_.emplace(store_id, std::make_pair(cfg_id,
+            ConstraintType::Store));
+      assert(ret.second);
     }
 
     void addGlobalInit(ObjectMap::ObjID glbl_id) {

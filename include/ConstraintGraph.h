@@ -8,6 +8,7 @@
 #include "include/ObjectMap.h"
 
 #include "include/SEG.h"
+#include "include/Debug.h"
 
 #include <utility>
 
@@ -26,13 +27,10 @@ class Constraint : public SEGEdge<id_type> {
       SEGEdge<id_type>(EdgeKind::Constraint, s, d),
       type_(t), offs_(o) { }
 
-    // For conversion from another constraint type
-    template <typename old_id_type, typename id_converter>
-    Constraint(id_type src, id_type dest, const SEGEdge<old_id_type> &old_con,
-            SEG<id_type> &, id_converter) :
-        SEGEdge<id_type>(EdgeKind::Constraint, src, dest),
-        type_(llvm::cast<Constraint<old_id_type>>(old_con).type()),
-        offs_(llvm::cast<Constraint<old_id_type>>(old_con).offs()) { }
+    Constraint(EdgeKind kind, NodeID s, NodeID d,
+        ConstraintType t) :
+      SEGEdge<id_type>(kind, s, d),
+      type_(t), offs_(0) { }
 
     // No copys, yes moves {{{
     Constraint(const Constraint &) = default;
@@ -76,7 +74,8 @@ class Constraint : public SEGEdge<id_type> {
 
     // For LLVM RTTI {{{
     static bool classof(const SEGEdge<id_type> *id) {
-      return id->getKind() == EdgeKind::Constraint;
+      return id->getKind() >= EdgeKind::Constraint &&
+        id->getKind() < EdgeKind::ConstraintEnd;
     }
     //}}}
     //}}}
@@ -135,6 +134,38 @@ class Constraint : public SEGEdge<id_type> {
 
     int32_t offs_ = 0;
     //}}}
+  //}}}
+};
+
+template<typename id_type>
+class StoreConstraint : public Constraint<id_type> {
+  //{{{
+ public:
+    typedef typename SEG<id_type>::NodeID NodeID;
+
+    StoreConstraint(NodeID src, NodeID dest, id_type nd) :
+      Constraint<id_type>(EdgeKind::StoreConstraint, src, dest,
+          ConstraintType::Store), nodeId_(nd) { }
+
+    // No copys, yes moves {{{
+    StoreConstraint(const StoreConstraint &) = default;
+    StoreConstraint &operator=(const StoreConstraint&) = default;
+
+    StoreConstraint(StoreConstraint &&) = default;
+    StoreConstraint &operator=(StoreConstraint&&) = default;
+    //}}}
+    
+    id_type storeId() const {
+      return nodeId_;
+    }
+
+    // For LLVM RTTI {{{
+    static bool classof(const SEGEdge<id_type> *id) {
+      return id->getKind() >= EdgeKind::StoreConstraint;
+    }
+    //}}}
+ private:
+    id_type nodeId_;
   //}}}
 };
 
@@ -198,6 +229,7 @@ class ConstraintGraph {
           ofil << "\n";
         });
       }
+
       //}}}
     };
     //}}}
@@ -224,8 +256,34 @@ class ConstraintGraph {
 
       llvm::dbgs() << "Adding edge: (" << src.id() << ", " << dest.id() <<
         ") with type: " << static_cast<int32_t>(type) << "\n";
-      return constraintGraph_.addEdge<Constraint<ObjID>>(src.id(), dest.id(),
+      auto ret = constraintGraph_.addEdge<Constraint<ObjID>>(src.id(), dest.id(),
           type, o);
+      assert(ret != SEG<ObjID>::EdgeID::invalid());
+      return ret;
+    }
+
+    ConsID add(ConstraintType type, ObjID nd, ObjID s, ObjID d) {
+      assert(type == ConstraintType::Store);
+      auto s_it = constraintGraph_.findNode(s);
+      if (s_it == constraintGraph_.node_map_cend()) {
+        s_it = constraintGraph_.addNode<ConstraintNode>(s);
+      }
+
+      auto d_it = constraintGraph_.findNode(d);
+      if (d_it == constraintGraph_.node_map_cend()) {
+        d_it = constraintGraph_.addNode<ConstraintNode>(d);
+      }
+
+      auto src = constraintGraph_.getNode(s_it->second);
+      auto dest = constraintGraph_.getNode(d_it->second);
+
+      llvm::dbgs() << "Adding store-edge: (" << src.id() << ", " << dest.id() <<
+        ", " << nd << ") with type: " << static_cast<int32_t>(type) << "\n";
+      auto ret = constraintGraph_.addEdge<StoreConstraint<ObjID>>(src.id(),
+          dest.id(), nd);
+      llvm::dbgs() << "Added edge: " << ret << "\n";
+      assert(ret != SEG<ObjID>::EdgeID::invalid());
+      return ret;
     }
 
     ObjID addNode(ObjectMap &omap) {

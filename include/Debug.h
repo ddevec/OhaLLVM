@@ -4,9 +4,30 @@
 #ifndef INCLUDE_DEBUG_H_
 #define INCLUDE_DEBUG_H_
 
+#include <execinfo.h>
+
 #include <cstdint>
 
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/Debug.h"
+
+__attribute__((unused))
+static void print_trace(void) {
+  void *array[10];
+  size_t size;
+  char **strings;
+  size_t i;
+
+  size = backtrace(array, 10);
+  strings = backtrace_symbols(array, size);
+
+  llvm::dbgs() << "BACKTRACE:\n";
+  for (i = 0; i < size; i++) {
+    llvm::dbgs() << "\t" << strings[i] << "\n";
+  }
+
+  free(strings);
+}
 
 class null_ostream : public llvm::raw_ostream {
   //{{{

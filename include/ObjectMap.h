@@ -72,9 +72,10 @@ class ObjectMap {
       return phonyIdGen_.next();
     }
     // Top level variable/node
-    void addValueFunction(const llvm::Value *val) {
+    ObjID addValueFunction(const llvm::Value *val) {
       auto id = __do_add(val, valToID_, idToVal_);
       functions_.push_back(std::make_pair(id, val));
+      return id;
     }
 
     void addValue(const llvm::Value *val) {
@@ -99,6 +100,9 @@ class ObjectMap {
 
     // Value Retrieval {{{
     const llvm::Value *valueAtID(ObjID id) const {
+      if (isPhony(id)) {
+        return nullptr;
+      }
       return mapping_.at(id.val());
     }
 
@@ -266,6 +270,9 @@ class ObjectMap {
     ///}}}
 
     // Internal helpers {{{
+    bool isPhony(ObjID id) const {
+      return id.val() >= (1<<30);
+    }
     ObjID getNextID() const {
       return ObjID(mapping_.size());
     }

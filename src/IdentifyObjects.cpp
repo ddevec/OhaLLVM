@@ -152,24 +152,26 @@ void addCFGLoad(CFG &graph, CFG::CFGid load_id, ConstraintGraph::ObjID dest) {
 void addCFGStore(CFG &graph, CFG::CFGid *store_id,
     ConstraintGraph::ObjID dest) {
   // Well, stuff here
+  llvm::dbgs() << "addStore called with store_id: " << *store_id << "\n";
+  auto node = &graph.getNode(*store_id);
 
-  auto &node = graph.getNode(*store_id);
-
-  // If this is a p-node, then there are no stores in it, and we can share it
-  // with laods
-  if (node.p()) {
-    node.setM();
   // If this is a m-node (np-node), then it has a store, and we need to make a
   // new node
-  } else {
+  if (node->m()) {
     CFG::CFGid next_id = graph.nextNode();
 
     graph.addEdge(*store_id, next_id);
 
     // Advance the id
     *store_id = next_id;
-  }
 
+    llvm::dbgs() << "Have np-node, added new id: " << *store_id << "\n";
+    node = &graph.getNode(*store_id);
+  }
+  llvm::dbgs() << "Setting M for store_id: " << *store_id << "\n";
+  node->setM();
+
+  llvm::dbgs() << "Adding def for: " << *store_id << "\n";
   graph.addDef(*store_id, dest);
 }
 
@@ -302,6 +304,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
       auto TempArg = cg.addNode(omap);
 
       // Setup constraints
+      llvm::dbgs() << "FIXME: Handle memcpy load/store properly!\n";
       cg.add(ConstraintType::Store, FirstArg, TempArg);
       cg.add(ConstraintType::Load, TempArg, SecondArg);
       cg.add(ConstraintType::Copy, FirstArg, SecondArg);
@@ -364,7 +367,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
             && "va_start in non-vararg function!");
         llvm::Value *Arg = II->getArgOperand(0);
         auto TempArg = cg.addNode(omap);
-        llvm::dbgs() << "???VARAG???\n";
+        llvm::dbgs() << "FIXME: ???VARAG???\n";
         cg.add(ConstraintType::AddressOf, TempArg,
             omap.getVarArg(ParentF));
         cg.add(ConstraintType::Store, omap.getValue(Arg),
@@ -385,6 +388,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
         && llvm::isa<llvm::PointerType>(FTy->getParamType(2))
         && llvm::isa<llvm::PointerType>(FTy->getParamType(3))) {
       // Copy the actual argument into the formal argument.
+      llvm::dbgs() << "FIXME: Handle pthread_create store!\n";
       llvm::Value *ThrFunc = I->getOperand(2);
       llvm::Value *Arg = I->getOperand(3);
       cg.add(ConstraintType::Store, omap.getValue(ThrFunc),
@@ -399,6 +403,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
     const llvm::FunctionType *FTy = F->getFunctionType();
     if (FTy->getNumParams() == 1 &&
         llvm::isa<llvm::PointerType>(FTy->getReturnType())) {
+      llvm::dbgs() << "FIXME: Handle pthread_getspecific store!\n";
       cg.add(ConstraintType::Store,
           omap.getValue(CS.getInstruction()),
           ObjectMap::PthreadSpecificValue);
@@ -759,7 +764,9 @@ static void idLoadInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
     addCFGLoad(cfg, next_id, omap.getValue(&ld));
   } else if (llvm::isa<llvm::PointerType>(ld.getOperand(0)->getType()) &&
       llvm::isa<llvm::IntegerType>(ld.getType())) {
-    llvm::errs() << "FIXME: Unhandled load info!\n";
+    cg.add(ConstraintType::Load,
+        ObjectMap::IntValue,
+        omap.getValue(ld.getOperand(0)));
   } else if (llvm::isa<llvm::StructType>(ld.getType())) {
     llvm::errs() << "FIXME: Unhandled struct load!\n";
   }
@@ -767,11 +774,14 @@ static void idLoadInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
 
 static void idStoreInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
     const llvm::Instruction &inst, CFG::CFGid *next_id) {
-  auto &st = *llvm::cast<const llvm::StoreInst>(&inst);
+  auto &st = llvm::cast<const llvm::StoreInst>(inst);
+
+  auto st_id = omap.getValue(&st);
 
   if (llvm::isa<llvm::PointerType>(st.getOperand(0)->getType())) {
     // Store from ptr
     cg.add(ConstraintType::Store,
+        st_id,
         omap.getValue(st.getOperand(1)),
         omap.getValue(st.getOperand(0)));
   } else if (llvm::ConstantExpr *ce =
@@ -779,6 +789,7 @@ static void idStoreInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
     // If we just cast a ptr to an int then stored it.. we can keep info on it
     if (ce->getOpcode() == llvm::Instruction::PtrToInt) {
       cg.add(ConstraintType::Store,
+          st_id,
           omap.getValue(st.getOperand(1)),
           omap.getValue(ce->getOperand(0)));
     // Uhh, dunno what to do now
@@ -788,8 +799,8 @@ static void idStoreInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
   // put int value into the int pool
   } else if (llvm::isa<llvm::IntegerType>(st.getOperand(0)->getType()) &&
       llvm::isa<llvm::PointerType>(st.getOperand(1)->getType())) {
-    llvm::dbgs() << "IDing store: " << &inst << ": " << inst << "\n";
     cg.add(ConstraintType::Store,
+        st_id,
         omap.getValue(st.getOperand(1)),
         ObjectMap::IntValue);
   // Poop... structs
@@ -799,8 +810,14 @@ static void idStoreInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
     cg.add(ConstraintType::Store, omap.getValue(st.getOperand(1)),
         ObjectMap::AgregateNode);
         */
+  } else {
+    // Didn't add it to the graph?
+    llvm::dbgs() << "Not adding store object to graph: " << st_id << "\n";
+    return;
   }
-  addCFGStore(cfg, next_id, omap.getValue(st.getOperand(1)));
+
+  // We have to create a new objID to uniquely identify this store...
+  addCFGStore(cfg, next_id, st_id);
 }
 
 static void idGEPInst(ConstraintGraph &cg, ObjectMap &omap,
@@ -1076,6 +1093,10 @@ bool SpecSFS::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
         omap.addObject(AI);
       }
 
+      if (auto st = llvm::dyn_cast<llvm::StoreInst>(&inst)) {
+        omap.addValue(st);
+      }
+
       if (isMalloc(&inst)) {
         omap.addObject(&inst);
       }
@@ -1218,19 +1239,23 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
           [&cg, &omap](const llvm::Argument &arg) {
         if (llvm::isa<llvm::PointerType>(arg.getType())) {
           // Must deal with pointers passed into extrernal fcns
-          cg.add(ConstraintType::Store, omap.getValue(&arg),
-            ObjectMap::UniversalValue);
+          // llvm::dbgs() << "FIXME: skipping fcn arg universal value store!\n";
+          // We add a phony store object?, so we can uniquely refer
+          //   to this later
+          auto st_id = omap.createPhonyID();
+          cg.add(ConstraintType::Store, st_id,
+            omap.getValue(&arg), ObjectMap::UniversalValue);
 
           // must deal w/ memory object passed into external fcns
-          /* FIXME -- Must deal with multiple edges to same location first...
           cg.add(ConstraintType::Copy, omap.getValue(&arg),
             ObjectMap::UniversalValue);
-            */
         }
       });
 
       if (fcn.getFunctionType()->isVarArg()) {
-        cg.add(ConstraintType::Store, omap.getVarArg(&fcn),
+        // llvm::dbgs() << "FIXME: skipping var arg universal value store!\n";
+        auto st_id = omap.createPhonyID();
+        cg.add(ConstraintType::Store, st_id, omap.getVarArg(&fcn),
             ObjectMap::UniversalValue);
       }
     }

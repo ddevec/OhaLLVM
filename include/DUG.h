@@ -208,10 +208,13 @@ class DUG {
             //     operator)
             // Make a phony dest for this store:
             {
+              auto &stedge = llvm::cast<StoreConstraint<ObjID>>(edge);
               llvm::dbgs() << "  node is Store\n";
+              auto st_id = stedge.storeId();
+              llvm::dbgs() << "  adding for store: (" << st_id << ") "
+                << *g_omap.valueAtID(st_id) << "\n";
               auto ret =
-                // DUG_.addNode<StoreNode>(omap.createPhonyID(), dest, src);
-                DUG_.addNode<StoreNode>(dest, dest, src);
+                DUG_.addNode<StoreNode>(st_id, dest, src);
               llvm::dbgs() << "  DUGid is " << ret->second << "\n";
             }
             break;

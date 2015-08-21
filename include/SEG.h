@@ -117,6 +117,8 @@ enum class NodeKind {
 
 enum class EdgeKind {
   Constraint,
+  StoreConstraint,
+  ConstraintEnd,
   DUG,
   CFGEdge,
   HUEdge
@@ -1612,11 +1614,13 @@ class SEG {
       // Add succ/pred info for src/dest
       bool ret = src_node.addSucc(*this, edge_id);
       if (!ret) {
+        llvm::dbgs() << "addSucc failed :(\n";
         edges_.pop_back();
         return EdgeID::invalid();
       }
       ret = dest_node.addPred(*this, edge_id);
       if (!ret) {
+        llvm::dbgs() << "addPred failed :(\n";
         src_node.removeSucc(edge_id);
         edges_.pop_back();
         return EdgeID::invalid();
@@ -1649,17 +1653,15 @@ class SEG {
 
     void removeEdge(EdgeID id) {
       // Also remove info from node:
-      /*
-      llvm::dbgs() << "edge_id is: ( " << edge_id.first << ", " <<
-        edge_id.second << " )\n";
-      */
       auto &edge = getEdge(id);
+      llvm::dbgs() << "removing edge_id: ( " << edge.src() << ", " <<
+        edge.dest() << " )\n";
 
       auto &src = getNode(edge.src());
       auto &dest = getNode(edge.dest());
 
       // Free up the memory... maybe resize the array at some point?
-      // llvm::dbgs() << __LINE__ << "erasing: " << id << "\n";
+      llvm::dbgs() << __LINE__ << "erasing: " << id << "\n";
       edges_.at(id.val()).reset(nullptr);
 
       // Remove the pointer from src

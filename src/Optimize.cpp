@@ -353,7 +353,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph,
     if (node.indirect()) {
       dout << "Obj for indirect node: " << node.id() << "\n";
     } else if (it == std::end(pts_to_pe)) {
-      pts_to_pe.insert(std::make_pair(node.ptsto(), node.id()));
+      pts_to_pe.emplace(node.ptsto(), node.id());
       dout << "pe for ptsto: " << node.id() << "\n";
     } else {
       auto &dest_node =
@@ -366,6 +366,38 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph,
 
       llvm::dbgs() << "Merging obj_id: " << dest_ext_id << " with: " <<
         src_ext_id << "\n";
+
+      /*
+      llvm::dbgs() << "for dest: (" << dest_node.id() << ") " <<
+        *g_omap->valueAtID(dest_ext_id) << "\n";
+      std::for_each(std::begin(dest_node.preds()), std::end(dest_node.preds()),
+          [&conGraph] (SEG<ObjectMap::ObjID>::EdgeID pred_edge) {
+        auto pred_id = conGraph.getEdge(pred_edge).src();
+        auto pred_node = conGraph.getNode(pred_id);
+
+        auto ext_id = pred_node.extId();
+        llvm::dbgs() << " have pred: (" << pred_edge << ") " <<
+            *g_omap->valueAtID(ext_id) << "\n";
+      });
+      */
+
+      llvm::dbgs() << "for src: (" << src_node.id() << ") " <<
+        *g_omap->valueAtID(src_ext_id) << "\n";
+      std::for_each(std::begin(src_node.preds()), std::end(src_node.preds()),
+          [&conGraph] (SEG<ObjectMap::ObjID>::EdgeID pred_edge) {
+        auto pred_id = conGraph.getEdge(pred_edge).src();
+        auto pred_node = conGraph.getNode(pred_id);
+
+        auto ext_id = pred_node.extId();
+        llvm::dbgs() << " have pred: (" << pred_edge << ") " <<
+            *g_omap->valueAtID(ext_id) << "\n";
+        auto pred_src_id = conGraph.getEdge(pred_edge).dest();
+        auto pred_src_node =  conGraph.getNode(pred_src_id);
+        auto pred_ext_id = pred_src_node.extId();
+        llvm::dbgs() << "   have pred_dest (" << pred_src_id << ") " <<
+            *g_omap->valueAtID(pred_ext_id) << "\n";
+      });
+
       dest_node.unite(conGraph, src_node);
       auto it1 = conGraph.findNode(src_ext_id);
       auto it2 = conGraph.findNode(dest_ext_id);
