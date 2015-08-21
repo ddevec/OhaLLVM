@@ -1724,10 +1724,13 @@ class SEG {
       // llvm::dbgs() << "Adding node: " << node_id << "\n";
       nodes_.emplace_back(new node_type(node_id, id, args...));
 
+      /*
       llvm::dbgs() << "Adding node_map_ entry for: (" << id << ", " << node_id
         << ")\n";
+      */
       auto ret = node_map_.emplace(id, node_id);
 
+      /*
       llvm::dbgs() << "Entries for: " << id << " are now:";
       auto pr = node_map_.equal_range(id);
       std::for_each(pr.first, pr.second,
@@ -1735,6 +1738,7 @@ class SEG {
         llvm::dbgs() << " " << id_pr.second;
       });
       llvm::dbgs() << "\n";
+      */
 
       return ret;
     }

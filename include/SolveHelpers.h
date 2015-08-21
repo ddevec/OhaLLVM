@@ -53,6 +53,9 @@ class Worklist {
   //{{{
  public:
     DUGNode *pop() {
+      if (q_.empty()) {
+        return nullptr;
+      }
       auto ret = q_.front();
       q_.pop();
       return ret;
@@ -140,12 +143,92 @@ class PtstoSet {
       //}}}
     };
 
+    class const_iterator {
+      //{{{
+     public:
+        typedef std::forward_iterator_tag iterator_category;
+        typedef ObjectMap::ObjID value_type;
+        typedef int32_t difference_type;
+        typedef ObjectMap::ObjID * pointer;
+        typedef ObjectMap::ObjID & reference;
+
+        // Constructor {{{
+        explicit const_iterator(Bitmap::iterator itr) : itr_(itr) { }
+        //}}}
+
+        // Operators {{{
+        bool operator==(const const_iterator &it) const {
+          return (itr_ == it.itr_);
+        }
+
+        bool operator!=(const const_iterator &it) const {
+          return !operator==(it);
+        }
+
+        const value_type operator*() const {
+          return ObjectMap::ObjID(itr_.operator*());
+        }
+
+        /*
+        value_type operator->() const {
+          return ObjectMap::ObjID(itr_.operator->());
+        }
+        */
+
+        const_iterator &operator++() {
+          ++itr_;
+          return *this;
+        }
+
+        const_iterator operator++(int) {
+          const_iterator tmp(*this);
+          ++itr_;
+
+          return std::move(tmp);
+        }
+        //}}}
+
+     private:
+        // Private data {{{
+        Bitmap::iterator itr_;
+        //}}}
+      //}}}
+    };
+
     iterator begin() {
       return iterator(std::begin(ptsto_));
     }
 
     iterator end() {
       return iterator(std::end(ptsto_));
+    }
+
+    const_iterator begin() const {
+      return const_iterator(std::begin(ptsto_));
+    }
+
+    const_iterator end() const {
+      return const_iterator(std::end(ptsto_));
+    }
+
+    const_iterator cbegin() const {
+      return const_iterator(std::begin(ptsto_));
+    }
+
+    const_iterator cend() const {
+      return const_iterator(std::end(ptsto_));
+    }
+
+    friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+        const PtstoSet &ps) {
+      os << "{";
+      std::for_each(std::begin(ps), std::end(ps),
+          [&os] (ObjectMap::ObjID id) {
+        os << " " << id;
+      });
+      os << " }";
+
+      return os;
     }
 
  private:

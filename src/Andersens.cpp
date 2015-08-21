@@ -128,7 +128,10 @@ AliasAnalysis::AliasResult Andersens::alias(const Location &L1,
     return NoAlias;
   }
 
-  return AliasAnalysis::alias(L1, L2);
+  // ddevec - FIXME: Changed this because we can't call "alisas" from a non
+  //   "alias analysis"
+  return MayAlias;
+  // return AliasAnalysis::alias(L1, L2);
 }
 
 AliasAnalysis::ModRefResult

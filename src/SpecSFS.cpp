@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <string>
+#include <utility>
 
 #include "llvm/Pass.h"
 #include "llvm/Function.h"
@@ -135,14 +136,46 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   }
 
   // Compute SSA for each partition
-  if (addPartitionsToDUG(graph, cfg)) {
+  if (addPartitionsToDUG(graph, cfg, omap)) {
     error("ComputePartSSA failure!");
   }
 
   // Finally, solve the graph
-  if (solve(graph)) {
+  if (solve(graph, omap)) {
     error("Solve failure!");
   }
+
+  llvm::dbgs() << "Printing final ptsto set for top level variables:\n";
+  std::for_each(pts_top_.cbegin(), pts_top_.cend(),
+      [&omap]
+      (const std::pair<const ObjectMap::ObjID, PtstoSet> &pr) {
+    auto top_val = omap.valueAtID(pr.first);
+
+    if (top_val == nullptr) {
+      llvm::dbgs() << "Value is (id): " << pr.first << "\n";
+    } else if (auto gv = llvm::dyn_cast<llvm::GlobalValue>(top_val)) {
+      llvm::dbgs() << "Value is: " << gv->getName() << "\n";
+    } else if (auto fcn = llvm::dyn_cast<llvm::Function>(top_val)) {
+      llvm::dbgs() << "Value is: " << fcn->getName() << "\n";
+    } else {
+      llvm::dbgs() << "Value is: " << *top_val << "\n";
+    }
+
+    std::for_each(pr.second.cbegin(), pr.second.cend(),
+        [&omap] (const ObjectMap::ObjID obj_id) {
+      auto loc_val = omap.valueAtID(obj_id);
+
+      if (loc_val == nullptr) {
+        llvm::dbgs() << "Value is (id): " << obj_id << "\n";
+      } else if (auto gv = llvm::dyn_cast<llvm::GlobalValue>(loc_val)) {
+        llvm::dbgs() << "  " << gv->getName() << "\n";
+      } else if (auto fcn = llvm::dyn_cast<llvm::Function>(loc_val)) {
+        llvm::dbgs() << "  " << fcn->getName() << "\n";
+      } else {
+        llvm::dbgs() << "  " << *loc_val << "\n";
+      }
+    });
+  });
 
   // We do not modify code, ever!
   return false;

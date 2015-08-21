@@ -359,6 +359,27 @@ class DUG {
       partitionMap_ = std::move(mapping);
     }
 
+    void setRelevantNodes(
+        std::map<PartID, std::vector<std::pair<DUGid, ObjID>>>
+        mapping) {
+      relevantNodes_ = std::move(mapping);
+    }
+
+    void setNodeToPartition(
+        std::map<DUGid, PartID> mapping) {
+      revPartitionMap_ = std::move(mapping);
+    }
+
+    std::map<PartID, std::vector<std::pair<DUGid, ObjID>>>
+    &getRelevantNodes() {
+      return relevantNodes_;
+    }
+
+
+    PartID getPart(DUGid dug_id) {
+      return revPartitionMap_.at(dug_id);
+    }
+
     std::vector<std::pair<DUG::DUGid, ObjectMap::ObjID>> &getObjs(PartID part_id) {  // NOLINT
       return partitionMap_.at(part_id);
     }
@@ -607,6 +628,9 @@ class DUG {
     // std::map<ObjectMap::ObjID, PartID> partitionMap_;
     std::map<PartID, std::vector<std::pair<DUG::DUGid, ObjectMap::ObjID>>>
       partitionMap_;
+    std::map<PartID, std::vector<std::pair<DUGid, ObjID>>>
+      relevantNodes_;
+    std::map<DUGid, PartID> revPartitionMap_;
 
     SEG<ObjID> DUG_;
     //}}}

@@ -506,6 +506,10 @@ class Andersens : public llvm::ModulePass,
     return getObject(const_cast<llvm::Value*>(val));
   }
 
+  const llvm::DenseMap<llvm::Value *, unsigned int> &getObjectMap() const {
+    return ObjectNodes;
+  }
+
  private:
   /// getNode - Return the node corresponding to the specified pointer scalar.
   ///

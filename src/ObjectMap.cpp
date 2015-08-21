@@ -86,7 +86,10 @@ ObjectMap::ObjID ObjectMap::__const_node_helper(const llvm::Constant *C,
         llvm::errs() << "Const Expr not yet handled: " << *CE << "\n";
         llvm_unreachable(0);
     }
+  } else if (llvm::isa<llvm::ConstantInt>(C)) {
+    return IntValue;
   } else {
+    llvm::errs() << "Const Expr not yet handled: " << *C << "\n";
     llvm_unreachable("Unknown constant expr ptr");
   }
 }

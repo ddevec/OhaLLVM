@@ -57,15 +57,15 @@ class SpecSFS : public llvm::ModulePass,
   //   partitions are based on "access-equivalence"
   // NOTE: ObjectMap is required to convert DUG::ObjID to llvm::Value as
   //   Andersens works with llvm::Value's
-  bool computePartitions(DUG &dug, CFG &cfg, const Andersens &aux,
+  bool computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
       const ObjectMap &omap);
 
   // Computes the SSA form of each partition
-  bool addPartitionsToDUG(DUG &graph, const CFG &cfg);
+  bool addPartitionsToDUG(DUG &graph, const CFG &cfg, const ObjectMap &omap);
 
   // Solves the remaining graph, providing full flow-sensitive inclusion-based
   // points-to analysis
-  bool solve(DUG &);
+  bool solve(DUG &, ObjectMap &omap);
 
   // Private data {{{
   ObjectMap omap_;
