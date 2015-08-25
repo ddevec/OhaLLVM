@@ -14,23 +14,15 @@
 
 
 enum class ConstraintType { Copy, Load, Store, AddressOf };
-template <typename id_type>
-class Constraint : public SEGEdge<id_type> {
+class Constraint {
   //{{{
  public:
-    typedef typename SEG<id_type>::NodeID NodeID;
-    typedef typename SEG<id_type>::EdgeID EdgeID;
+    typedef typename ObjectMap::ObjID ObjID;
     // Constructors {{{
-    Constraint(NodeID s, NodeID d, ConstraintType t) :
+    Constraint(ObjID s, ObjID d, ConstraintType t) :
       Constraint(s, d, t, 0) { }
-    Constraint(NodeID s, NodeID d, ConstraintType t, int32_t o) :
-      SEGEdge<id_type>(EdgeKind::Constraint, s, d),
-      type_(t), offs_(o) { }
-
-    Constraint(EdgeKind kind, NodeID s, NodeID d,
-        ConstraintType t) :
-      SEGEdge<id_type>(kind, s, d),
-      type_(t), offs_(0) { }
+    Constraint(ObjID s, ObjID d, ConstraintType t, int32_t o) :
+      src_(s), dest_(d), type_(t), offs_(o) { }
 
     // No copys, yes moves {{{
     Constraint(const Constraint &) = default;
@@ -42,6 +34,19 @@ class Constraint : public SEGEdge<id_type> {
     //}}}
 
     // Accessors {{{
+    ObjID src() const {
+      return src_;
+    }
+
+    ObjID dest() const {
+      return dest_;
+    }
+
+    void retarget(ObjID src, ObjID dest) {
+      src_ = src;
+      dest_ = dest;
+    }
+
     ConstraintType type() const {
       return type_;
     }
@@ -50,32 +55,44 @@ class Constraint : public SEGEdge<id_type> {
       return offs_;
     }
 
-    bool operator==(const SEGEdge<id_type> &rhs) const override {
-      auto &cons_rhs = llvm::cast<Constraint<id_type>>(rhs);
+    /*
+    bool operator==(const SEGEdge<ObjID> &rhs) const override {
+      auto &cons_rhs = llvm::cast<Constraint>(rhs);
       if (offs() != cons_rhs.offs() || type() != cons_rhs.type()) {
         return false;
       }
 
-      return SEGEdge<id_type>::operator==(rhs);
+      return SEGEdge<ObjID>::operator==(rhs);
     }
+    */
 
-    bool operator<(const SEGEdge<id_type> &rhs) const override {
-      auto &cons_rhs = llvm::cast<Constraint<id_type>>(rhs);
-      if (offs() != cons_rhs.offs()) {
-        return offs() < cons_rhs.offs();
-      }
-      
+    virtual bool operator<(const Constraint &cons_rhs) const {
       if (type() != cons_rhs.type()) {
         return type() < cons_rhs.type();
       }
 
-      return SEGEdge<id_type>::operator<(rhs);
+      if (dest() != cons_rhs.dest()) {
+        return dest() < cons_rhs.dest();
+      }
+
+      if (src() != cons_rhs.src()) {
+        return src() < cons_rhs.src();
+      }
+
+      if (offs() != cons_rhs.offs()) {
+        return offs() < cons_rhs.offs();
+      }
+
+      return false;
+    }
+
+    ConstraintType getKind() const {
+      return type_;
     }
 
     // For LLVM RTTI {{{
-    static bool classof(const SEGEdge<id_type> *id) {
-      return id->getKind() >= EdgeKind::Constraint &&
-        id->getKind() < EdgeKind::ConstraintEnd;
+    static bool classof(const Constraint *) {
+      return true;
     }
     //}}}
     //}}}
@@ -97,11 +114,11 @@ class Constraint : public SEGEdge<id_type> {
       }
     }
 
-    NodeID getTarget() const {
+    ObjID getTarget() const {
       if (targetIsDest()) {
-        return SEGEdge<id_type>::dest();
+        return dest();
       } else {
-        return SEGEdge<id_type>::src();
+        return src();
       }
     }
     //}}}
@@ -130,6 +147,8 @@ class Constraint : public SEGEdge<id_type> {
 
  private:
     // Private Data {{{
+    ObjID src_;
+    ObjID dest_;
     ConstraintType type_;
 
     int32_t offs_ = 0;
@@ -137,15 +156,13 @@ class Constraint : public SEGEdge<id_type> {
   //}}}
 };
 
-template<typename id_type>
-class StoreConstraint : public Constraint<id_type> {
+class StoreConstraint : public Constraint {
   //{{{
  public:
-    typedef typename SEG<id_type>::NodeID NodeID;
+    typedef typename ObjectMap::ObjID ObjID;
 
-    StoreConstraint(NodeID src, NodeID dest, id_type nd) :
-      Constraint<id_type>(EdgeKind::StoreConstraint, src, dest,
-          ConstraintType::Store), nodeId_(nd) { }
+    StoreConstraint(ObjID src, ObjID dest, ObjID nd) :
+      Constraint(src, dest, ConstraintType::Store), nodeId_(nd) { }
 
     // No copys, yes moves {{{
     StoreConstraint(const StoreConstraint &) = default;
@@ -155,17 +172,71 @@ class StoreConstraint : public Constraint<id_type> {
     StoreConstraint &operator=(StoreConstraint&&) = default;
     //}}}
     
-    id_type storeId() const {
+    ObjID storeId() const {
       return nodeId_;
     }
 
+    bool operator<(const Constraint &cons) const {
+      auto st_cons = llvm::cast<StoreConstraint>(cons);
+
+      if (storeId() != st_cons.storeId()) {
+        return storeId() < st_cons.storeId();
+      }
+
+      return Constraint::operator<(cons);
+    }
+
     // For LLVM RTTI {{{
-    static bool classof(const SEGEdge<id_type> *id) {
-      return id->getKind() >= EdgeKind::StoreConstraint;
+    static bool classof(const Constraint *cons) {
+      return cons->getKind() == ConstraintType::Store;
     }
     //}}}
  private:
-    id_type nodeId_;
+    ObjID nodeId_;
+  //}}}
+};
+
+class LoadConstraint : public Constraint {
+  //{{{
+ public:
+    typedef typename ObjectMap::ObjID ObjID;
+
+    LoadConstraint(ObjID src, ObjID dest, ObjID nd) :
+      Constraint(src, dest, ConstraintType::Load), nodeId_(nd) { }
+
+    // No copys, yes moves {{{
+    LoadConstraint(const LoadConstraint &) = default;
+    LoadConstraint &operator=(const LoadConstraint&) = default;
+
+    LoadConstraint(LoadConstraint &&) = default;
+    LoadConstraint &operator=(LoadConstraint&&) = default;
+    //}}}
+    
+    ObjID loadId() const {
+      return nodeId_;
+    }
+
+    void setLoadID(ObjID ld_id) {
+      nodeId_ = ld_id;
+    }
+
+    bool operator<(const Constraint &cons) const {
+      auto ld_cons = llvm::cast<LoadConstraint>(cons);
+
+      if (loadId() != ld_cons.loadId()) {
+        return loadId() < ld_cons.loadId();
+      }
+
+      return Constraint::operator<(cons);
+    }
+
+    // For LLVM RTTI {{{
+    static bool classof(const Constraint *cons) {
+      return cons->getKind() == ConstraintType::Load;
+    }
+    //}}}
+ private:
+    ObjID nodeId_;
   //}}}
 };
 
@@ -173,66 +244,11 @@ class ConstraintGraph {
   //{{{
  public:
     // Typedefs {{{
-    // SEG
-    typedef SEG<ObjectMap::ObjID> ConstraintSEG;
-
     // ObjIDs
     typedef ObjectMap::ObjID ObjID;
-    typedef ConstraintSEG::EdgeID ConsID;
-    typedef ConstraintSEG::NodeID NodeID;
-    //}}}
 
-    // Internal classes {{{
-    // ConstraintNode {{{
-    struct ConstraintNode : public UnifyNode<ObjID> {
-      //{{{
-      ConstraintNode(SEG<ObjID>::NodeID node_id, ObjID id) :
-        UnifyNode<ObjID>(NodeKind::ConstraintNode, node_id, id) { }
-
-      /*
-      ConstraintNode(int32_t nodenum, ObjID id, const ConstraintNode &con) :
-        UnifyNode<ObjID>(NodeKind::ConstraintNode, nodenum, id, con) { }
-        */
-
-      void print_label(llvm::raw_ostream &ofil,
-          const ObjectMap &omap) const override {
-        std::for_each(UnifyNode<ObjID>::rep_begin(),
-            UnifyNode<ObjID>::rep_end(),
-            [&ofil, &omap](const ObjID &id) {
-          auto pr = omap.getValueInfo(id);
-          if (pr.first != ObjectMap::Type::Special) {
-            const llvm::Value *val = pr.second;
-            if (val == nullptr) {
-              ofil << "temp node";
-            } else if (auto GV = llvm::dyn_cast<const llvm::GlobalValue>(val)) {
-              ofil <<  GV->getName();
-            } else if (auto F = llvm::dyn_cast<const llvm::Function>(val)) {
-              ofil <<  F->getName();
-            } else {
-              ofil << *val;
-            }
-          } else {
-            if (id == ObjectMap::NullValue) {
-              ofil << "NullValue";
-            } else if (id == ObjectMap::NullObjectValue) {
-              ofil << "NullObjectValue";
-            } else if (id == ObjectMap::IntValue) {
-              ofil << "IntValue";
-            } else if (id == ObjectMap::UniversalValue) {
-              ofil << "UniversalValue";
-            } else if (id == ObjectMap::UniversalValue) {
-              ofil << "PthreadSpecificValue";
-            } else {
-              llvm_unreachable("Shouldn't have unknown value here!");
-            }
-          }
-          ofil << "\n";
-        });
-      }
-
-      //}}}
-    };
-    //}}}
+    struct cons_id { };
+    typedef ID<cons_id, int32_t>  ConsID;
     //}}}
 
     // Modifiers {{{
@@ -241,93 +257,47 @@ class ConstraintGraph {
     }
 
     ConsID add(ConstraintType type, ObjID d, ObjID s, int o) {
-      auto s_it = constraintGraph_.findNode(s);
-      if (s_it == constraintGraph_.node_map_cend()) {
-        s_it = constraintGraph_.addNode<ConstraintNode>(s);
-      }
-
-      auto d_it = constraintGraph_.findNode(d);
-      if (d_it == constraintGraph_.node_map_cend()) {
-        d_it = constraintGraph_.addNode<ConstraintNode>(d);
-      }
-
-      auto src = constraintGraph_.getNode(s_it->second);
-      auto dest = constraintGraph_.getNode(d_it->second);
-
-      llvm::dbgs() << "Adding edge: (" << src.id() << ", " << dest.id() <<
+      llvm::dbgs() << "Adding edge: (" << s << ", " << d <<
         ") with type: " << static_cast<int32_t>(type) << "\n";
-      auto ret = constraintGraph_.addEdge<Constraint<ObjID>>(src.id(), dest.id(),
-          type, o);
-      assert(ret != SEG<ObjID>::EdgeID::invalid());
-      return ret;
+      constraints_.emplace_back(new Constraint(s, d, type, o));
+      return ConsID(constraints_.size());
     }
 
     ConsID add(ConstraintType type, ObjID nd, ObjID s, ObjID d) {
-      assert(type == ConstraintType::Store);
-      auto s_it = constraintGraph_.findNode(s);
-      if (s_it == constraintGraph_.node_map_cend()) {
-        s_it = constraintGraph_.addNode<ConstraintNode>(s);
+
+      if (type == ConstraintType::Store) {
+        llvm::dbgs() << "Adding store-edge: (" << s << ", " << d <<
+          ", " << nd << ") with type: " << static_cast<int32_t>(type) << "\n";
+        constraints_.emplace_back(new StoreConstraint(s, d, nd));
+      } else if (type == ConstraintType::Load) {
+        // S and D are backwards for load nodes?
+        llvm::dbgs() << "Adding load-edge: (" << s << ", " << d <<
+          ", " << nd << ") with type: " << static_cast<int32_t>(type) << "\n";
+        constraints_.emplace_back(new LoadConstraint(s, d, nd));
+      } else {
+        llvm_unreachable("Non-load-store constraint add");
       }
 
-      auto d_it = constraintGraph_.findNode(d);
-      if (d_it == constraintGraph_.node_map_cend()) {
-        d_it = constraintGraph_.addNode<ConstraintNode>(d);
-      }
-
-      auto src = constraintGraph_.getNode(s_it->second);
-      auto dest = constraintGraph_.getNode(d_it->second);
-
-      llvm::dbgs() << "Adding store-edge: (" << src.id() << ", " << dest.id() <<
-        ", " << nd << ") with type: " << static_cast<int32_t>(type) << "\n";
-      auto ret = constraintGraph_.addEdge<StoreConstraint<ObjID>>(src.id(),
-          dest.id(), nd);
-      llvm::dbgs() << "Added edge: " << ret << "\n";
-      assert(ret != SEG<ObjID>::EdgeID::invalid());
-      return ret;
+      return ConsID(constraints_.size());
     }
 
-    ObjID addNode(ObjectMap &omap) {
-      auto id = omap.makeTempValue();
-
-      // Put a new node on the back of nodes
-      constraintGraph_.addNode<ConstraintNode>(id);
-
-      return id;
-    }
-
+    // FIXME: Slow?
     void removeConstraint(ConsID id) {
-      constraintGraph_.removeEdge(id);
+      auto it = std::begin(constraints_);
+      std::advance(it, id.val());
+      constraints_.erase(it);
     }
 
-    void associateNode(ObjID, ObjID) { }
-
-    ConstraintSEG &getSEG() {
-      return constraintGraph_;
-    }
-
-    const ConstraintSEG &getSEG() const {
-      return constraintGraph_;
+    void unique() {
+      std::sort(std::begin(constraints_), std::end(constraints_));
+      auto it = std::unique(std::begin(constraints_), std::end(constraints_));
+      constraints_.erase(it, std::end(constraints_));
     }
     //}}}
 
     // Accessors {{{
-    const Constraint<ObjID>  &getConstraint(ConsID id) const {
-      return constraintGraph_.getEdge<Constraint<ObjID>>(id);
-    }
-
-    ConstraintNode &getNode(NodeID id) {
-      return constraintGraph_.getNode<ConstraintNode>(id);
-    }
-
-    const ConstraintNode &getNode(NodeID id) const {
-      return constraintGraph_.getNode<ConstraintNode>(id);
-    }
-
-    ConstraintNode &getNode(ObjID id) {
-      auto pr = constraintGraph_.getNodes(id);
-      assert(std::distance(pr.first, pr.second) == 1);
-
-      return getNode(pr.first->second);
+    const Constraint  &getConstraint(ConsID id) const {
+      return *constraints_.at(id.val());
     }
     //}}}
 
@@ -336,9 +306,40 @@ class ConstraintGraph {
         const ObjectMap &omap) const;
     //}}}
 
+    // Iteration {{{
+    typedef std::vector<std::unique_ptr<Constraint>>::iterator iterator;
+    typedef std::vector<std::unique_ptr<Constraint>>::const_iterator const_iterator;
+    typedef std::unique_ptr<Constraint> iter_type;
+
+    iterator begin() {
+      return std::begin(constraints_);
+    }
+
+    iterator end() {
+      return std::end(constraints_);
+    }
+
+    const_iterator begin() const {
+      return std::begin(constraints_);
+    }
+
+    const_iterator end() const {
+      return std::end(constraints_);
+    }
+
+    const_iterator cbegin() const {
+      return std::begin(constraints_);
+    }
+
+    const_iterator cend() const {
+      return std::end(constraints_);
+    }
+
+    //}}}
+
  private:
     // Private data {{{
-    ConstraintSEG constraintGraph_;
+    std::vector<std::unique_ptr<Constraint>> constraints_;
     //}}}
   //}}}
 };

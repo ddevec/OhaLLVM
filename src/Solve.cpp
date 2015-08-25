@@ -26,7 +26,15 @@ bool SpecSFS::solve(DUG &dug, ObjectMap &) {
       work.push(&node);
     }
 
-    dests.push_back(node.dest());
+    auto dest = node.dest();
+
+    if (auto pld = llvm::dyn_cast<DUG::LoadNode>(pnode)) {
+      dest = pld->realDest();
+    } else if (auto pst = llvm::dyn_cast<DUG::StoreNode>(pnode)) {
+      dest = pst->st_src();
+    }
+
+    dests.push_back(dest);
     dests.push_back(node.src());
   });
 
@@ -108,16 +116,30 @@ void DUG::LoadNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
   // If we added any edges:
   //   Add all successors to work
   PtstoSet &src_pts = pts_top.at(src());
-  PtstoSet &dest_pts = pts_top.at(dest());
+  extern ObjectMap &g_omap;
+  llvm::dbgs() << "value at realDest() (" << realDest() << ") is: " <<
+    *g_omap.valueAtID(realDest()) << "\n";
+  PtstoSet &dest_pts = pts_top.at(realDest());
+  llvm::dbgs() << "Load is " << dest() << ": " <<
+    *g_omap.valueAtID(dest()) << "\n";
   bool changed = false;
   std::for_each(std::begin(src_pts), std::end(src_pts),
       [this, &dug, &work, &changed, &dest_pts](DUG::ObjID id) {
+    extern ObjectMap &g_omap;
+    llvm::dbgs() << "id is: " << id << ": " << *g_omap.valueAtID(id) << "\n";
+    llvm::dbgs() << "omap.getValue() at val is: " <<
+        g_omap.getValue(g_omap.valueAtID(id)) << "\n";
+    llvm::dbgs() << "in contains:\n";
+    for (auto &pr : in_) {
+      llvm::dbgs() << "  " << pr.first << ": " <<
+          *g_omap.valueAtID(pr.first) << "\n";
+    }
     PtstoSet &pts = in_.at(id);
 
     changed |= (dest_pts |= pts);
   });
 
-  llvm::dbgs() << "  pts_top[" << dest() << "] is now: ";
+  llvm::dbgs() << "  pts_top[" << realDest() << "] is now: ";
   std::for_each(std::begin(dest_pts), std::end(dest_pts),
       [this](DUG::ObjID obj_id) {
     llvm::dbgs() << " " << obj_id;
@@ -129,14 +151,27 @@ void DUG::LoadNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
   //    it has...)
   // We need to update the ptsto of all of our part_successors
   // FIXME: Only do this for changed info?
+  extern ObjectMap &g_omap;
+  llvm::dbgs() << "  Load dest is: " << *g_omap.valueAtID(realDest()) << "\n";
+  llvm::dbgs() << "  Load src is: " << *g_omap.valueAtID(src()) << "\n";
   std::for_each(std::begin(part_succs_), std::end(part_succs_),
       [this, &dug, &work] (DUG::PartID part_id) {
     auto &part_to_obj = dug.getObjs(part_id);
 
+    llvm::dbgs() << "  For part: " << part_id << "\n";
     std::for_each(std::begin(part_to_obj), std::end(part_to_obj),
-        [this, &dug, &work] (std::pair<DUG::DUGid, ObjectMap::ObjID> &pr) {
+        [this, &dug, &work, &part_id]
+        (std::pair<DUG::DUGid, ObjectMap::ObjID> &pr) {
       auto &nd = dug.getNode(pr.first);
-      bool ch = (nd.in() |= in_);
+      /*
+      llvm::dbgs() << "    succ is: " << *g_omap.valueAtID(pr.second) << "\n";
+      llvm::dbgs() << "    part_to_obj contains: " << "\n";
+      std::for_each(std::begin(part_to_obj), std::end(part_to_obj),
+        [](std::pair<DUG::DUGid, DUG::ObjID> &pr) {
+        llvm::dbgs() << "      " << *g_omap.valueAtID(pr.second) << "\n";
+      });
+      */
+      bool ch = nd.in().orPart(in_, dug.objToPartMap(), part_id);
 
       if (ch) {
         work.push(&nd);
@@ -166,7 +201,7 @@ void DUG::StoreNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
   //     if (succ.IN.changed)
   //       Add succ to worklist
   PtstoSet &src_pts = pts_top.at(src());
-  PtstoSet &dest_pts = pts_top.at(dest());
+  PtstoSet &dest_pts = pts_top.at(st_src());
   bool change = false;
 
   PtstoGraph in_tmp(in_);
@@ -211,7 +246,7 @@ void DUG::StoreNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
     extern ObjectMap &g_omap;
     llvm::dbgs() << "  Have change on node with src: " <<
       *g_omap.valueAtID(src()) << ", dest: " <<
-      *g_omap.valueAtID(dest()) << "\n";
+      *g_omap.valueAtID(st_src()) << "\n";
     // FIXME: Only do this for changed info?
     std::for_each(std::begin(part_succs_), std::end(part_succs_),
         [this, &work, &dug] (DUG::PartID part_id) {
@@ -226,11 +261,17 @@ void DUG::StoreNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
         std::for_each(std::begin(out_), std::end(out_),
             [this, &dug, &work, &nd]
             (std::pair<const DUG::ObjID, PtstoSet> &pr) {
-          llvm::dbgs() << "    Updating in for: " << pr.first << "\n";
+          llvm::dbgs() << "    Updating in for: (" << pr.first << "): " <<
+            *g_omap.valueAtID(pr.first) << "\n";
 
           llvm::dbgs() << "    in is currently: " << nd.in().at(pr.first) <<
               "\n";
           llvm::dbgs() << "    out is: " << pr.second << "\n";
+          llvm::dbgs() << "      that's:\n";
+          for (auto dbg_id : pr.second) {
+            llvm::dbgs() << "        (" << dbg_id << ") " <<
+                *g_omap.valueAtID(dbg_id) << "\n";
+          }
           bool c = (nd.in().at(pr.first) |= pr.second);
 
           if (c) {

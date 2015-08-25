@@ -94,9 +94,6 @@ class SEG;
 
 // Enum For llvm RTTI {{{
 enum class NodeKind {
-  // SEGNodes
-  HUNode,
-
   // DUGNodes
   DUGNode,
   AllocNode,
@@ -110,7 +107,7 @@ enum class NodeKind {
 
   // Unify Nodes
   Unify,
-  ConstraintNode,
+  HUNode,
   CFGNode,
   UnifyEnd
 };
@@ -118,6 +115,7 @@ enum class NodeKind {
 enum class EdgeKind {
   Constraint,
   StoreConstraint,
+  LoadConstraint,
   ConstraintEnd,
   DUG,
   CFGEdge,
@@ -1654,14 +1652,12 @@ class SEG {
     void removeEdge(EdgeID id) {
       // Also remove info from node:
       auto &edge = getEdge(id);
-      llvm::dbgs() << "removing edge_id: ( " << edge.src() << ", " <<
-        edge.dest() << " )\n";
 
       auto &src = getNode(edge.src());
       auto &dest = getNode(edge.dest());
 
       // Free up the memory... maybe resize the array at some point?
-      llvm::dbgs() << __LINE__ << "erasing: " << id << "\n";
+      // llvm::dbgs() << __LINE__ << "erasing: " << id << "\n";
       edges_.at(id.val()).reset(nullptr);
 
       // Remove the pointer from src

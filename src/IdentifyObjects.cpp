@@ -71,6 +71,36 @@ static void identifyAUXFcnCallRetInfo(CFG &cfg,
     }
     dout << "\n");
 
+  // This is just debugging swill {{{
+  /*
+  std::for_each(cfg.obj_to_cfg_begin(), cfg.obj_to_cfg_end(),
+      [&omap, &aux] (const std::pair<const ObjectMap::ObjID, CFG::CFGid> &pr) {
+    auto val = omap.valueAtID(pr.first);
+
+    llvm::dbgs() << "Have def/use/init: " << *val << "\n";
+
+    if (auto pld = llvm::dyn_cast<const llvm::LoadInst>(val)) {
+      val = pld->getPointerOperand();
+    } else if (auto pst = llvm::dyn_cast<const llvm::StoreInst>(val)) {
+      val = pst->getOperand(1);
+    // Global value?
+    } else {
+      assert(llvm::isa<llvm::GlobalValue>(val));
+    }
+
+    llvm::dbgs() << "  ptsto val is: " << *val << "\n";
+
+    auto &ptsto = aux.getPointsTo(val);
+
+    llvm::dbgs() << "  ptsto is:" << "\n";
+    for (auto id : ptsto) {
+      llvm::dbgs() << " " << id;
+    }
+    llvm::dbgs() << "\n";
+  });
+  */
+  //}}}
+
   // We iterate each indirect call in the CFG
   // to add the indirect info to the constraint map:
   std::for_each(cfg.indirect_cbegin(), cfg.indirect_cend(),
@@ -87,12 +117,11 @@ static void identifyAUXFcnCallRetInfo(CFG &cfg,
     // This is the andersen's node for this element
     auto ptsto = aux.getPointsTo(fptr);
 
-    if_debug(
-      dout << "have ptsto:";
-      for (auto aid : ptsto) {
-        dout << " " << aid;
-      }
-      dout << "\n");
+    llvm::dbgs() << "have ptsto:";
+    for (auto aid : ptsto) {
+      llvm::dbgs() << " " << aid;
+    }
+    llvm::dbgs() << "\n";
 
     CFG::CFGid call_id = cfg.nextNode();
     CFG::CFGid ret_id = cfg.nextNode();
@@ -146,7 +175,10 @@ void addCFGLoad(CFG &graph, CFG::CFGid load_id, ConstraintGraph::ObjID dest) {
 
   // Set this as an important or "r" node
   node.setR();
+  llvm::dbgs() << "ADDING USE to cfg\n";
   graph.addUse(load_id, dest);
+
+  node.debug_uses();
 }
 
 void addCFGStore(CFG &graph, CFG::CFGid *store_id,
@@ -301,12 +333,12 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
       auto FirstArg = omap.getValue(CS.getArgument(0));
       auto SecondArg = omap.getValue(CS.getArgument(1));
       // Creates a new node in the graph, and a temp holder in omap
-      auto TempArg = cg.addNode(omap);
+      auto TempArg = omap.createPhonyID();
 
       // Setup constraints
       llvm::dbgs() << "FIXME: Handle memcpy load/store properly!\n";
       cg.add(ConstraintType::Store, FirstArg, TempArg);
-      cg.add(ConstraintType::Load, TempArg, SecondArg);
+      cg.add(ConstraintType::Load, TempArg, SecondArg, TempArg);
       cg.add(ConstraintType::Copy, FirstArg, SecondArg);
 
       // Setup CFG
@@ -366,7 +398,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
         assert(ParentF->getFunctionType()->isVarArg()
             && "va_start in non-vararg function!");
         llvm::Value *Arg = II->getArgOperand(0);
-        auto TempArg = cg.addNode(omap);
+        auto TempArg = omap.createPhonyID();
         llvm::dbgs() << "FIXME: ???VARAG???\n";
         cg.add(ConstraintType::AddressOf, TempArg,
             omap.getVarArg(ParentF));
@@ -738,7 +770,7 @@ static void idAllocaInst(ConstraintGraph &cg, ObjectMap &omap,
   auto &alloc = *llvm::cast<const llvm::AllocaInst>(&inst);
 
   // Get the object associated with this allocation
-  auto obj_id = omap.getObject(&alloc);
+  // auto obj_id = omap.getObject(&alloc);
 
   // Associate that obj with this value
   // cg.associateNode(obj_id, omap.getValue(&inst));
@@ -746,7 +778,8 @@ static void idAllocaInst(ConstraintGraph &cg, ObjectMap &omap,
   // Add a constraint pointing this value to that object
   cg.add(ConstraintType::AddressOf,
       getValueUpdate(cg, omap, &alloc),
-      obj_id);
+      omap.getValue(&alloc));
+      // obj_id);
 }
 
 // FIXME -- Also handle pointer args going through here
@@ -756,17 +789,25 @@ static void idLoadInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
   auto &ld = *llvm::cast<const llvm::LoadInst>(&inst);
 
   if (llvm::isa<llvm::PointerType>(ld.getType())) {
-    cg.add(ConstraintType::Load,
-        getValueUpdate(cg, omap, &ld),
-        omap.getValue(ld.getOperand(0)));
+    auto ld_id = getValueUpdate(cg, omap, &ld);
+    llvm::dbgs() << "Adding load constraint for node: " << ld_id << "\n";
+    llvm::dbgs() << "inst is: " << inst << "\n";
+    cg.add(ConstraintType::Load, ld_id,
+        omap.getValue(ld.getOperand(0)),
+        ld_id);
 
     // Add this to the uses
-    addCFGLoad(cfg, next_id, omap.getValue(&ld));
+    addCFGLoad(cfg, next_id, ld_id);
   } else if (llvm::isa<llvm::PointerType>(ld.getOperand(0)->getType()) &&
       llvm::isa<llvm::IntegerType>(ld.getType())) {
-    cg.add(ConstraintType::Load,
-        ObjectMap::IntValue,
-        omap.getValue(ld.getOperand(0)));
+    // Ld is an int value... those will alias.  So we instead create a phony id
+    auto ld_id = omap.getValue(&ld);
+
+    cg.add(ConstraintType::Load, ld_id,
+        omap.getValue(ld.getOperand(0)),
+        ObjectMap::IntValue);
+
+    addCFGLoad(cfg, next_id, ld_id);
   } else if (llvm::isa<llvm::StructType>(ld.getType())) {
     llvm::errs() << "FIXME: Unhandled struct load!\n";
   }
@@ -1093,6 +1134,14 @@ bool SpecSFS::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
         omap.addObject(AI);
       }
 
+      // Also add values for loads/stores, even if they return int types
+      // -- I need the values for unique identifiers later
+      if (auto ld = llvm::dyn_cast<llvm::LoadInst>(&inst)) {
+        if (!llvm::isa<llvm::PointerType>(ld->getType())) {
+          omap.addValue(ld);
+        }
+      }
+
       if (auto st = llvm::dyn_cast<llvm::StoreInst>(&inst)) {
         omap.addValue(st);
       }
@@ -1136,7 +1185,7 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
 
     // Create the constraint for the actual global
      cg.add(ConstraintType::AddressOf,
-      getValueUpdate(cg, omap, &glbl), obj_id);
+      getValueUpdate(cg, omap, &glbl), omap.getValue(&glbl));
 
     // If its a global w/ an initalizer
     if (glbl.hasDefinitiveInitializer()) {

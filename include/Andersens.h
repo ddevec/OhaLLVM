@@ -490,8 +490,11 @@ class Andersens : public llvm::ModulePass,
   }
 
   const llvm::SparseBitVector<> &getPointsTo(const llvm::Value *val) const {
-    return *GraphNodes[
-      FindNode(getNode(const_cast<llvm::Value*>(val)))].PointsTo;
+    auto node = getNode(const_cast<llvm::Value*>(val));
+
+    auto fnode = FindNode(node);
+
+    return *GraphNodes[fnode].PointsTo;
   }
 
   unsigned valRep(const llvm::Value *val) const {

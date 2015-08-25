@@ -96,8 +96,7 @@ class DUG {
   //{{{
  public:
     // Id Types {{{
-    struct part_id { };
-    typedef ID<part_id, int32_t> PartID;
+    typedef __PartID PartID;
 
     /*
     struct dug_id { };
@@ -149,15 +148,13 @@ class DUG {
       // The node has:  src, dest, type
       // Here we will also have to keep track of which cg::NodeID maps to which
       //   DUG::NodeID so we can transfer the ObjectMap mappings afterwards
-      auto &seg = cg.getSEG();
-      std::map<ConstraintGraph::NodeID, SEG<ObjID>::NodeID> cg_to_dug;
-      std::for_each(seg.edges_begin(), seg.edges_end(),
-          [this, &seg, &omap, &cg_to_dug]
-          (const SEG<ObjID>::edge_iter_type &pedge) {
-        auto &edge = llvm::cast<Constraint<ObjID>>(*pedge);
+      std::for_each(std::begin(cg), std::end(cg),
+          [this, &omap]
+          (const ConstraintGraph::iter_type &pcons) {
+        auto &cons = llvm::cast<Constraint>(*pcons);
         // Insert the node into the seg
-        auto dest = seg.getNode(edge.dest()).extId();
-        auto src = seg.getNode(edge.src()).extId();
+        auto dest = cons.dest();
+        auto src = cons.src();
 
         extern ObjectMap &g_omap;
         const llvm::Value *dest_val = g_omap.valueAtID(dest);
@@ -187,16 +184,15 @@ class DUG {
             llvm::dbgs() << *src_val << "\n";
           }
         } else {
-          llvm::dbgs() << "dest null???\n";
+          llvm::dbgs() << "src null???\n";
         }
 
-        switch (edge.type()) {
+        switch (cons.type()) {
           case ConstraintType::AddressOf:
             {
               llvm::dbgs() << "  node is AddressOf\n";
               // Add AllocNode
               auto ret = DUG_.addNode<AllocNode>(dest, src);
-              cg_to_dug[edge.dest()] = ret->second;
               llvm::dbgs() << "  DUGid is " << ret->second << "\n";
             }
             break;
@@ -208,9 +204,9 @@ class DUG {
             //     operator)
             // Make a phony dest for this store:
             {
-              auto &stedge = llvm::cast<StoreConstraint<ObjID>>(edge);
+              auto &stcons = llvm::cast<StoreConstraint>(cons);
               llvm::dbgs() << "  node is Store\n";
-              auto st_id = stedge.storeId();
+              auto st_id = stcons.storeId();
               llvm::dbgs() << "  adding for store: (" << st_id << ") "
                 << *g_omap.valueAtID(st_id) << "\n";
               auto ret =
@@ -220,9 +216,18 @@ class DUG {
             break;
           case ConstraintType::Load:
             {
+              auto &ldcons = llvm::cast<LoadConstraint>(cons);
               llvm::dbgs() << "  node is Load\n";
-              auto ret = DUG_.addNode<LoadNode>(dest, src);
-              cg_to_dug[edge.dest()] = ret->second;
+              auto ld_id = ldcons.loadId();
+              llvm::dbgs() << "  Actual load_id is: (" << ld_id << ") " <<
+                *g_omap.valueAtID(ld_id) << "\n";
+              auto ret = DUG_.addNode<LoadNode>(ld_id, dest, src);
+              llvm::dbgs() << "  Confirming load node!\n";
+              auto &nd = DUG_.getNode<LoadNode>(ret->second);
+              llvm::dbgs() << "    dest is: " << *g_omap.valueAtID(nd.dest())
+                  << "\n";
+              llvm::dbgs() << "    src is: " << *g_omap.valueAtID(nd.src())
+                  << "\n";
               llvm::dbgs() << "  DUGid is " << ret->second << "\n";
             }
             break;
@@ -230,7 +235,6 @@ class DUG {
             {
               llvm::dbgs() << "  node is Copy\n";
               auto ret = DUG_.addNode<CopyNode>(dest, src);
-              cg_to_dug[edge.dest()] = ret->second;
               llvm::dbgs() << "  DUGid is " << ret->second << "\n";
             }
             break;
@@ -281,6 +285,7 @@ class DUG {
 
       // Now fixup the object mapping, using cg_to_dug and
       //     seg node_map iteration
+      /*
       std::for_each(seg.node_map_begin(), seg.node_map_end(),
           [this, &cg_to_dug]
           (const std::pair<const ObjID, SEG<ObjID>::NodeID> &pr) {
@@ -288,25 +293,6 @@ class DUG {
         llvm::dbgs() << "adding mapping to DUG: (" << pr.first << ", " <<
             cg_to_dug[pr.second] << ")\n";
         DUG_.addMapping(pr.first, cg_to_dug[pr.second]);
-      });
-
-      /*
-      std::for_each(seg.edges_begin(), seg.edges_end(),
-          [this, &cg](const SEG<ObjID>::edge_iter_type &pedge) {
-        auto &edge = llvm::cast<Constraint<ObjID>>(*pedge);
-
-        // Convert from seg id to DUG_ id via extId()
-        auto pdug_src = DUG_.getNodeOrNull(cg.getNode(edge.src()).extId());
-
-        // NOTE: Its possible there is no src node (think of addrof operators),
-        //   in this instance, we don't make a DUG edge, the info is encoded in
-        //   the node
-        if (pdug_src != nullptr) {
-          auto &dug_src = *pdug_src;
-          auto &dug_dest = getNode(cg_to_dug[edge.dest()]);
-
-          DUG_.addEdge<DUGEdge>(dug_src.id(), dug_dest.id());
-        }
       });
       */
     }
@@ -369,7 +355,7 @@ class DUG {
     }
 
     void setNodeToPartition(
-        std::map<DUGid, PartID> mapping) {
+        std::map<ObjID, PartID> mapping) {
       revPartitionMap_ = std::move(mapping);
     }
 
@@ -378,9 +364,12 @@ class DUG {
       return relevantNodes_;
     }
 
+    std::map<ObjID, PartID> &objToPartMap() {
+      return revPartitionMap_;
+    }
 
-    PartID getPart(DUGid dug_id) {
-      return revPartitionMap_.at(dug_id);
+    PartID getPart(ObjID obj_id) {
+      return revPartitionMap_.at(obj_id);
     }
 
     std::vector<std::pair<DUG::DUGid, ObjectMap::ObjID>> &getObjs(PartID part_id) {  // NOLINT
@@ -521,8 +510,8 @@ class DUG {
     class PartNode : public DUGNode {
       //{{{
      public:
-      PartNode(NodeKind kind, SEG<ObjID>::NodeID node_id, ObjectMap::ObjID src,
-          ObjectMap::ObjID dest) : DUGNode(kind, node_id, dest, src) {
+      PartNode(NodeKind kind, SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest,
+          ObjectMap::ObjID src) : DUGNode(kind, node_id, dest, src) {
         assert(kind > NodeKind::PartNode && kind < NodeKind::PartNodeEnd);
       }
 
@@ -558,9 +547,10 @@ class DUG {
     class LoadNode : public PartNode {
       //{{{
      public:
-        LoadNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest,
-            ObjectMap::ObjID src)
-          : PartNode(NodeKind::LoadNode, node_id, dest, src) { }
+        LoadNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID phony_dest,
+            ObjectMap::ObjID real_dest, ObjectMap::ObjID src)
+          : PartNode(NodeKind::LoadNode, node_id, phony_dest, src),
+        realDest_(real_dest) { }
 
         // NOTE: Process implemented in "Solve.cpp"
         void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
@@ -568,7 +558,14 @@ class DUG {
         static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
           return node->getKind() == NodeKind::LoadNode;
         }
+
+        ObjectMap::ObjID realDest() const {
+          return realDest_;
+        }
       //}}}
+
+     private:
+        ObjectMap::ObjID realDest_;
     };
 
     class StoreNode : public PartNode {
@@ -633,7 +630,7 @@ class DUG {
       partitionMap_;
     std::map<PartID, std::vector<std::pair<DUGid, ObjID>>>
       relevantNodes_;
-    std::map<DUGid, PartID> revPartitionMap_;
+    std::map<ObjID, PartID> revPartitionMap_;
 
     SEG<ObjID> DUG_;
     //}}}

@@ -37,13 +37,13 @@ static int getIdx(SEG<ConstraintGraph::ObjID>::NodeID id) {
 //}}}
 
 // Data for HU nodes {{{
-struct HUNode : public SEGNode<ConstraintGraph::ObjID> {
+struct HUNode : public UnifyNode<ConstraintGraph::ObjID> {
   //{{{
   typedef typename ConstraintGraph::ObjID ObjID;
   typedef typename SEG<ConstraintGraph::ObjID>::NodeID NodeID;
 
   HUNode(NodeID node_id, ConstraintGraph::ObjID id) :
-    SEGNode<ConstraintGraph::ObjID>(NodeKind::HUNode, node_id, id) { }
+    UnifyNode<ConstraintGraph::ObjID>(NodeKind::HUNode, node_id, id) { }
 
   void addPtsTo(NodeID id) {
     ptsto_.set(getIdx(id));
@@ -117,8 +117,7 @@ struct HUEdge : public SEGEdge<ConstraintGraph::ObjID> {
 
     // Construction from Constraint {{{
     HUEdge(NodeID src, NodeID dest,
-        SEG<ConstraintGraph::ObjID> &graph,
-        const Constraint<ConstraintGraph::ObjID> &con) :
+        SEG<ConstraintGraph::ObjID> &graph, const Constraint &con) :
         SEGEdge(EdgeKind::HUEdge, src, dest),
         type_(con.type()), offs_(con.offs()) {
       // Get our two HU nodes
@@ -255,8 +254,9 @@ static void visitHU(HUSeg &seg, HUNode &node, const ObjectMap &if_debug(omap)) {
 }  // End anon namespace
 
 // optimizeConstraints {{{
-bool SpecSFS::optimizeConstraints(ConstraintGraph &graph,
+bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &,
     const ObjectMap &omap) {
+
   // FIXME: HAX to be removed later
   g_omap = const_cast<ObjectMap *>(&omap);
   // Okay, we run HU here, over the constraints
@@ -282,24 +282,39 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph,
   // Instead, create it fresh:
   HUSeg huSeg;
 
-  std::map<ConstraintGraph::NodeID, HUSeg::NodeID> remap;
-  std::map<HUSeg::NodeID, ConstraintGraph::NodeID> rev_remap;
-  auto &conGraph = graph.getSEG();
   // create a HUNode per ConstraintNode:
-  std::for_each(conGraph.cbegin(), conGraph.cend(),
-      [&huSeg, &remap, &rev_remap]
-      (const ConstraintGraph::ConstraintSEG::node_iter_type &pnode) {
-    auto ret = huSeg.addNode<HUNode>(pnode->extId());
-    remap[pnode->id()] = ret->second;
-    rev_remap[ret->second] = pnode->id();
+  std::for_each(graph.cbegin(), graph.cend(),
+      [&huSeg]
+      (const ConstraintGraph::iter_type &pcons) {
+    // Store constraints don't define nodes!
+    auto dest = pcons->dest();
+
+    if (huSeg.findNode(dest) == huSeg.node_map_end()) {
+      huSeg.addNode<HUNode>(dest);
+    }
+
+    if (huSeg.findNode(pcons->src()) == huSeg.node_map_end()) {
+      huSeg.addNode<HUNode>(pcons->src());
+    }
   });
 
-  std::for_each(conGraph.edges_cbegin(), conGraph.edges_cend(),
-      [&huSeg, &remap]
-      (const ConstraintGraph::ConstraintSEG::edge_iter_type &pedge) {
-    auto &cons = llvm::cast<Constraint<ConstraintGraph::ObjID>>(*pedge);
-    dout << "Adding edge: " << cons.src() << " -> " << cons.dest() << "\n";
-    huSeg.addEdge<HUEdge>(remap[cons.src()], remap[cons.dest()], huSeg, cons);
+  std::for_each(graph.cbegin(), graph.cend(),
+      [&huSeg]
+      (const ConstraintGraph::iter_type &pcons) {
+    auto cons = *pcons;
+
+    auto src_pr = huSeg.getNodes(cons.src());
+    assert(std::distance(src_pr.first, src_pr.second) == 1);
+    auto src_id = src_pr.first->second;
+
+    auto dest = cons.dest();
+
+    auto dest_pr = huSeg.getNodes(dest);
+    assert(std::distance(dest_pr.first, dest_pr.second) == 1);
+    auto dest_id = dest_pr.first->second;
+
+
+    huSeg.addEdge<HUEdge>(src_id, dest_id, huSeg, cons);
   });
 
 
@@ -316,7 +331,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph,
 
   // Now iterate in topological order (start w/ root, end w/ leaf)
   std::for_each(huSeg.topo_begin(), huSeg.topo_end(),
-      [&huSeg, &omap](ConstraintGraph::NodeID node_id) {
+      [&huSeg, &omap](HUSeg::NodeID node_id) {
     // Do the HU visit (pred collection) on each node in reverse
     //    topological order
     visitHU(huSeg, huSeg.getNode<HUNode>(node_id), omap);
@@ -356,59 +371,82 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph,
       pts_to_pe.emplace(node.ptsto(), node.id());
       dout << "pe for ptsto: " << node.id() << "\n";
     } else {
-      auto &dest_node =
-        graph.getNode(rev_remap[it->second]);
-      auto &src_node =
-        graph.getNode(rev_remap[node.id()]);
+      // These nodes are pe equivalent
+      // Unite the HU nodes, then iterate through the constraints and adjust ids
+      //    based on reps?
 
-      auto src_ext_id = src_node.extId();
-      auto dest_ext_id = dest_node.extId();
+      // Get the rep from the ptsto
+      auto rep_node = huSeg.getNode<HUNode>(it->second);
 
-      llvm::dbgs() << "Merging obj_id: " << dest_ext_id << " with: " <<
-        src_ext_id << "\n";
-
-      /*
-      llvm::dbgs() << "for dest: (" << dest_node.id() << ") " <<
-        *g_omap->valueAtID(dest_ext_id) << "\n";
-      std::for_each(std::begin(dest_node.preds()), std::end(dest_node.preds()),
-          [&conGraph] (SEG<ObjectMap::ObjID>::EdgeID pred_edge) {
-        auto pred_id = conGraph.getEdge(pred_edge).src();
-        auto pred_node = conGraph.getNode(pred_id);
-
-        auto ext_id = pred_node.extId();
-        llvm::dbgs() << " have pred: (" << pred_edge << ") " <<
-            *g_omap->valueAtID(ext_id) << "\n";
-      });
-      */
-
-      llvm::dbgs() << "for src: (" << src_node.id() << ") " <<
-        *g_omap->valueAtID(src_ext_id) << "\n";
-      std::for_each(std::begin(src_node.preds()), std::end(src_node.preds()),
-          [&conGraph] (SEG<ObjectMap::ObjID>::EdgeID pred_edge) {
-        auto pred_id = conGraph.getEdge(pred_edge).src();
-        auto pred_node = conGraph.getNode(pred_id);
-
-        auto ext_id = pred_node.extId();
-        llvm::dbgs() << " have pred: (" << pred_edge << ") " <<
-            *g_omap->valueAtID(ext_id) << "\n";
-        auto pred_src_id = conGraph.getEdge(pred_edge).dest();
-        auto pred_src_node =  conGraph.getNode(pred_src_id);
-        auto pred_ext_id = pred_src_node.extId();
-        llvm::dbgs() << "   have pred_dest (" << pred_src_id << ") " <<
-            *g_omap->valueAtID(pred_ext_id) << "\n";
-      });
-
-      dest_node.unite(conGraph, src_node);
-      auto it1 = conGraph.findNode(src_ext_id);
-      auto it2 = conGraph.findNode(dest_ext_id);
-      assert(it2 != conGraph.node_map_end());
-      assert(it1 != conGraph.node_map_end());
-
-      llvm::dbgs() << "Remap gets: " << it1->second << ", " << it2->second <<
-        "\n";
-      assert(it1->second == it2->second);
+      // Unite the node with the rep node
+      rep_node.unite(huSeg, node);
     }
   }
+
+  std::map<ObjectMap::ObjID, ObjectMap::ObjID> load_remap;
+  // Now iterate each constraint, and update their ObjIDs to point to reps
+  std::for_each(std::begin(graph), std::end(graph),
+      [&huSeg, &load_remap] (ConstraintGraph::iter_type &pcons) {
+    auto src_pr = huSeg.getNodes(pcons->src());
+    assert(std::distance(src_pr.first, src_pr.second) == 1);
+    auto hu_src_id = src_pr.first->second;
+    auto src_rep_id = huSeg.getNode(hu_src_id).extId();
+
+    auto dest = pcons->dest();
+
+    auto dest_pr = huSeg.getNodes(dest);
+    assert(std::distance(dest_pr.first, dest_pr.second) == 1);
+    auto hu_dest_id = dest_pr.first->second;
+    auto dest_rep_id = huSeg.getNode(hu_dest_id).extId();
+
+    // If this is a load cons, its dest shouldn't have changed
+    /*
+    llvm::dbgs() << "new value: " << *g_omap->valueAtID(dest_rep_id) << "\n";
+    llvm::dbgs() << "old value: " << *g_omap->valueAtID(pcons->dest()) << "\n";
+    */
+    pcons->retarget(src_rep_id, dest_rep_id);
+  });
+
+  // Now clean up our constraints (remove duplicates)
+  graph.unique();
+
+  // Now remap all appropriate vector entries
+  // meh... O(N * log(N) )
+  /*
+  SEG<CFG::CFGid> &cfg_seg = cfg.getSEG();
+  std::for_each(std::begin(cfg_seg), std::end(cfg_seg),
+      [&load_remap, &cfg]
+      (SEG<CFG::CFGid>::node_iter_type &pnode) {
+    CFG::Node &cfg_node = llvm::cast<CFG::Node>(*pnode);
+
+    llvm::dbgs() << "node eval: "<< cfg_node.extId() << "\n";
+
+    std::vector<std::pair<ObjectMap::ObjID, ObjectMap::ObjID>> remap;
+    std::for_each(cfg_node.uses_begin(), cfg_node.uses_end(),
+        [&load_remap, &remap] (const ObjectMap::ObjID &obj_id) {
+      llvm::dbgs() << "obj_id eval\n";
+      auto it = load_remap.find(obj_id);
+
+      if (it != std::end(load_remap)) {
+        if (obj_id != it->second) {
+          llvm::dbgs() << "  Adding remap: (" << obj_id << ", " << it->second <<
+            ")\n";
+          remap.emplace_back(obj_id, it->second);
+        }
+      }
+    });
+
+    std::for_each(std::begin(remap), std::end(remap),
+        [&cfg, &cfg_node] (std::pair<ObjectMap::ObjID, ObjectMap::ObjID> &pr) {
+      cfg_node.removeUse(pr.first);
+      cfg_node.addUse(pr.second);
+
+      llvm::dbgs() << "Erasing obj_id: " << pr.first << ": " <<
+        *g_omap->valueAtID(pr.first) << "\n";
+      cfg.eraseObjToCFG(pr.first);
+    });
+  });
+  */
 
   return false;
 }

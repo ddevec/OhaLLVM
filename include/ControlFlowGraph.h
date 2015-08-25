@@ -57,7 +57,8 @@ class CFG {
         Node(const Node &) = default;
         Node(Node &&) = default;
 
-        Node &operator=(const Node &) = default;
+        // No COPY!
+        Node &operator=(const Node &) = delete;
         Node &operator=(Node &&) = default;
         //}}}
 
@@ -132,12 +133,151 @@ class CFG {
           r_ |= node.r_;
           c_ |= node.c_;
 
+          uses_.insert(std::begin(node.uses_), std::end(node.uses_));
+          defs_.insert(std::begin(node.defs_), std::end(node.defs_));
+          /*
+          llvm::dbgs() << "Post merge for node: " << extId() << "<-" <<
+            node.extId() << "\n";
+          llvm::dbgs() << "  node.debug_uses:\n";
+          node.debug_defs();
+          llvm::dbgs() << "  debug_uses():\n";
+          debug_defs();
+          */
+
+
           UnifyNode<CFGid>::unite(graph, n);
         }
         //}}}
 
+        // Def/use tracking {{{
+        bool addDef(ObjectMap::ObjID def_id) {
+          // Don't allow double adds... for now
+          /*
+          llvm::dbgs() << "Adding def: " << def_id << " to node (" << id() <<
+            ") : " << extId() << "\n";
+          */
+          auto ret = defs_.insert(def_id);
+          assert(ret.second);
+          return ret.second;
+        }
+
+        void clearDefs() {
+          defs_.clear();
+        }
+
+        bool hasDef() const {
+          return !defs_.empty();
+        }
+
+        void debug_defs() const {
+          llvm::dbgs() << "  defs.size is: " << defs_.size() << "\n";
+          llvm::dbgs() << "  defs are:";
+          for (auto id : defs_) {
+            llvm::dbgs() << " " << id;
+          }
+          llvm::dbgs() << "\n";
+        }
+
+        bool removeUse(ObjectMap::ObjID use_id) {
+          // Don't allow double adds... for now
+          auto ret = uses_.erase(use_id);
+          assert(ret == 1);
+          return (ret == 1);
+        }
+
+        bool addUse(ObjectMap::ObjID use_id) {
+          // Don't allow double adds... for now
+          /*
+          llvm::dbgs() << "Adding use: " << use_id << " to node: " << id() <<
+            "\n";
+          */
+          auto ret = uses_.insert(use_id);
+
+          assert(ret.second);
+          return ret.second;
+        }
+
+        void clearUses() {
+          uses_.clear();
+        }
+
+        bool hasUse() const {
+          return !uses_.empty();
+        }
+
+        void debug_uses() const {
+          llvm::dbgs() << "  Uses.size is: " << uses_.size() << "\n";
+          llvm::dbgs() << "  Uses are:";
+          for (auto id : uses_) {
+            llvm::dbgs() << " " << id;
+          }
+          llvm::dbgs() << "\n";
+        }
+        //}}}
+
+        // Iterate defs/uses {{{
+        typedef std::set<ObjectMap::ObjID>::iterator
+          def_use_iterator;
+        typedef std::set<ObjectMap::ObjID>::const_iterator
+          const_def_use_iterator;
+
+        def_use_iterator defs_begin() {
+          return std::begin(defs_);
+        }
+
+        def_use_iterator defs_end() {
+          return std::end(defs_);
+        }
+
+        const_def_use_iterator defs_begin() const {
+          return std::begin(defs_);
+        }
+
+        const_def_use_iterator defs_end() const {
+          return std::end(defs_);
+        }
+
+        const_def_use_iterator defs_cbegin() const {
+          return std::begin(defs_);
+        }
+
+        const_def_use_iterator defs_cend() const {
+          return std::end(defs_);
+        }
+
+        def_use_iterator uses_begin() {
+          return std::begin(uses_);
+        }
+
+        def_use_iterator uses_end() {
+          return std::end(uses_);
+        }
+
+        /*
+        const_def_use_iterator uses_begin() const {
+          return std::begin(uses_);
+        }
+
+        const_def_use_iterator uses_end() const {
+          return std::end(uses_);
+        }
+
+        const_def_use_iterator uses_cbegin() const {
+          return std::begin(uses_);
+        }
+
+        const_def_use_iterator uses_cend() const {
+          return std::end(uses_);
+        }
+        */
+        //}}}
+
      private:
       // Private variables {{{
+      // The objects defined/uses by this node
+      std::set<ObjectMap::ObjID> defs_;
+      std::set<ObjectMap::ObjID> uses_;
+
       // To identify p/m nodes (see computeSSA comments)
       bool m_ = false;
       // To identify r/u nodes (see computeSSA comments)
@@ -266,33 +406,45 @@ class CFG {
     // Def/use/global tracking {{{
     // Setters {{{
     void addUse(CFGid cfg_id, ObjectMap::ObjID load_dest_id) {
-      uses_[cfg_id].push_back(load_dest_id);
-      auto ret = objToCFG_.emplace(load_dest_id, std::make_pair(cfg_id,
-            ConstraintType::Load));
+      auto node_pr = CFG_.getNodes(cfg_id);
+      assert(std::distance(node_pr.first, node_pr.second) == 1);
+      auto node_id = node_pr.first->second;
+      auto &node = CFG_.getNode<Node>(node_id);
+
+      node.addUse(load_dest_id);
+
+      auto ret = objToCFG_.emplace(load_dest_id, cfg_id);
       assert(ret.second);
     }
 
     void addDef(CFGid cfg_id, ObjectMap::ObjID store_id) {
-      defs_[cfg_id].push_back(store_id);
-      assert(defs_.at(cfg_id).size() == 1);
-      auto ret = objToCFG_.emplace(store_id, std::make_pair(cfg_id,
-            ConstraintType::Store));
+      auto node_pr = CFG_.getNodes(cfg_id);
+      assert(std::distance(node_pr.first, node_pr.second) == 1);
+      auto node_id = node_pr.first->second;
+      auto &node = CFG_.getNode<Node>(node_id);
+
+      node.addDef(store_id);
+
+      auto ret = objToCFG_.emplace(store_id, cfg_id);
       assert(ret.second);
+    }
+
+    bool eraseObjToCFG(ObjectMap::ObjID obj_id) {
+      size_t ret = objToCFG_.erase(obj_id);
+      assert(ret == 1);
+      return ret == 1;
     }
 
     void addGlobalInit(ObjectMap::ObjID glbl_id) {
       globalInits_.push_back(glbl_id);
-      objToCFG_[glbl_id] = std::make_pair(CFGInit, ConstraintType::Store);
+      auto ret = objToCFG_.emplace(glbl_id, CFGInit);
+      assert(ret.second);
     }
     //}}}
 
     // Accessors {{{
     CFGid getCFGid(ObjectMap::ObjID obj_id) const {
-      return objToCFG_.at(obj_id).first;
-    }
-
-    ConstraintType getType(ObjectMap::ObjID obj_id) const {
-      return objToCFG_.at(obj_id).second;
+      return objToCFG_.at(obj_id);
     }
 
     bool isStrong(ObjectMap::ObjID) const {
@@ -406,18 +558,29 @@ class CFG {
     //}}}
 
     // Def/use/global init Iterators {{{
-    typedef std::map<CFGid, std::vector<ObjectMap::ObjID>>::const_iterator
+    /*
+    typedef std::map<ObjectMap::ObjID, >::const_iterator
       const_def_use_iterator;
 
-    typedef std::vector<ObjectMap::ObjID>::const_iterator
-      const_glbl_init_iterator;
+    typedef std::map<CFGid, std::vector<ObjectMap::ObjID>>::iterator
+      def_use_iterator;
+    */
 
+    /*
     const_def_use_iterator defs_begin() const {
       return std::begin(defs_);
     }
 
     const_def_use_iterator defs_end() const {
       return std::end(defs_);
+    }
+
+    def_use_iterator uses_begin() {
+      return std::begin(uses_);
+    }
+
+    def_use_iterator uses_end() {
+      return std::end(uses_);
     }
 
     const_def_use_iterator uses_begin() const {
@@ -427,6 +590,10 @@ class CFG {
     const_def_use_iterator uses_end() const {
       return std::end(uses_);
     }
+    */
+
+    typedef std::vector<ObjectMap::ObjID>::const_iterator
+      const_glbl_init_iterator;
 
     const_glbl_init_iterator global_inits_begin() const {
       return std::begin(globalInits_);
@@ -438,16 +605,17 @@ class CFG {
     //}}}
 
     // CFG Iterators {{{
-    typedef ControlFlowGraph::edge_iterator cfg_iterator;
-    typedef ControlFlowGraph::const_edge_iterator const_cfg_iterator;
 
-    typedef std::map<ObjectMap::ObjID, std::pair<CFGid, ConstraintType>>::iterator  // NOLINT
+    typedef std::map<ObjectMap::ObjID, CFGid>::iterator  // NOLINT
       obj_to_cfg_iterator;
-    typedef std::map<ObjectMap::ObjID, std::pair<CFGid, ConstraintType>>::const_iterator  // NOLINT
+    typedef std::map<ObjectMap::ObjID, CFGid>::const_iterator  // NOLINT
       const_obj_to_cfg_iterator;
-    typedef std::pair<ObjectMap::ObjID, std::pair<CFGid, ConstraintType>>
+    typedef std::pair<ObjectMap::ObjID, CFGid>
       obj_to_cfg_type;
 
+    /*
+    typedef ControlFlowGraph::edge_iterator cfg_iterator;
+    typedef ControlFlowGraph::const_edge_iterator const_cfg_iterator;
     cfg_iterator cfg_begin() {
       // return std::begin(cfgEdges_);
       return CFG_.edges_begin();
@@ -477,6 +645,7 @@ class CFG {
       // return cfgEdges_.cend();
       return CFG_.edges_cend();
     }
+    */
 
     const_obj_to_cfg_iterator obj_to_cfg_begin() const {
       return std::begin(objToCFG_);
@@ -518,18 +687,11 @@ class CFG {
     // The CFG node for each call instruction's return
     std::map<ObjectMap::ObjID, CFGid> cfgFunctionReturns_;
 
-    // Defs/uses represented at each CFG node, used to assicate calculated SSA
-    // info back to contraints
-    // Also global variable inits... similar to defs... but only for GV initial
-    //   values
-    std::map<CFGid, std::vector<ObjectMap::ObjID>> defs_;
-    std::map<CFGid, std::vector<ObjectMap::ObjID>> uses_;
-
     // Notation of ConstraintGraph::ObjID's associated with global inits.  These inits are
     //   each associated with the CFGInit CFGid (before main)
     std::vector<ObjectMap::ObjID> globalInits_;
 
-    std::map<ObjectMap::ObjID, std::pair<CFGid, ConstraintType>> objToCFG_;
+    std::map<ObjectMap::ObjID, CFGid> objToCFG_;
 
     // List of functions that have no obvious uses
     std::map<ObjectMap::ObjID, std::vector<ConstraintGraph::ConsID>> unusedFunctions_;

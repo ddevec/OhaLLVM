@@ -86,17 +86,27 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
     error("CreateConstraints failure!");
   }
 
-  cg.getSEG().printDotFile("top.dot", omap);
+  {
+    SEG<CFG::CFGid> &cfg_seg = cfg.getSEG();
+    std::for_each(std::begin(cfg_seg), std::end(cfg_seg),
+        [] (SEG<CFG::CFGid>::node_iter_type &pnode) {
+      CFG::Node &cfg_node = llvm::cast<CFG::Node>(*pnode);
+
+      cfg_node.debug_uses();
+    });
+  }
+
+  // cg.getSEG().printDotFile("top.dot", omap);
 
   // Initial optimization pass
   // Runs HU on the graph as it stands, w/ only top level info filled in
   // Removes any nodes deemed to be non-ptr (definitely null), and merges nodes
   //   with statically equivalent ptsto sets
-  if (optimizeConstraints(cg, omap)) {
+  if (optimizeConstraints(cg, cfg, omap)) {
     error("OptimizeConstraints failure!");
   }
 
-  cg.getSEG().printDotFile("top_HU.dot", omap);
+  // cg.getSEG().printDotFile("top_HU.dot", omap);
 
   cfg.getSEG().printDotFile("CFG.dot", omap);
 
@@ -104,8 +114,8 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   dout << "Running Andersens\n";
   Andersens aux;
   bool ret = aux.runOnModule(M);
-  // Andersens had better not change M!
   dout << "Andersens done\n";
+  // Andersens had better not change M!
   assert(ret == false);
 
   // Now, fill in the indirect function calls
@@ -114,7 +124,7 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   }
 
   // The PE graph was updated by addIndirectCalls
-  cg.getSEG().printDotFile("top_indir.dot", omap);
+  // cg.getSEG().printDotFile("top_indir.dot", omap);
 
   cfg.getSEG().printDotFile("CFG_indir.dot", omap);
 
@@ -154,11 +164,13 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
     if (top_val == nullptr) {
       llvm::dbgs() << "Value is (id): " << pr.first << "\n";
     } else if (auto gv = llvm::dyn_cast<llvm::GlobalValue>(top_val)) {
-      llvm::dbgs() << "Value is: " << gv->getName() << "\n";
+      llvm::dbgs() << "Value (" << pr.first << ") is: " <<
+          gv->getName() << "\n";
     } else if (auto fcn = llvm::dyn_cast<llvm::Function>(top_val)) {
-      llvm::dbgs() << "Value is: " << fcn->getName() << "\n";
+      llvm::dbgs() << "Value (" << pr.first <<") is: " <<
+          fcn->getName() << "\n";
     } else {
-      llvm::dbgs() << "Value is: " << *top_val << "\n";
+      llvm::dbgs() << "Value (" << pr.first << ") is: " << *top_val << "\n";
     }
 
     std::for_each(pr.second.cbegin(), pr.second.cend(),
@@ -166,13 +178,13 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
       auto loc_val = omap.valueAtID(obj_id);
 
       if (loc_val == nullptr) {
-        llvm::dbgs() << "Value is (id): " << obj_id << "\n";
+        llvm::dbgs() << "  Value is (id): " << obj_id << "\n";
       } else if (auto gv = llvm::dyn_cast<llvm::GlobalValue>(loc_val)) {
-        llvm::dbgs() << "  " << gv->getName() << "\n";
+        llvm::dbgs() << "  " << obj_id << ": " << gv->getName() << "\n";
       } else if (auto fcn = llvm::dyn_cast<llvm::Function>(loc_val)) {
-        llvm::dbgs() << "  " << fcn->getName() << "\n";
+        llvm::dbgs() << "  " << obj_id << ": " << fcn->getName() << "\n";
       } else {
-        llvm::dbgs() << "  " << *loc_val << "\n";
+        llvm::dbgs() << "  " << obj_id << ": " << *loc_val << "\n";
       }
     });
   });

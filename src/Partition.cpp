@@ -58,51 +58,52 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
   */
 
 
-  // Now calculate our "access equivalence sets" for defs and uses
+  // This map holds the conservative "Access Equivalence"
+  //   sets for each pointer analyzed
   std::map<ObjectMap::ObjID, Bitmap> AE;
-  auto calc_ae = [&cfg, &aux, &omap, &AE]
-      (const std::pair<const CFG::CFGid, std::vector<ObjectMap::ObjID>> &pr) {
+
+  llvm::dbgs() << "Doing AE creation loop\n";
+  // Calculate the Access equivalencies:
+  //   For each object in the CFG
+  std::for_each(cfg.obj_to_cfg_begin(), cfg.obj_to_cfg_end(),
+      [&cfg, &aux, &omap, &AE]
+      (const std::pair<const ObjectMap::ObjID, CFG::CFGid> &pr) {
     // For each instruction within that group
-    std::for_each(std::begin(pr.second), std::end(pr.second),
-        [&cfg, &aux, &omap, &AE]
-        (ObjectMap::ObjID obj_id) {
-      // Get the actual instruction
-      const llvm::Value *val = omap.valueAtID(obj_id);
-      auto old_val = val;
+    auto obj_id = pr.first;
+    // Get the actual instruction
+    const llvm::Value *val = omap.valueAtID(obj_id);
+    auto old_val = val;
 
-      if (auto pld = llvm::dyn_cast<const llvm::LoadInst>(val)) {
-        val = pld->getPointerOperand();
-      } else {
-        auto pst = llvm::cast<const llvm::StoreInst>(val);
-        val = pst->getOperand(1);
-      }
+    if (auto pld = llvm::dyn_cast<const llvm::LoadInst>(val)) {
+      // The src
+      val = pld->getPointerOperand();
+    } else if (auto pst = llvm::dyn_cast<const llvm::StoreInst>(val)) {
+      // The src?
+      val = pst->getOperand(1);
+    // Global value?
+    } else {
+      assert(llvm::isa<llvm::GlobalValue>(val));
+    }
 
-      // Now get the objects pointed to by it:
-      auto &ptsto = aux.getPointsTo(val);
+    // Now get the objects pointed to by it:
+    // llvm::dbgs() << "queried val is : " << *val << "\n";
+    auto &ptsto = aux.getPointsTo(val);
 
-      dout << "AE: Adding obj_id: " << obj_id << " for val: " <<
-          *old_val << "\n";
-      dout << "  ptsto is:";
-      for (auto id : ptsto) {
-        dout << " " << id;
-      }
-      dout << "\n";
+    llvm::dbgs() << "AE: Adding obj_id: " << obj_id << " for val: " <<
+        *old_val << "\n";
+    llvm::dbgs() << "  ptsto is:";
+    for (auto id : ptsto) {
+      llvm::dbgs() << " " << id;
+    }
+    llvm::dbgs() << "\n";
 
-      auto &ae_set = AE[obj_id];
-      // Say we do not contain a global initializer for this variable...
-      //    That will be handled later
+    auto &ae_set = AE[obj_id];
+    // Say we do not contain a global initializer for this variable...
+    //    That will be handled later
 
-      // Now, add those to our access equivalence set:
-      ae_set |= ptsto;
-    });
-  };
-
-  // Calculate the Access elquivalencies:
-  //   For each store
-  std::for_each(cfg.defs_begin(), cfg.defs_end(), calc_ae);
-
-  //   And for each load
-  std::for_each(cfg.uses_begin(), cfg.uses_end(), calc_ae);
+    // Now, add those to our access equivalence set:
+    ae_set |= ptsto;
+  });
 
   // Okay, I now have a populated AE, fill out our parts
   // Create the mechanisms needed to generate partition ids:
@@ -121,38 +122,44 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
   });
   */
 
-  // Now create partitions
-  // Do this by iterating each access equivalent group, and grouping all
+  // Now group AE variables into partitions
+  // Do this by iterating each Access Equivalent group, and grouping all
   //   nodes in it to a parttion
-  llvm::dbgs() << "Doing part creation loop!\n";
+  llvm::dbgs() << "Doing AE grouping loop!\n";
   std::for_each(std::begin(AE), std::end(AE),
       [&part_finder, &dug](std::pair<const ObjectMap::ObjID, Bitmap> &pr) {
     llvm::dbgs() << "  For obj_id: " << pr.first << "\n";
-    auto node_set = dug.getNodes(pr.first);
-    // We should have found at least 1 node....
-    assert(std::distance(node_set.first, node_set.second) != 0);
+    extern ObjectMap &g_omap;
+    llvm::dbgs() << "  That's value: " << *g_omap.valueAtID(pr.first) << "\n";
 
-    bool found_node = false;
+    auto obj_id = pr.first;
+
+    // Get the DUG node for this obj_id
+    auto node_set = dug.getNodes(obj_id);
+
+    // We should have found exactly 1 node....
+    // FIXME: I forgot to remove duplicate constraitns after optimization, so
+    //   this can be more than 1... ignore it for now... I'll fix it later
+    // assert(std::distance(node_set.first, node_set.second) == 1);
+    llvm::dbgs() << "Found multiple nodes in DUG? " <<
+      std::distance(node_set.first, node_set.second) << "\n";
     std::for_each(node_set.first, node_set.second,
-        [&dug, &part_finder, &pr, &found_node]
-        (std::pair<const ObjectMap::ObjID, DUG::DUGid> &node_pair) {
+        [&part_finder, &pr, &obj_id]
+        (std::pair<ObjectMap::ObjID, DUG::DUGid> pr2) {
+      // auto dug_id = node_set.first->second;
+      auto dug_id = pr2.second;
+
+      // Debug stuffs
       extern ObjectMap &g_omap;
       llvm::dbgs() << "Looking at obj: " <<
-        *g_omap.valueAtID(node_pair.first) << "\n";
-      DUG::DUGid dug_id = node_pair.second;
-      auto &nd = dug.getNode(dug_id);
-      llvm::dbgs() << "    got dug_id: " << node_pair.second << "\n";
-      // Since we may have multiple mappings from an external id, we filter out
-      //   any non-load/store nodes
-      if (llvm::isa<DUG::StoreNode>(nd) || llvm::isa<DUG::LoadNode>(nd)) {
-        found_node = true;
-        part_finder[pr.second].push_back(std::make_pair(dug_id, pr.first));
-      }
+        *g_omap.valueAtID(obj_id) << "\n";
+      llvm::dbgs() << "    got dug_id: " << dug_id << "\n";
+
+      part_finder[pr.second].push_back(std::make_pair(dug_id, obj_id));
     });
-    assert(found_node);
   });
 
-  // Assign ID's to the partitons:
+  // Maps used to associate Partition Ids (PartID) with their contents
   std::map<DUG::PartID, std::vector<std::pair<DUG::DUGid, ObjectMap::ObjID>>>
     rev_part_map;
   std::map<DUG::PartID, std::vector<std::pair<DUG::DUGid, ObjectMap::ObjID>>>
@@ -164,64 +171,120 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
       [&rev_part_map, &relevant_node_map, &aux, &dug, &cfg,
         &part_id_generator, &omap]
       (std::pair<const Bitmap, std::vector<std::pair<DUG::DUGid, ObjectMap::ObjID>>> &pr) {  // NOLINT
-    // Remove duplicate dugids:
-    std::sort(std::begin(pr.second), std::end(pr.second));
-    auto dug_id_it = std::unique(std::begin(pr.second), std::end(pr.second));
-    pr.second.erase(dug_id_it, std::end(pr.second));
     auto part_id = part_id_generator.next();
 
-    auto val = omap.valueAtID(pr.second.front().second);
-    llvm::dbgs() << "Considering value: " << *val << " for part_id: " <<
+    // Find the relevant value for any member of this partiton (they all have
+    //   the same pointsto properties)
+    auto src_val = omap.valueAtID(pr.second.front().second);
+    auto dest_val = src_val;
+    llvm::dbgs() << "Considering value: " << *dest_val << " for part_id: " <<
         part_id << "\n";
-    if (auto pld = llvm::dyn_cast<const llvm::LoadInst>(val)) {
-      val = pld->getPointerOperand();
+    if (auto pld = llvm::dyn_cast<const llvm::LoadInst>(dest_val)) {
+      src_val = pld->getPointerOperand();
+    } else if (auto pst = llvm::dyn_cast<const llvm::StoreInst>(dest_val)) {
+      src_val = pst->getOperand(0);
+      dest_val = pst->getOperand(1);
     }
 
-    auto consider_node =
-      [&aux, &dug, &cfg, &relevant_node_map, &omap, &part_id, &val]
-      (const std::pair<const CFG::CFGid, std::vector<ObjectMap::ObjID>> &pr) {
-        // For each node, get the ptsto:
-        std::for_each(std::begin(pr.second), std::end(pr.second),
-          [&val, &aux, &omap, &cfg, &part_id, &dug, &relevant_node_map]
-          (ObjectMap::ObjID obj_id) {
-          auto test_val = omap.valueAtID(obj_id);
-          if (auto pld = llvm::dyn_cast<const llvm::LoadInst>(test_val)) {
-            test_val = pld->getPointerOperand();
-          }
-          if (aux.alias(AliasAnalysis::Location(val),
-              AliasAnalysis::Location(test_val)) != AliasResult::NoAlias) {
-            auto nodes = dug.getNodes(obj_id);
-            std::for_each(nodes.first, nodes.second,
-                [&relevant_node_map, &part_id, &dug, &obj_id]
-                (std::pair<const DUG::ObjID, DUG::DUGid> &pr) {
-              auto &node = dug.getNode(pr.second);
+    // Finding all relevant nodes:
+    //   For each pointer modifying access, if it can alias with this ptsto set,
+    //   add it to the relevant set
+    std::for_each(cfg.obj_to_cfg_begin(), cfg.obj_to_cfg_end(),
+        [&aux, &dug, &cfg, &relevant_node_map, &omap, &part_id, &src_val,
+        &dest_val]
+        (const std::pair<const ObjectMap::ObjID, CFG::CFGid> &pr) {
+      auto obj_id = pr.first;
 
-              if (llvm::isa<DUG::LoadNode>(node) ||
-                  llvm::isa<DUG::StoreNode>(node)) {
-                relevant_node_map[part_id].push_back(
-                  std::make_pair(node.id(), obj_id));
-              }
-            });
-          }
+      // Find the relevant value of the node (its destination)
+      auto chk_dest_val = omap.valueAtID(obj_id);
+      auto chk_src_val = dest_val;
+      if (auto pld = llvm::dyn_cast<const llvm::LoadInst>(chk_dest_val)) {
+        chk_src_val = pld->getPointerOperand();
+      } else if (auto pst =
+          llvm::dyn_cast<const llvm::StoreInst>(chk_dest_val)) {
+        chk_src_val = pst->getOperand(0);
+        chk_dest_val = pst->getOperand(1);
+      }
+
+      // If that value aliases with a value in the partition (note all values in
+      //   the partition are equivalent in this regard)
+      // Then add it to our relevant_node_map
+
+      if (llvm::isa<llvm::PointerType>(chk_dest_val->getType()) &&
+          llvm::isa<llvm::PointerType>(src_val->getType()) &&
+          aux.alias(AliasAnalysis::Location(src_val),
+            AliasAnalysis::Location(chk_dest_val)) != AliasResult::NoAlias) {
+        auto nodes = dug.getNodes(obj_id);
+        // assert(std::distance(nodes.first, nodes.second) == 1);
+        std::for_each(nodes.first, nodes.second,
+            [&relevant_node_map, &part_id, &obj_id, &dug]
+            (std::pair<const ObjectMap::ObjID, DUG::DUGid> &pr) {
+          auto &node = dug.getNode(pr.second);
+
+          relevant_node_map[part_id].emplace_back(node.id(), obj_id);
         });
-      };
+      }
 
-    // FIXME: The first relevant node for this partiton should be a node in the
-    //   partition?
-    relevant_node_map[part_id].push_back(pr.second.front());
+      if (llvm::isa<llvm::PointerType>(chk_src_val->getType()) &&
+          llvm::isa<llvm::PointerType>(dest_val->getType()) &&
+          aux.alias(AliasAnalysis::Location(chk_src_val),
+            AliasAnalysis::Location(dest_val)) != AliasResult::NoAlias) {
+        auto nodes = dug.getNodes(obj_id);
+        // assert(std::distance(nodes.first, nodes.second) == 1);
+        std::for_each(nodes.first, nodes.second,
+            [&relevant_node_map, &part_id, &obj_id, &dug]
+            (std::pair<const ObjectMap::ObjID, DUG::DUGid> &pr) {
+          auto &node = dug.getNode(pr.second);
 
-    std::for_each(cfg.uses_begin(), cfg.uses_end(), consider_node);
-    std::for_each(cfg.defs_begin(), cfg.defs_end(), consider_node);
+          relevant_node_map[part_id].emplace_back(node.id(), obj_id);
+        });
+      }
+    });
 
-    rev_part_map.emplace(std::piecewise_construct,
-          std::make_tuple(part_id),
-          std::make_tuple(std::move(pr.second)));
+    // Also add them if they are access equivalent
+    auto &rel_vec = relevant_node_map[part_id];
+    rel_vec.insert(std::end(rel_vec), std::begin(pr.second),
+        std::end(pr.second));
+
+    // Finally, indicate all top level variables pointed to by our
+    //   partition:
+    auto &rev_map_vec = rev_part_map[part_id];
+    std::for_each(std::begin(pr.second), std::end(pr.second),
+        [&rev_map_vec, &part_id, &omap]
+        (std::pair<DUG::DUGid, ObjectMap::ObjID> &id_pr) {
+      auto src_val = omap.valueAtID(id_pr.second);
+      if (auto pld = llvm::dyn_cast<const llvm::LoadInst>(src_val)) {
+        src_val = pld->getPointerOperand();
+      } else if (auto pst =
+          llvm::dyn_cast<const llvm::StoreInst>(src_val)) {
+        src_val = pst->getOperand(1);
+        /*
+        auto dest_id = omap.getValue(pst->getOperand(0));
+        llvm::dbgs() << "!!rev_part_map got store dest_id: "
+            << dest_id << " : from val " << *src_val << "\n";
+        rev_map_vec.emplace_back(id_pr.first, dest_id);
+        */
+      }
+
+      auto src_id = omap.getValue(src_val);
+      llvm::dbgs() << "!!rev_part_map got src_id: " << src_id << " : from val "
+          << *src_val << "\n";
+      rev_map_vec.emplace_back(id_pr.first, src_id);
+    });
+
+    // Now clean up rev_part_map vec
+    std::sort(std::begin(rev_map_vec), std::end(rev_map_vec));
+    auto uni_it = std::unique(std::begin(rev_map_vec), std::end(rev_map_vec));
+    rev_map_vec.erase(uni_it, std::end(rev_map_vec));
   });
 
-  dout << "Running computePartitions\n";
-  std::map<DUG::DUGid, DUG::PartID> part_map;
+  // Create the node to partition mapping
+  // To do this, we basically just reverse the part to node mapping
+  // NOTE: We also deduplicate the node to part mapping here -- Is this needed?
+  std::map<ObjectMap::ObjID, DUG::PartID> part_map;
   std::for_each(std::begin(rev_part_map), std::end(rev_part_map),
-      [&part_map] (std::pair<const DUG::PartID, std::vector<std::pair<DUG::DUGid, ObjectMap::ObjID>>> &pr) {  // NOLINT
+      [&part_map, &omap]
+      (std::pair<const DUG::PartID, std::vector<std::pair<DUG::DUGid, ObjectMap::ObjID>>> &pr) {  // NOLINT
     // Okay... here we go
     // First deduplicate rev_part_map:
     std::sort(std::begin(pr.second), std::end(pr.second));
@@ -230,25 +293,39 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
 
     // Now, create mapping
     std::for_each(std::begin(pr.second), std::end(pr.second),
-        [&pr, &part_map] (std::pair<DUG::DUGid, ObjectMap::ObjID> &id_pr) {
-      part_map[id_pr.first] = pr.first;
+        [&pr, &part_map, &omap]
+        (std::pair<DUG::DUGid, ObjectMap::ObjID> &id_pr) {
+      part_map[id_pr.second] = pr.first;
     });
   });
 
-  // Clean up duplicated nodes in relevant_node_map
+  // Clean up/duplicate nodes in relevant_node_map
   std::for_each(std::begin(relevant_node_map), std::end(relevant_node_map),
-      []
-      (std::pair<const DUG::PartID, std::vector<std::pair<DUG::DUGid, ObjectMap::ObjID>>> &pr) {  // NOLINT
+      [] (std::pair<const DUG::PartID, std::vector<std::pair<DUG::DUGid, ObjectMap::ObjID>>> &pr) {  // NOLINT
     std::sort(std::begin(pr.second), std::end(pr.second));
     auto it = std::unique(std::begin(pr.second), std::end(pr.second));
     pr.second.erase(it, std::end(pr.second));
   });
 
+  llvm::dbgs() << "End partitionToNode map is:\n";
+  std::for_each(std::begin(rev_part_map), std::end(rev_part_map),
+      [] (std::pair<const DUG::PartID, std::vector<std::pair<DUG::DUGid,
+        ObjectMap::ObjID>>> &pr) {
+    llvm::dbgs() << "  Have part_id: " << pr.first << "\n";
+    std::for_each(std::begin(pr.second), std::end(pr.second),
+        [] (std::pair<DUG::DUGid, ObjectMap::ObjID> &pr2) {
+      extern ObjectMap &g_omap;
+      auto val = g_omap.valueAtID(pr2.second);
+      llvm::dbgs() << "    dug_id " << pr2.first << ", obj_id " << pr2.second <<
+          " : " << *val << "\n";
+    });
+  });
+
+  // We now have our mappings, and we transfer them to the DUG
   dug.setNodeToPartition(std::move(part_map));
   dug.setPartitionToNodes(std::move(rev_part_map));
   dug.setRelevantNodes(std::move(relevant_node_map));
 
-  // We now have our PartID to DUG::ObjID mapping in part_map
   return false;
 }
 
@@ -276,10 +353,10 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
       node.clearM();
       node.clearR();
       node.clearC();
-    });
 
-    std::map<CFG::CFGid, std::vector<DUG::DUGid>> part_defs;
-    std::map<CFG::CFGid, std::vector<DUG::DUGid>> part_uses;
+      node.clearDefs();
+      node.clearUses();
+    });
 
     // Now calculate and fill in the info for each object
     //   in this partition
@@ -292,7 +369,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
     // We iterate over each object which may be accessed by this partition,
     //   using our rel_vec
     std::for_each(std::begin(rel_vec), std::end(rel_vec),
-        [&ssa, &graph, &part_defs, &part_uses, &part_id, &omap,
+        [&ssa, &graph, &part_id, &omap,
             &part_graph, &node_to_partition]
         (const std::pair<DUG::DUGid, ObjectMap::ObjID> &id_pr) {
       DUG::DUGid dug_id = id_pr.first;
@@ -312,18 +389,24 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
         auto cfg_id = ssa.getCFGid(obj_id);
         auto node_set = part_graph.getNodes(cfg_id);
         assert(std::distance(node_set.first, node_set.second) == 1);
+        // Ooops, I aliased a variable... shame on me
+        auto &ld_node = node;
         auto &node = part_graph.getNode<CFG::Node>(node_set.first->second);
 
         // Set R
         node.setR();
 
         // Force M for part nodes?
-        if (graph.getPart(dug_id) == part_id) {
+        if (graph.getPart(ld_node.src()) == part_id) {
           node.setM();
         }
 
         // Denote this CFG node maps to this DUG node
-        part_uses[cfg_id].push_back(dug_id);
+        // FIXME:
+        // MAHHHH this is the wrong type of ID... so I'm forcing it... because
+        //   I'm ticked off!
+        llvm::dbgs() << "Adding use to node: " << node.extId() << "\n";
+        node.addUse(ObjectMap::ObjID(dug_id.val()));
 
         // Denote that this DUG node is part of this partition
         node_to_partition[dug_id].push_back(part_id);
@@ -349,17 +432,26 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
         }
 
         // Denote this CFGid references this DUG entry
-        auto ret = part_defs.emplace(cfg_id, std::vector<DUG::DUGid>({dug_id}));
-        assert(ret.second);
+        // FIXME:
+        // MAHHHH this is the wrong type of ID... so I'm forcing it... because
+        //   I'm ticked off!
+        llvm::dbgs() << "Adding def to node: " << node.extId() << "\n";
+        node.addDef(ObjectMap::ObjID(dug_id.val()));
 
         node_to_partition[dug_id].push_back(part_id);
       } else {
-        llvm_unreachable("Have non-load/store node?");
+        // Assuming global init, similar to store
+        // FIXME: Handle global init?
+        llvm::dbgs() << "FIXME: Unhandled global init\n";
+        // llvm_unreachable("Have non-load/store node?");
       }
     });
 
     // Now, calculate ssa form for this graph:
     auto part_ssa = computeSSA(part_graph);
+
+    extern ObjectMap &g_omap;
+    part_ssa.printDotFile("part_ssa.dot", g_omap);
 
     /*
     dout << "part_ssa_map contains cfg ids:";
@@ -372,6 +464,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
 
     // Basically need to remap now... I can get a node by CFGid, and remap that
     //   to a NodeID for each CFGid I need...
+    /*
     std::map<CFG::NodeID, CFG::CFGid> cfg_to_node;
 
     auto cfg_to_node_map = [&cfg_to_node, &part_ssa]
@@ -391,6 +484,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
     std::for_each(std::begin(part_uses), std::end(part_uses), cfg_to_node_map);
     llvm::dbgs() << "cfg_to_node_map(part_defs)\n";
     std::for_each(std::begin(part_defs), std::end(part_defs), cfg_to_node_map);
+    */
 
     // Here we group the partSSA info, indicating which DUG nodes are affected
     //   by this partition
@@ -398,42 +492,36 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
     // NOTE: We'll need to add some PHI nodes
     std::vector<std::tuple<CFG::NodeID, DUG::DUGid, DUG::PartID>> delayed_edges;
     std::for_each(part_ssa.topo_begin(), part_ssa.topo_end(),
-        [&graph, &part_ssa, &cfg_node_rep, &cfg_to_node,
-            &delayed_edges, &part_uses, &part_defs, &part_id]
+        [&graph, &part_ssa, &cfg_node_rep,
+            &delayed_edges, &part_id]
         (const CFG::NodeID node_id) {
-      // Get the CFGid of this node:
-      auto cfg_id_it = cfg_to_node.find(node_id);
-      if (cfg_id_it == std::end(cfg_to_node)) {
-        auto new_cfg_id = part_ssa.getNode(node_id).extId();
-        auto ret = cfg_to_node.emplace(node_id, new_cfg_id);
-        assert(ret.second);
-        llvm::dbgs() << "Mapping node_id for: " << node_id << " to " <<
-            new_cfg_id << "\n";
-        cfg_id_it = ret.first;
-      }
-      auto cfg_id = cfg_id_it->second;
+      auto &ssa_node = part_ssa.getNode<CFG::Node>(node_id);
+
+      auto cfg_id = ssa_node.extId();
       llvm::dbgs() << "Visiting cfg_id of: " << cfg_id << "\n";
 
+      // The DUG rep of this id
       auto dug_id = DUG::DUGid();
 
-      // Now, for this CFGid, get all associated DUG Nodes in this partition:
-      // There may be many if its a load (use)
-      auto ld_it = part_uses.find(cfg_id);
+      // If this node has a use, it is a ld node
+      auto ld_it = ssa_node.uses_begin();
       // There is only one if its a store (def)
-      auto st_it = part_defs.find(cfg_id);
+      auto st_it = ssa_node.defs_begin();
 
-      bool have_ld = ld_it != std::end(part_uses);
-      bool have_st = st_it != std::end(part_defs);
+      bool have_ld = ld_it != ssa_node.uses_end();
+      bool have_st = st_it != ssa_node.defs_end();
 
-      // Elect a "leader" id for each part
+      // Elect a "leader" id for each basic block
       if (have_st) {
-        dug_id = st_it->second.front();
+        dug_id = DUG::DUGid(st_it->val());
         llvm::dbgs() << "  Got st of: " << dug_id << "\n";
         assert(llvm::isa<DUG::StoreNode>(graph.getNode(dug_id)));
       } else if (have_ld) {
-        dug_id = ld_it->second.front();
+        dug_id = DUG::DUGid(ld_it->val());
         llvm::dbgs() << "  Got ld of: " << dug_id << "\n";
-        llvm::dbgs() << "  ld size is: " << ld_it->second.size() << "\n";
+        llvm::dbgs() << "  ld size is: " <<
+          std::distance(ssa_node.uses_begin(), ssa_node.uses_end())
+          << "\n";
         assert(llvm::isa<DUG::LoadNode>(graph.getNode(dug_id)));
       // There may also be none (in this case its an phi node)
       } else {
@@ -448,39 +536,48 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
       assert(cfg_node_rep.find(cfg_id) == std::end(cfg_node_rep));
       cfg_node_rep[cfg_id] = dug_id;
 
-      // Put an edge from the part's "leader" to its members
+      // Put an edge from the basic block's "leader" to its members
       if (have_st) {
         bool first = true;
-        auto &st_list = st_it->second;
 
-        for (auto &st_id : st_list) {
+        // for (auto &st_id : st_list) {
+        std::for_each(ssa_node.defs_begin(), ssa_node.defs_end(),
+            [&graph, &dug_id, &part_id, &first]
+            (ObjectMap::ObjID obj_id) {
+          // FIXME: This is a really hacky thing...
+          DUG::DUGid st_id = DUG::DUGid(obj_id.val());
+
           if (first) {
             first = false;
-            continue;
+            return;
           }
 
-          dout << "  --Adding rep-st edge {" << dug_id << " -(" << part_id <<
-              ")-> " << st_id << "}\n";
+          llvm::dbgs() << "  --Adding rep-st edge {" << dug_id << " -(" <<
+              part_id << ")-> " << st_id << "}\n";
           graph.addEdge(dug_id, st_id, part_id);
-        }
+        });
       }
 
       if (have_ld) {
-        auto &ld_list = ld_it->second;
         bool first = true;
         bool skip_first = !have_st;
-        for (auto &ld_id : ld_list) {
+
+        std::for_each(ssa_node.uses_begin(), ssa_node.uses_end(),
+            [&graph, &dug_id, &part_id, &first, &skip_first]
+            (ObjectMap::ObjID obj_id) {
+          // FIXME: This is a really hacky thing...
+          DUG::DUGid ld_id = DUG::DUGid(obj_id.val());
           // Skip the first entry if we have already accounted for it (our rep
           //    is a load)
           if (first && skip_first) {
             first = false;
-            continue;
+            return;
           }
 
-          dout << "  --Adding rep-ld edge {" << dug_id << " -(" << part_id <<
-              ")-> " << ld_id << "}\n";
+          llvm::dbgs() << "  --Adding rep-ld edge {" << dug_id << " -(" <<
+              part_id << ")-> " << ld_id << "}\n";
           graph.addEdge(dug_id, ld_id, part_id);
-        }
+        });
       }
 
       /*
@@ -499,35 +596,28 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
 
       // Put an edge from each pred in G to the part leader
       std::for_each(std::begin(preds), std::end(preds),
-          [&graph, &delayed_edges, &cfg_node_rep, &dug_id, &part_id, &part_ssa,
-            &cfg_to_node]
+          [&graph, &delayed_edges, &cfg_node_rep, &dug_id, &part_id, &part_ssa]
           (const CFG::EdgeID pred_edge_id) {
         auto pred_node_id = part_ssa.getEdge(pred_edge_id).src();
-        // auto pred_cfg_id = part_ssa.getNode<CFG::Node>(pred_node_id).extId();
+
+        auto pred_cfg_id = part_ssa.getNode<CFG::Node>(pred_node_id).extId();
         // llvm::dbgs() << "have pred_node_id of: " << pred_node_id << "\n";
-        auto pred_cfg_id_it = cfg_to_node.find(pred_node_id);
-        // This happens if its a phi node that hasn't been visited yet!
-        if (pred_cfg_id_it == std::end(cfg_to_node)) {
+
+        // NOTE: if we were not doing a topo order we may have to evaluate the
+        //   pred here
+        // dout << "Finding cfg_node_rep at: " << pred_cfg_id << "\n";
+        auto pred_rep_it = cfg_node_rep.find(pred_cfg_id);
+        if (pred_rep_it == std::end(cfg_node_rep)) {
+          // Delay our rep resolving until after we've visited all nodes
+          llvm::dbgs() << "  ||Delaying cfg edge (pred id: " << pred_cfg_id
+              << ") {" << "??" << " -(" << part_id << ")-> " << dug_id << "}\n";
           delayed_edges.emplace_back(pred_node_id, dug_id, part_id);
         } else {
-          auto pred_cfg_id = pred_cfg_id_it->second;
+          DUG::DUGid &pred_rep_id = pred_rep_it->second;
 
-          // NOTE: if we were not doing a topo order we may have to evaluate the
-          //   pred here
-          // dout << "Finding cfg_node_rep at: " << pred_cfg_id << "\n";
-          auto pred_rep_it = cfg_node_rep.find(pred_cfg_id);
-          if (pred_rep_it == std::end(cfg_node_rep)) {
-            // Delay our rep resolving until after we've visited all nodes
-            dout << "  ||Delaying cfg edge (pred id: " << pred_cfg_id << ") {"
-                << "??" << " -(" << part_id << ")-> " << dug_id << "}\n";
-            delayed_edges.emplace_back(pred_node_id, dug_id, part_id);
-          } else {
-            DUG::DUGid &pred_rep_id = pred_rep_it->second;
-
-            dout << "  --Adding cfg edge {" << pred_rep_id << " -(" <<
-              part_id << ")-> " << dug_id << "}\n";
-            graph.addEdge(pred_rep_id, dug_id, part_id);
-          }
+          llvm::dbgs() << "  --Adding cfg edge {" << pred_rep_id << " -(" <<
+            part_id << ")-> " << dug_id << "}\n";
+          graph.addEdge(pred_rep_id, dug_id, part_id);
         }
       });
     });
@@ -536,9 +626,9 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
       delayed_dedup_edges;
 
     std::for_each(std::begin(delayed_edges), std::end(delayed_edges),
-        [&graph, &cfg_node_rep, &cfg_to_node, &delayed_dedup_edges]
+        [&graph, &part_ssa, &cfg_node_rep, &delayed_dedup_edges]
         (std::tuple<CFG::NodeID, DUG::DUGid, DUG::PartID> &tup) {
-      auto pred_cfg_id = cfg_to_node.at(std::get<0>(tup));
+      auto pred_cfg_id = part_ssa.getNode(std::get<0>(tup)).extId();
       delayed_dedup_edges.emplace_back(pred_cfg_id, std::get<1>(tup),
         std::get<2>(tup));
     });
@@ -550,7 +640,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
 
     std::for_each(std::begin(delayed_dedup_edges),
         std::end(delayed_dedup_edges),
-          [&graph, &cfg_node_rep, &cfg_to_node]
+          [&graph, &cfg_node_rep]
           (std::tuple<CFG::CFGid, DUG::DUGid, DUG::PartID> &tup) {
         auto pred_cfg_id = std::get<0>(tup);
         auto pred_rep_it = cfg_node_rep.find(pred_cfg_id);
@@ -558,8 +648,8 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
 
         auto pred_rep_id = pred_rep_it->second;
 
-        dout << "  --Adding delayed-cfg edge {" << pred_rep_id << " -(" <<
-            std::get<2>(tup) << ")-> " << std::get<1>(tup) << "}\n";
+        llvm::dbgs() << "  --Adding delayed-cfg edge {" << pred_rep_id <<
+            " -(" << std::get<2>(tup) << ")-> " << std::get<1>(tup) << "}\n";
         graph.addEdge(pred_rep_id, std::get<1>(tup), std::get<2>(tup));
     });
   });
@@ -582,8 +672,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
       auto &objs = graph.getObjs(part_id);
       std::for_each(std::begin(objs), std::end(objs),
           [&graph, &vars] (std::pair<DUG::DUGid, ObjectMap::ObjID> &pr) {
-        // The var array is of ObjID, (or extIds)
-        vars.emplace_back(graph.getNode(pr.first).extId());
+        vars.emplace_back(pr.second);
       });
     });
 

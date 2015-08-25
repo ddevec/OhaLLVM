@@ -12,6 +12,7 @@
 
 #include "llvm/ADT/SparseBitVector.h"
 
+
 // Bitmap used in many places (and by Andersen's) to represent ptsto
 typedef llvm::SparseBitVector<> Bitmap;
 
@@ -45,8 +46,12 @@ struct BitmapLT {
 };
 //}}}
 
-
+class DUG;
 class DUGNode;
+
+// Typedef for PartID
+struct part_id { };
+typedef ID<part_id, int32_t> __PartID;
 
 // FIXME: Build a better (read - priority) work queue
 class Worklist {
@@ -241,6 +246,7 @@ class PtstoSet {
 class PtstoGraph {
   //{{{
  public:
+    typedef typename SEG<ObjectMap::ObjID>::NodeID NodeID;
     typedef ObjectMap::ObjID ObjID;
 
     PtstoGraph() = default;
@@ -272,6 +278,26 @@ class PtstoGraph {
       std::for_each(std::begin(rhs.data_), std::end(rhs.data_),
           [this, &ret] (const std::pair<const ObjID, PtstoSet> &pr) {
         ret |= (data_.at(pr.first) |= pr.second);
+      });
+
+      return ret;
+    }
+
+    bool orPart(const PtstoGraph &rhs,
+        std::map<ObjID, __PartID> &part_map, __PartID part_id) {
+      bool ret = false;
+      std::for_each(std::begin(data_), std::end(data_),
+          [this, &ret, &rhs, &part_id, &part_map]
+          (std::pair<const ObjID, PtstoSet> &pr) {
+        auto obj_id = pr.first;
+        extern ObjectMap &g_omap;
+        llvm::dbgs() << "Checking obj_id: " << obj_id << ": " <<
+            *g_omap.valueAtID(obj_id) << "\n";
+        if (part_id == part_map.at(obj_id)) {
+          auto &lhs_ptsset = pr.second;
+          auto &rhs_ptsset = rhs.data_.at(obj_id);
+          ret |= (lhs_ptsset |= rhs_ptsset);
+        }
       });
 
       return ret;
