@@ -23,9 +23,6 @@
 #include "include/SEG.h"
 #include "include/util.h"
 
-// FIXME: HAX to be removed later
-ObjectMap *g_omap;
-
 namespace {
 
 struct HUEdge;
@@ -136,7 +133,7 @@ struct HUEdge : public SEGEdge<ConstraintGraph::ObjID> {
               dout << "Adding edge: " << src << " -> " <<
                 dest << "\n";
               dout << "Adding pred to: ";
-              src_node.print_label(dout, *g_omap);
+              src_node.print_label(dout, g_omap);
               dout << "\n");
           } else {
             dout << "Setting: " << src << " to indirect\n";
@@ -158,10 +155,11 @@ struct HUEdge : public SEGEdge<ConstraintGraph::ObjID> {
 
           break;
         case ConstraintType::Copy:
+        case ConstraintType::GlobalInit:
           if_debug(
             dout << "Adding edge: " << src << " -> " << dest << "\n";
             dout << "Adding pred (copy) to: ";
-            src_node.print_label(dout, *g_omap);
+            src_node.print_label(dout, g_omap);
             dout << "\n");
           break;
         default:
@@ -254,11 +252,9 @@ static void visitHU(HUSeg &seg, HUNode &node, const ObjectMap &if_debug(omap)) {
 }  // End anon namespace
 
 // optimizeConstraints {{{
-bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &,
+bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
     const ObjectMap &omap) {
 
-  // FIXME: HAX to be removed later
-  g_omap = const_cast<ObjectMap *>(&omap);
   // Okay, we run HU here, over the constraints
   //
   // The algorithm is listed as:
@@ -273,15 +269,10 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &,
   //  pe is the pointer equivalence
   //  V is the set of vertecies in the graph
 
-  // Create the initial graph
-  /* Clone it from the constraint graph?
-  HUSeg huSeg =
-    graph.getConstraintGraph().convert<HUNode, HUEdge>();
-    */
-
-  // Instead, create it fresh:
+  // Create our HU graph
   HUSeg huSeg;
 
+  // Populate the graph
   // create a HUNode per ConstraintNode:
   std::for_each(graph.cbegin(), graph.cend(),
       [&huSeg]
@@ -298,6 +289,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &,
     }
   });
 
+  // Add the edges for each constraint
   std::for_each(graph.cbegin(), graph.cend(),
       [&huSeg]
       (const ConstraintGraph::iter_type &pcons) {
@@ -318,7 +310,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &,
   });
 
 
-  if_debug(
+  if_debug(  //{{{
     for (auto &pnode : huSeg) {
       HUNode &node = llvm::cast<HUNode>(*pnode);
       dout << "initial ptsto for node " << node.id() <<
@@ -327,7 +319,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &,
         dout << " " << ConstraintGraph::ObjID(int_id);
       }
       dout << "\n";
-    });
+    });  //}}}
 
   // Now iterate in topological order (start w/ root, end w/ leaf)
   std::for_each(huSeg.topo_begin(), huSeg.topo_end(),
@@ -337,7 +329,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &,
     visitHU(huSeg, huSeg.getNode<HUNode>(node_id), omap);
   });
 
-  if_debug(
+  if_debug(  //{{{
     for (auto &pnode : huSeg) {
       HUNode &node = llvm::cast<HUNode>(*pnode);
       dout << "ptsto after HU for (";
@@ -352,9 +344,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &,
         dout << " " << ConstraintGraph::ObjID(int_id);
       }
       dout << "\n";
-    });
-
-  huSeg.printDotFile("optimize.dot", omap);
+    });  //}}}
 
   //  Used to map objs to the PE class
   std::map<Bitmap, SEG<ConstraintGraph::ObjID>::NodeID, BitmapLT> pts_to_pe;
@@ -386,7 +376,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &,
   std::map<ObjectMap::ObjID, ObjectMap::ObjID> load_remap;
   // Now iterate each constraint, and update their ObjIDs to point to reps
   std::for_each(std::begin(graph), std::end(graph),
-      [&huSeg, &load_remap] (ConstraintGraph::iter_type &pcons) {
+      [&huSeg, &load_remap, &graph] (ConstraintGraph::iter_type &pcons) {
     auto src_pr = huSeg.getNodes(pcons->src());
     assert(std::distance(src_pr.first, src_pr.second) == 1);
     auto hu_src_id = src_pr.first->second;
@@ -399,20 +389,34 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &,
     auto hu_dest_id = dest_pr.first->second;
     auto dest_rep_id = huSeg.getNode(hu_dest_id).extId();
 
-    // If this is a load cons, its dest shouldn't have changed
-    /*
-    llvm::dbgs() << "new value: " << *g_omap->valueAtID(dest_rep_id) << "\n";
-    llvm::dbgs() << "old value: " << *g_omap->valueAtID(pcons->dest()) << "\n";
-    */
-    pcons->retarget(src_rep_id, dest_rep_id);
+
+    if (dest_rep_id != pcons->dest()) {
+      // If this is a load cons, its dest shouldn't have changed
+      dout << "new value: " << ValPrint(dest_rep_id) << "\n";
+      dout << "old value: " << ValPrint(pcons->dest()) << "\n";
+
+      load_remap.emplace(pcons->dest(), dest_rep_id);
+
+      dout << "retarget: (" << pcons->src() << ", " << pcons->dest() <<
+        ") -> ("<< src_rep_id << ", " << dest_rep_id << ")\n";
+
+      pcons->retarget(src_rep_id, dest_rep_id);
+
+      // Pcons has been optimized out, go ahead and remove it
+      // NOTE: This removal method doesn't modify ConsIDs so it is safe to call
+      // from here... yech
+      graph.removeConstraint(pcons);
+    }
   });
 
+  // NO! We cannot remove duplicates here... because we have live ConsIDs which
+  //     will be used when we resolve indir edges!!!
+  //     We'll do this after that step
   // Now clean up our constraints (remove duplicates)
-  graph.unique();
+  // graph.unique();
 
   // Now remap all appropriate vector entries
   // meh... O(N * log(N) )
-  /*
   SEG<CFG::CFGid> &cfg_seg = cfg.getSEG();
   std::for_each(std::begin(cfg_seg), std::end(cfg_seg),
       [&load_remap, &cfg]
@@ -442,11 +446,11 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &,
       cfg_node.addUse(pr.second);
 
       llvm::dbgs() << "Erasing obj_id: " << pr.first << ": " <<
-        *g_omap->valueAtID(pr.first) << "\n";
+        ValPrint(pr.first) << "\n";
+
       cfg.eraseObjToCFG(pr.first);
     });
   });
-  */
 
   return false;
 }

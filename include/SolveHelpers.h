@@ -92,6 +92,10 @@ class PtstoSet {
       return ptsto_ |= rhs.ptsto_;
     }
 
+    bool operator|=(ObjectMap::ObjID &id) {
+      return ptsto_.test_and_set(id.val());
+    }
+
     bool size() const {
       return ptsto_.count();
     }
@@ -283,6 +287,32 @@ class PtstoGraph {
       return ret;
     }
 
+    bool set(ObjID id) {
+      bool ret = false;
+      std::for_each(std::begin(data_), std::end(data_),
+          [&id, &ret] (std::pair<const ObjID, PtstoSet> &pr) {
+        ret |= (pr.second.set(id));
+      });
+
+      return ret;
+    }
+
+    bool orPart(const PtstoSet &rhs,
+        std::map<ObjID, __PartID> &part_map, __PartID part_id) {
+      bool ret = false;
+      std::for_each(std::begin(data_), std::end(data_),
+          [this, &ret, &rhs, &part_id, &part_map]
+          (std::pair<const ObjID, PtstoSet> &pr) {
+        auto obj_id = pr.first;
+        if (part_id == part_map.at(obj_id)) {
+          auto &lhs_ptsset = pr.second;
+          ret |= (lhs_ptsset |= rhs);
+        }
+      });
+
+      return ret;
+    }
+
     bool orPart(const PtstoGraph &rhs,
         std::map<ObjID, __PartID> &part_map, __PartID part_id) {
       bool ret = false;
@@ -290,9 +320,6 @@ class PtstoGraph {
           [this, &ret, &rhs, &part_id, &part_map]
           (std::pair<const ObjID, PtstoSet> &pr) {
         auto obj_id = pr.first;
-        extern ObjectMap &g_omap;
-        llvm::dbgs() << "Checking obj_id: " << obj_id << ": " <<
-            *g_omap.valueAtID(obj_id) << "\n";
         if (part_id == part_map.at(obj_id)) {
           auto &lhs_ptsset = pr.second;
           auto &rhs_ptsset = rhs.data_.at(obj_id);
@@ -332,6 +359,21 @@ class PtstoGraph {
 
     const_iterator cend() const {
       return data_.cend();
+    }
+
+    friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
+        const PtstoGraph &g) {
+      o << "( ";
+      bool first = true;
+      for (auto &pr : g) {
+        if (!first) {
+          o << ", ";
+        }
+        o << pr.first << "->" << pr.second;
+        first = false;
+      }
+      o << " )";
+      return o;
     }
 
  private:

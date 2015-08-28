@@ -26,15 +26,7 @@ bool SpecSFS::solve(DUG &dug, ObjectMap &) {
       work.push(&node);
     }
 
-    auto dest = node.dest();
-
-    if (auto pld = llvm::dyn_cast<DUG::LoadNode>(pnode)) {
-      dest = pld->realDest();
-    } else if (auto pst = llvm::dyn_cast<DUG::StoreNode>(pnode)) {
-      dest = pst->st_src();
-    }
-
-    dests.push_back(dest);
+    dests.push_back(node.dest());
     dests.push_back(node.src());
   });
 
@@ -61,21 +53,20 @@ bool SpecSFS::solve(DUG &dug, ObjectMap &) {
 void DUG::AllocNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
   llvm::dbgs() << "Process alloc start\n";
   // Update the top level variables for this alloc
-  auto &top = pts_top.at(dest());
-  bool change = top.set(src());
-  llvm::dbgs() << "  pts_top[" << dest() << "] is now: ";
-  std::for_each(std::begin(top), std::end(top),
-      [this](DUG::ObjID obj_id) {
-    llvm::dbgs() << " " << obj_id;
-  });
-  llvm::dbgs() << "\n";
+  PtstoSet &dest_pts = pts_top.at(dest());
+
+  bool change = dest_pts.set(src());
+
+  llvm::dbgs() << "  pts_top[" << dest() << "] is now: " << dest_pts << "\n";
 
   // Add all top level variables updated to worklist
   if (change) {
     std::for_each(succ_begin(), succ_end(),
         [&dug, &work](DUG::EdgeID id) {
       auto &edge = dug.getEdge(id);
-      work.push(&dug.getNode(edge.dest()));
+      auto &nd = dug.getNode(edge.dest());
+      llvm::dbgs() << "  Pushing nd to work: " << nd.id() << "\n";
+      work.push(&nd);
     });
   }
 }
@@ -83,22 +74,20 @@ void DUG::AllocNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
 void DUG::CopyNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
   llvm::dbgs() << "Process copy start\n";
   // Update the top level variables for this copy
-  PtstoSet &top = pts_top.at(dest());
-  bool change = (top |= pts_top.at(src()));
+  PtstoSet &dest_pts = pts_top.at(dest());
+  PtstoSet &src_pts = pts_top.at(src());
+  bool change = (dest_pts |= src_pts);
 
-  llvm::dbgs() << "  pts_top[" << dest() << "] is now: ";
-  std::for_each(std::begin(top), std::end(top),
-      [this](DUG::ObjID obj_id) {
-    llvm::dbgs() << " " << obj_id;
-  });
-  llvm::dbgs() << "\n";
+  llvm::dbgs() << "  pts_top[" << dest() << "] is now: " << dest_pts << "\n";
 
   // Add all updated successors to worklist
   if (change) {
     std::for_each(succ_begin(), succ_end(),
         [&dug, &work](DUG::EdgeID id) {
       auto &edge = dug.getEdge(id);
-      work.push(&dug.getNode(edge.dest()));
+      auto &nd = dug.getNode(edge.dest());
+      llvm::dbgs() << "  Pushing nd to work: " << nd.id() << "\n";
+      work.push(&nd);
     });
   }
 }
@@ -116,30 +105,26 @@ void DUG::LoadNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
   // If we added any edges:
   //   Add all successors to work
   PtstoSet &src_pts = pts_top.at(src());
-  extern ObjectMap &g_omap;
-  llvm::dbgs() << "value at realDest() (" << realDest() << ") is: " <<
-    *g_omap.valueAtID(realDest()) << "\n";
-  PtstoSet &dest_pts = pts_top.at(realDest());
-  llvm::dbgs() << "Load is " << dest() << ": " <<
-    *g_omap.valueAtID(dest()) << "\n";
+  llvm::dbgs() << "value at dest() (" << dest() << ") is: " <<
+    ValPrint(dest()) << "\n";
+  PtstoSet &dest_pts = pts_top.at(dest());
+  llvm::dbgs() << "Load is " << rep() << ": " <<
+    ValPrint(rep()) << "\n";
+
   bool changed = false;
   std::for_each(std::begin(src_pts), std::end(src_pts),
       [this, &dug, &work, &changed, &dest_pts](DUG::ObjID id) {
-    extern ObjectMap &g_omap;
-    llvm::dbgs() << "id is: " << id << ": " << *g_omap.valueAtID(id) << "\n";
-    llvm::dbgs() << "omap.getValue() at val is: " <<
-        g_omap.getValue(g_omap.valueAtID(id)) << "\n";
-    llvm::dbgs() << "in contains:\n";
-    for (auto &pr : in_) {
-      llvm::dbgs() << "  " << pr.first << ": " <<
-          *g_omap.valueAtID(pr.first) << "\n";
-    }
+    llvm::dbgs() << "  id is: " << id << ": " << ValPrint(id) << "\n";
+    llvm::dbgs() << "  in is: " << in_ << "\n";
+
     PtstoSet &pts = in_.at(id);
+
+    llvm::dbgs() << "  pts is: " << pts << "\n";
 
     changed |= (dest_pts |= pts);
   });
 
-  llvm::dbgs() << "  pts_top[" << realDest() << "] is now: ";
+  llvm::dbgs() << "  pts_top[" << dest() << "] is now: ";
   std::for_each(std::begin(dest_pts), std::end(dest_pts),
       [this](DUG::ObjID obj_id) {
     llvm::dbgs() << " " << obj_id;
@@ -151,9 +136,8 @@ void DUG::LoadNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
   //    it has...)
   // We need to update the ptsto of all of our part_successors
   // FIXME: Only do this for changed info?
-  extern ObjectMap &g_omap;
-  llvm::dbgs() << "  Load dest is: " << *g_omap.valueAtID(realDest()) << "\n";
-  llvm::dbgs() << "  Load src is: " << *g_omap.valueAtID(src()) << "\n";
+  llvm::dbgs() << "  Load dest is: " << ValPrint(dest()) << "\n";
+  llvm::dbgs() << "  Load src is: " << ValPrint(src()) << "\n";
   std::for_each(std::begin(part_succs_), std::end(part_succs_),
       [this, &dug, &work] (DUG::PartID part_id) {
     auto &part_to_obj = dug.getObjs(part_id);
@@ -164,11 +148,11 @@ void DUG::LoadNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
         (std::pair<DUG::DUGid, ObjectMap::ObjID> &pr) {
       auto &nd = dug.getNode(pr.first);
       /*
-      llvm::dbgs() << "    succ is: " << *g_omap.valueAtID(pr.second) << "\n";
+      llvm::dbgs() << "    succ is: " << ValPrint(pr.second) << "\n";
       llvm::dbgs() << "    part_to_obj contains: " << "\n";
       std::for_each(std::begin(part_to_obj), std::end(part_to_obj),
         [](std::pair<DUG::DUGid, DUG::ObjID> &pr) {
-        llvm::dbgs() << "      " << *g_omap.valueAtID(pr.second) << "\n";
+        llvm::dbgs() << "      " << ValPrint(pr.second) << "\n";
       });
       */
       bool ch = nd.in().orPart(in_, dug.objToPartMap(), part_id);
@@ -183,13 +167,16 @@ void DUG::LoadNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
     std::for_each(succ_begin(), succ_end(),
         [&dug, &work](DUG::EdgeID id) {
       auto &edge = dug.getEdge(id);
-      work.push(&dug.getNode(edge.dest()));
+      auto &nd = dug.getNode(edge.dest());
+      llvm::dbgs() << "  Pushing nd to work: " << nd.id() << "\n";
+      work.push(&nd);
     });
   }
 }
 
 void DUG::StoreNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
   llvm::dbgs() << "Process store start\n";
+  llvm::dbgs() << "Store is: " << rep() << ": " << ValPrint(rep()) << "\n";
   // if strong && concrete
   //   clear all outgoing edges from pts_top(src) from out
   //
@@ -201,20 +188,22 @@ void DUG::StoreNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
   //     if (succ.IN.changed)
   //       Add succ to worklist
   PtstoSet &src_pts = pts_top.at(src());
-  PtstoSet &dest_pts = pts_top.at(st_src());
+  PtstoSet &dest_pts = pts_top.at(dest());
   bool change = false;
 
   PtstoGraph in_tmp(in_);
 
-  // If this is a strong update, remove all outgoing edges from src
-  if (strong() && src_pts.size() == 1) {
+  // If this is a strong update, remove all outgoing edges from dest
+  // NOTE: This is a strong update if we are updating a single concrete location
+  if (strong() && dest_pts.size() == 1) {
     // Clear all outgoing edges from pts_top(src) from out
-    in_tmp.clear(src());
+    in_tmp.clear(dest());
   }
 
   // Add edges to out with in
-  change |= (out_ |= in_);
+  change |= (out_ |= in_tmp);
 
+  // Debug {{{
   /*
   llvm::dbgs() << "About to update out_.  out_ contains ids: ";
   std::for_each(out_.cbegin(), out_.cend(),
@@ -223,63 +212,51 @@ void DUG::StoreNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
   });
   llvm::dbgs() << "\n";
   */
+  //}}}
 
   std::for_each(std::begin(out_), std::end(out_),
-      [this, &change, &dest_pts]
+      [this, &change, &src_pts]
       (std::pair<const ObjID, PtstoSet> &pr) {
-    change |= (pr.second |= dest_pts);
+    change |= (pr.second |= src_pts);
   });
-
-  /*
-  std::for_each(std::begin(dest_pts), std::end(dest_pts),
-      [this, &change, &dest_pts] (DUG::ObjID id) {
-    // Get the pts set in out for this id:
-    llvm::dbgs() << "Scannign dest_pts id of: " << id << "\n";
-    PtstoSet &out_src = out_.at(id);
-
-    change |= (out_src |= dest_pts);
-  });
-  */
 
   // If something changed, update all successors
   if (change) {
-    extern ObjectMap &g_omap;
     llvm::dbgs() << "  Have change on node with src: " <<
-      *g_omap.valueAtID(src()) << ", dest: " <<
-      *g_omap.valueAtID(st_src()) << "\n";
+      ValPrint(src()) << ", dest: " <<
+      ValPrint(dest()) << "\n";
     // FIXME: Only do this for changed info?
+    // For each successor partition of this store
     std::for_each(std::begin(part_succs_), std::end(part_succs_),
         [this, &work, &dug] (DUG::PartID part_id) {
       llvm::dbgs() << "  Checking part_id: " << part_id << "\n";
+      // Get the list of nodes assicated with that partition
       auto &part_to_obj = dug.getObjs(part_id);
 
+      // For each node in the partition
       std::for_each(std::begin(part_to_obj), std::end(part_to_obj),
-          [this, &dug, &work] (std::pair<DUG::DUGid, ObjectMap::ObjID> &pr) {
-        llvm::dbgs() << "  Checking node: " << pr.first << "\n";
+          [this, &dug, &work, &part_id]
+          (std::pair<DUG::DUGid, ObjectMap::ObjID> &pr) {
         auto &nd = dug.getNode(pr.first);
 
-        std::for_each(std::begin(out_), std::end(out_),
-            [this, &dug, &work, &nd]
-            (std::pair<const DUG::ObjID, PtstoSet> &pr) {
-          llvm::dbgs() << "    Updating in for: (" << pr.first << "): " <<
-            *g_omap.valueAtID(pr.first) << "\n";
+        llvm::dbgs() << "  Checking node: " << pr.first << " or: " <<
+            ValPrint(nd.extId()) << "\n";
 
-          llvm::dbgs() << "    in is currently: " << nd.in().at(pr.first) <<
-              "\n";
-          llvm::dbgs() << "    out is: " << pr.second << "\n";
-          llvm::dbgs() << "      that's:\n";
-          for (auto dbg_id : pr.second) {
-            llvm::dbgs() << "        (" << dbg_id << ") " <<
-                *g_omap.valueAtID(dbg_id) << "\n";
-          }
-          bool c = (nd.in().at(pr.first) |= pr.second);
+        // This node should be in this partition
+        assert(dug.getPart(pr.second) == part_id);
 
-          if (c) {
-            llvm::dbgs() << "    Pushing nd to work: " << nd.id() << "\n";
-            // Propigate info?
-            work.push(&nd);
-          }
-        });
+        llvm::dbgs() << "  before in for nd is: " << nd.in() << "\n";
+
+        // Update the input set of the successor node
+        bool c = nd.in().orPart(out_, dug.objToPartMap(), part_id);
+
+        llvm::dbgs() << "  after in for nd is: " << nd.in() << "\n";
+
+        if (c) {
+          llvm::dbgs() << "    Pushing nd to work: " << nd.id() << "\n";
+          // Propigate info?
+          work.push(&nd);
+        }
       });
     });
   }
@@ -298,16 +275,73 @@ void DUG::PhiNode::process(DUG &dug, PtstoGraph &, Worklist &work) {
     std::for_each(std::begin(part_to_obj), std::end(part_to_obj),
         [this, &work, &dug] (std::pair<DUG::DUGid, ObjectMap::ObjID> &pr) {
       bool change = false;
-      // auto dug_id = dug.getEdge(edge_id).dest();
       auto dug_id = pr.first;
 
       auto &nd = dug.getNode(dug_id);
 
       change = (nd.in() |= in());
       if (change) {
+        llvm::dbgs() << "  Pushing nd to work: " << nd.id() << "\n";
         work.push(&nd);
       }
     });
   });
+}
+
+void DUG::GlobalInitNode::process(DUG &dug, PtstoGraph &pts_top,
+    Worklist &work) {
+  llvm::dbgs() << "Process GlobalInit\n";
+
+  bool change = false;
+
+  llvm::dbgs() << "Adding " << src() << ", or " <<
+      ValPrint(src()) << " to top " << dest() << ", or " <<
+      ValPrint(dest()) << "\n";
+  llvm::dbgs() << "Thats a node for: " << ValPrint(rep()) <<
+      "\n";
+
+  auto &dest_pts = pts_top.at(dest());
+  auto &src_pts = pts_top.at(src());
+
+  llvm::dbgs() << "dest_pts before: " << dest_pts << "\n";
+  change = (dest_pts |= src_pts);
+  llvm::dbgs() << "dest_pts after: " << dest_pts << "\n";
+
+  // If we updated the set, wake all of our successors
+  if (change) {
+    // For each successor partition
+    std::for_each(std::begin(part_succs_), std::end(part_succs_),
+        [this, &work, &dug, &dest_pts] (DUG::PartID part_id) {
+      auto &part_to_obj = dug.getObjs(part_id);
+
+
+      // Wake each successor by that partition
+      std::for_each(std::begin(part_to_obj), std::end(part_to_obj),
+          [this, &work, &dug, &dest_pts, part_id]
+          (std::pair<DUG::DUGid, ObjectMap::ObjID> &pr) {
+        // Update their in for this partition, as the ptstoset for this global
+        //   variable has changed
+        auto &nd = dug.getNode(pr.first);
+        bool c = false;
+
+        llvm::dbgs() << "nd.in is: " << nd.in() << "\n";
+
+        c = nd.in().orPart(dest_pts, dug.objToPartMap(), part_id);
+
+        if (c) {
+          llvm::dbgs() << "  Pushing part nd to work: " << nd.id() << "\n";
+          work.push(&nd);
+        }
+      });
+    });
+
+    std::for_each(succ_begin(), succ_end(),
+        [&dug, &work](DUG::EdgeID id) {
+      auto &edge = dug.getEdge(id);
+      auto &nd = dug.getNode(edge.dest());
+      llvm::dbgs() << "  Pushing non-part nd to work: " << nd.id() << "\n";
+      work.push(&nd);
+    });
+  }
 }
 

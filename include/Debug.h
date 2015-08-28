@@ -74,7 +74,13 @@ class null_ostream : public llvm::raw_ostream {
 #ifdef SPECSFS_DEBUG
 #define dout llvm::dbgs()
 #else
-#define dout null_ostream::nullstream()
+// This can/should be super-duper optimized
+__attribute__((pure, unused))
+static bool operator&&(int, const llvm::raw_ostream &) {
+  return false;
+}
+//  #define dout null_ostream::nullstream()
+#define dout 0 && llvm::dbgs()
 #endif
 
 #endif  // INCLUDE_DEBUG_H_

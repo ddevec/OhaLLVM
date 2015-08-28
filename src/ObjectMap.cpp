@@ -6,6 +6,9 @@
 
 #include <utility>
 
+// FIXME: HAX to be removed later
+ObjectMap *g_omap = nullptr;
+
 const ObjectMap::ObjID ObjectMap::NullValue =
     ObjectMap::ObjID(
         static_cast<int32_t>(ObjectMap::ObjEnum::eNullValue));
@@ -30,6 +33,10 @@ ObjectMap::ObjectMap() {
   for (int32_t i = 0; i < static_cast<int32_t>(ObjEnum::eNumDefaultObjs);
       i++) {
     mapping_.push_back(nullptr);
+  }
+
+  if (g_omap == nullptr) {
+    g_omap = this;
   }
 }
 

@@ -101,6 +101,7 @@ enum class NodeKind {
   LoadNode,
   StoreNode,
   PhiNode,
+  GlobalInitNode,
   PartNodeEnd,
   CopyNode,
   DUGNodeEnd,

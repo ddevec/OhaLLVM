@@ -86,16 +86,6 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
     error("CreateConstraints failure!");
   }
 
-  {
-    SEG<CFG::CFGid> &cfg_seg = cfg.getSEG();
-    std::for_each(std::begin(cfg_seg), std::end(cfg_seg),
-        [] (SEG<CFG::CFGid>::node_iter_type &pnode) {
-      CFG::Node &cfg_node = llvm::cast<CFG::Node>(*pnode);
-
-      cfg_node.debug_uses();
-    });
-  }
-
   // cg.getSEG().printDotFile("top.dot", omap);
 
   // Initial optimization pass
@@ -122,6 +112,10 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   if (addIndirectCalls(cg, cfg, aux, omap)) {
     error("AddIndirectCalls failure!");
   }
+
+  // Now that we've resolve our indir edges, we can remove duplicate constraints
+  // (possibly created by optimizeConstraints())
+  cg.unique();
 
   // The PE graph was updated by addIndirectCalls
   // cg.getSEG().printDotFile("top_indir.dot", omap);

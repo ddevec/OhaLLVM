@@ -325,4 +325,34 @@ class ObjectMap {
   //}}}
 };
 
+// For debug only, not guaranteed to persist
+extern ObjectMap *g_omap;
+
+// Also for debug, using g_omap
+class ValPrint {
+ public:
+    explicit ValPrint(ObjectMap::ObjID id) : id_(id) { }
+
+    friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
+        const ValPrint &pr) {
+      auto val = g_omap->valueAtID(pr.id_);
+
+      if (val != nullptr) {
+        if (auto gv = llvm::dyn_cast<const llvm::GlobalValue>(val)) {
+          o << gv->getName();
+        } else if (auto fcn = llvm::dyn_cast<const llvm::Function>(val)) {
+          o << fcn->getName();
+        } else {
+          o << *val;
+        }
+      } else {
+        o << "(null)";
+      }
+      return o;
+    }
+
+ private:
+    ObjectMap::ObjID id_;
+};
+
 #endif  // INCLUDE_OBJECTMAP_H_

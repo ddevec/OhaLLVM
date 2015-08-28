@@ -36,17 +36,6 @@ class CFG {
     typedef SEG<CFGid>::EdgeID EdgeID;
     //}}}
 
-    // Constructors {{{
-    CFG() = default;
-
-    CFG(const CFG &other) :
-      CFG_(other.getSEG().clone<Node, Edge>()) { }
-    CFG(CFG &&) = default;
-
-    CFG &operator=(const CFG &) = delete;
-    CFG &operator=(CFG &&) = default;
-    //}}}
-
     // Nodes {{{
     class Node : public UnifyNode<CFGid> {
      public:
@@ -135,6 +124,7 @@ class CFG {
 
           uses_.insert(std::begin(node.uses_), std::end(node.uses_));
           defs_.insert(std::begin(node.defs_), std::end(node.defs_));
+          glblInits_.insert(std::begin(node.glblInits_), std::end(node.glblInits_));
           /*
           llvm::dbgs() << "Post merge for node: " << extId() << "<-" <<
             node.extId() << "\n";
@@ -197,6 +187,17 @@ class CFG {
           return ret.second;
         }
 
+        bool addGlobalInit(ObjectMap::ObjID glbl_id) {
+          auto ret = glblInits_.insert(glbl_id);
+
+          assert(ret.second);
+          return ret.second;
+        }
+
+        void clearGlobalInits() {
+          glblInits_.clear();
+        }
+
         void clearUses() {
           uses_.clear();
         }
@@ -253,6 +254,14 @@ class CFG {
           return std::end(uses_);
         }
 
+        const_def_use_iterator glbl_inits_begin() const {
+          return std::begin(glblInits_);
+        }
+
+        const_def_use_iterator glbl_inits_end() const {
+          return std::end(glblInits_);
+        }
+
         /*
         const_def_use_iterator uses_begin() const {
           return std::begin(uses_);
@@ -277,6 +286,7 @@ class CFG {
       // The objects defined/uses by this node
       std::set<ObjectMap::ObjID> defs_;
       std::set<ObjectMap::ObjID> uses_;
+      std::set<ObjectMap::ObjID> glblInits_;
 
       // To identify p/m nodes (see computeSSA comments)
       bool m_ = false;
@@ -286,6 +296,28 @@ class CFG {
       bool c_ = false;
       //}}}
     };
+    //}}}
+
+    // Constructors {{{
+    CFG() {
+      // Add the default nodes to the graph...
+      for (int i = 0; i < static_cast<int32_t>(CFGEnum::eLastEnumValue); i++) {
+        auto node_it = CFG_.addNode<Node>(CFGid(i));
+
+        auto &node = CFG_.getNode<Node>(node_it->second);
+
+        // global init nodes are np nodes, and relevant
+        node.setM();
+        node.setR();
+      }
+    }
+
+    CFG(const CFG &other) :
+      CFG_(other.getSEG().clone<Node, Edge>()) { }
+    CFG(CFG &&) = default;
+
+    CFG &operator=(const CFG &) = delete;
+    CFG &operator=(CFG &&) = default;
     //}}}
 
     // Edges {{{

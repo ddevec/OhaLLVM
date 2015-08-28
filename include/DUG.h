@@ -50,7 +50,12 @@ class DUGNode : public SEGNode<ObjectMap::ObjID> {
       return bad;
     }
 
-    ObjectMap::ObjID dest() const {
+    // For most nodes, rep and dest_ are the same thing
+    virtual ObjectMap::ObjID dest() const {
+      return dest_;
+    }
+
+    virtual ObjectMap::ObjID rep() const {
       return dest_;
     }
 
@@ -151,41 +156,20 @@ class DUG {
       std::for_each(std::begin(cg), std::end(cg),
           [this, &omap]
           (const ConstraintGraph::iter_type &pcons) {
+        // Ignore nullptrs, they've been deleted
+        if (pcons == nullptr) {
+          return;
+        }
         auto &cons = llvm::cast<Constraint>(*pcons);
         // Insert the node into the seg
         auto dest = cons.dest();
         auto src = cons.src();
 
-        extern ObjectMap &g_omap;
-        const llvm::Value *dest_val = g_omap.valueAtID(dest);
-        const llvm::Value *src_val = g_omap.valueAtID(src);
+        llvm::dbgs() << "Adding node to DUG for obj_id: " << dest << ": " <<
+            ValPrint(dest) << "\n";
 
-        llvm::dbgs() << "Adding node to DUG for obj_id: " << dest << ": ";
-        if (dest_val != nullptr) {
-          if (auto gv = llvm::dyn_cast<const llvm::GlobalValue>(dest_val)) {
-            llvm::dbgs() << gv->getName() << "\n";
-          } else if (auto fcn =
-              llvm::dyn_cast<const llvm::Function>(dest_val)) {
-            llvm::dbgs() << fcn->getName() << "\n";
-          } else {
-            llvm::dbgs() << *dest_val << "\n";
-          }
-        } else {
-          llvm::dbgs() << "dest null???\n";
-        }
-
-        llvm::dbgs() << "  node src_obj_id: " << src << ": ";
-        if (src_val != nullptr) {
-          if (auto gv = llvm::dyn_cast<const llvm::GlobalValue>(src_val)) {
-            llvm::dbgs() << gv->getName() << "\n";
-          } else if (auto fcn = llvm::dyn_cast<const llvm::Function>(src_val)) {
-            llvm::dbgs() << fcn->getName() << "\n";
-          } else {
-            llvm::dbgs() << *src_val << "\n";
-          }
-        } else {
-          llvm::dbgs() << "src null???\n";
-        }
+        llvm::dbgs() << "  node src_obj_id: " << src << ": " <<
+            ValPrint(src) << "\n";
 
         switch (cons.type()) {
           case ConstraintType::AddressOf:
@@ -204,11 +188,11 @@ class DUG {
             //     operator)
             // Make a phony dest for this store:
             {
-              auto &stcons = llvm::cast<StoreConstraint>(cons);
+              auto &stcons = llvm::cast<NodeConstraint>(cons);
               llvm::dbgs() << "  node is Store\n";
-              auto st_id = stcons.storeId();
+              auto st_id = stcons.nodeId();
               llvm::dbgs() << "  adding for store: (" << st_id << ") "
-                << *g_omap.valueAtID(st_id) << "\n";
+                << ValPrint(st_id) << "\n";
               auto ret =
                 DUG_.addNode<StoreNode>(st_id, dest, src);
               llvm::dbgs() << "  DUGid is " << ret->second << "\n";
@@ -216,17 +200,34 @@ class DUG {
             break;
           case ConstraintType::Load:
             {
-              auto &ldcons = llvm::cast<LoadConstraint>(cons);
+              auto &ldcons = llvm::cast<NodeConstraint>(cons);
               llvm::dbgs() << "  node is Load\n";
-              auto ld_id = ldcons.loadId();
+              auto ld_id = ldcons.nodeId();
               llvm::dbgs() << "  Actual load_id is: (" << ld_id << ") " <<
-                *g_omap.valueAtID(ld_id) << "\n";
+                ValPrint(ld_id) << "\n";
               auto ret = DUG_.addNode<LoadNode>(ld_id, dest, src);
               llvm::dbgs() << "  Confirming load node!\n";
               auto &nd = DUG_.getNode<LoadNode>(ret->second);
-              llvm::dbgs() << "    dest is: " << *g_omap.valueAtID(nd.dest())
+              llvm::dbgs() << "    dest is: " << ValPrint(nd.dest())
                   << "\n";
-              llvm::dbgs() << "    src is: " << *g_omap.valueAtID(nd.src())
+              llvm::dbgs() << "    src is: " << ValPrint(nd.src())
+                  << "\n";
+              llvm::dbgs() << "  DUGid is " << ret->second << "\n";
+            }
+            break;
+          case ConstraintType::GlobalInit:
+            {
+              auto &glblcons = llvm::cast<NodeConstraint>(cons);
+              llvm::dbgs() << "  node is GlobalInit\n";
+
+              auto glbl_id = glblcons.nodeId();
+              llvm::dbgs() << "  Actual glbl_id is: (" << glbl_id << ")\n";
+              auto ret = DUG_.addNode<GlobalInitNode>(glbl_id, dest, src);
+              llvm::dbgs() << "  Confirming GlobalInit node!\n";
+              auto &nd = DUG_.getNode<GlobalInitNode>(ret->second);
+              llvm::dbgs() << "    dest is: " << ValPrint(nd.dest())
+                  << "\n";
+              llvm::dbgs() << "    src is: " << ValPrint(nd.src())
                   << "\n";
               llvm::dbgs() << "  DUGid is " << ret->second << "\n";
             }
@@ -271,12 +272,14 @@ class DUG {
           DUG_.addEdge<DUGEdge>(pr.second, node.id());
         });
 
+        // StoreNode's also need an incoming edge from dest, because dest is the
+        //   store address, not an actual top level variable, and therefore the
+        //   store must be recomputed on dest changes
         if (auto pst_node = llvm::dyn_cast<StoreNode>(pnode)) {
-          // StoreNode's also need an incoming edge from st_src
-          auto st_src_id = pst_node->st_src();
-          auto st_src_nodes = DUG_.getNodesOrNull(st_src_id);
+          auto dest_id = pst_node->dest();
+          auto dest_nodes = DUG_.getNodesOrNull(dest_id);
 
-          std::for_each(st_src_nodes.first, st_src_nodes.second,
+          std::for_each(dest_nodes.first, dest_nodes.second,
               [this, &node] (std::pair<const ObjID, SEG<ObjID>::NodeID> &pr) {
             DUG_.addEdge<DUGEdge>(pr.second, node.id());
           });
@@ -329,10 +332,29 @@ class DUG {
       return DUG_.getNode<DUGNode>(id);
     }
 
+    const DUGNode &getNode(DUGid id) const {
+      return DUG_.getNode<DUGNode>(id);
+    }
+
+    /*
     std::pair<SEG<ObjID>::NodeMap::iterator, SEG<ObjID>::NodeMap::iterator>
     getNodes(ObjectMap::ObjID id) {
       return DUG_.getNodes(id);
     }
+    */
+
+    DUGNode &getNode(ObjectMap::ObjID id) {
+      auto ret_pr = DUG_.getNodes(id);
+      assert(std::distance(ret_pr.first, ret_pr.second) == 1);
+      return getNode(ret_pr.first->second);
+    }
+
+    const DUGNode &getNode(ObjectMap::ObjID id) const {
+      auto ret_pr = DUG_.getNodes(id);
+      assert(std::distance(ret_pr.first, ret_pr.second) == 1);
+      return getNode(ret_pr.first->second);
+    }
+
     /*
     std::pair<SEG<ObjID>::node_map_iterator, SEG<ObjID>::node_map_iterator>
     getNode(ObjectMap::ObjID id) {
@@ -547,10 +569,10 @@ class DUG {
     class LoadNode : public PartNode {
       //{{{
      public:
-        LoadNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID phony_dest,
-            ObjectMap::ObjID real_dest, ObjectMap::ObjID src)
-          : PartNode(NodeKind::LoadNode, node_id, phony_dest, src),
-        realDest_(real_dest) { }
+        LoadNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID rep,
+            ObjectMap::ObjID dest, ObjectMap::ObjID src)
+          : PartNode(NodeKind::LoadNode, node_id, rep, src),
+        realDest_(dest) { }
 
         // NOTE: Process implemented in "Solve.cpp"
         void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
@@ -559,7 +581,11 @@ class DUG {
           return node->getKind() == NodeKind::LoadNode;
         }
 
-        ObjectMap::ObjID realDest() const {
+        ObjectMap::ObjID rep() const override {
+          return dest_;
+        }
+
+        ObjectMap::ObjID dest() const override {
           return realDest_;
         }
       //}}}
@@ -571,10 +597,10 @@ class DUG {
     class StoreNode : public PartNode {
       //{{{
      public:
-        StoreNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID phony_dest,
-            ObjectMap::ObjID st_src, ObjectMap::ObjID src)
-          : PartNode(NodeKind::StoreNode, node_id, phony_dest, src),
-          st_src_(st_src) { }
+        StoreNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID rep,
+            ObjectMap::ObjID dest, ObjectMap::ObjID src)
+          : PartNode(NodeKind::StoreNode, node_id, rep, src),
+          realDest_(dest) { }
 
         // NOTE: Process implemented in "Solve.cpp"
         void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
@@ -593,16 +619,48 @@ class DUG {
           return strong_;
         }
 
-        ObjectMap::ObjID st_src() const {
-          return st_src_;
+        ObjectMap::ObjID rep() const override {
+          return dest_;
+        }
+
+        ObjectMap::ObjID dest() const override {
+          return realDest_;
         }
 
      private:
         PtstoGraph out_;
 
-        ObjectMap::ObjID st_src_;
+        ObjectMap::ObjID realDest_;
 
         bool strong_ = false;
+      //}}}
+    };
+
+    class GlobalInitNode : public PartNode {
+      //{{{
+     public:
+        GlobalInitNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID rep,
+            ObjectMap::ObjID dest, ObjectMap::ObjID src)
+          : PartNode(NodeKind::GlobalInitNode, node_id, rep, src),
+          realDest_(dest) { }
+
+        // NOTE: Process implemented in "Solve.cpp"
+        void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
+
+        static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
+          return node->getKind() == NodeKind::GlobalInitNode;
+        }
+
+        ObjectMap::ObjID rep() const override {
+          return dest_;
+        }
+
+        ObjectMap::ObjID dest() const override {
+          return realDest_;
+        }
+
+     private:
+        ObjectMap::ObjID realDest_;
       //}}}
     };
 
