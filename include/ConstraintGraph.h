@@ -59,6 +59,14 @@ class Constraint {
       return offs_;
     }
 
+    bool strong() const {
+      return strong_;
+    }
+
+    void setStrong(bool strong) {
+      strong_ = strong;
+    }
+
     virtual bool operator<(const Constraint &cons_rhs) const {
       if (type() != cons_rhs.type()) {
         return type() < cons_rhs.type();
@@ -124,6 +132,9 @@ class Constraint {
     // Private Data {{{
     ObjID src_;
     ObjID dest_;
+
+    bool strong_ = false;
+
     ConstraintType type_;
 
     ConstraintKind kind_;
@@ -229,6 +240,10 @@ class ConstraintGraph {
     //}}}
 
     // Accessors {{{
+    Constraint  &getConstraint(ConsID id) {
+      return *constraints_.at(id.val());
+    }
+
     const Constraint  &getConstraint(ConsID id) const {
       return *constraints_.at(id.val());
     }

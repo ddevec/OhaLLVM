@@ -4,7 +4,7 @@
 
 
 // Enable debugging prints for this file
-#define SPECSFS_DEBUG
+// #define SPECSFS_DEBUG
 
 #include "include/SpecSFS.h"
 

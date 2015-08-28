@@ -15,10 +15,10 @@
 #include <utility>
 #include <vector>
 
-#include "include/SpecSFS.h"
-
 #define SPECSFS_DEBUG
 #include "include/Debug.h"
+
+#include "include/SpecSFS.h"
 
 #include "include/SEG.h"
 #include "include/util.h"
@@ -66,6 +66,7 @@ struct HUNode : public UnifyNode<ConstraintGraph::ObjID> {
       const ObjectMap &omap) const override {
     ObjID id = SEGNode<ObjID>::extId();
     auto pr = omap.getValueInfo(id);
+    ofil << SEGNode<ObjID>::id() << " : ";
     if (pr.first != ObjectMap::Type::Special) {
       const llvm::Value *val = pr.second;
       if (val == nullptr) {
@@ -128,17 +129,11 @@ struct HUEdge : public SEGEdge<ConstraintGraph::ObjID> {
           break;
         case ConstraintType::Load:
           // Add its own indirect ptsto
-          if (offs() == 0) {
-            if_debug(
-              dout << "Adding edge: " << src << " -> " <<
-                dest << "\n";
-              dout << "Adding pred to: ";
-              src_node.print_label(dout, g_omap);
-              dout << "\n");
-          } else {
-            dout << "Setting: " << src << " to indirect\n";
-            src_node.setIndirect();
-          }
+          dest_node.setIndirect();
+          if_debug(
+            dout << "Adding edge: " << src << " -> " <<
+              dest << "\n";
+            dout << "Adding pred to: " << src_node.id() << "\n");
           break;
         case ConstraintType::AddressOf:
           if_debug(
@@ -149,18 +144,12 @@ struct HUEdge : public SEGEdge<ConstraintGraph::ObjID> {
           dest_node.setIndirect();
           src_node.addPtsTo(dest);
 
-          if (g_omap->isObject(src_node.extId())) {
-            src_node.setIndirect();
-          }
-
           break;
         case ConstraintType::Copy:
         case ConstraintType::GlobalInit:
           if_debug(
             dout << "Adding edge: " << src << " -> " << dest << "\n";
-            dout << "Adding pred (copy) to: ";
-            src_node.print_label(dout, g_omap);
-            dout << "\n");
+            dout << "Adding pred (copy) to: " << src_node.id() << "\n");
           break;
         default:
           llvm_unreachable("Should never get here!\n");
@@ -192,6 +181,9 @@ struct HUEdge : public SEGEdge<ConstraintGraph::ObjID> {
           break;
         case ConstraintType::Store:
           ofil << "store";
+          break;
+        case ConstraintType::GlobalInit:
+          ofil << "glbl_init";
           break;
         default:
           llvm_unreachable("Constraint with unexpected type!");
@@ -321,6 +313,8 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
       dout << "\n";
     });  //}}}
 
+  if_debug(huSeg.printDotFile("HuStart.dot", *g_omap));
+
   // Now iterate in topological order (start w/ root, end w/ leaf)
   std::for_each(huSeg.topo_begin(), huSeg.topo_end(),
       [&huSeg, &omap](HUSeg::NodeID node_id) {
@@ -345,6 +339,8 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
       }
       dout << "\n";
     });  //}}}
+
+  if_debug(huSeg.printDotFile("HuOpt.dot", *g_omap));
 
   //  Used to map objs to the PE class
   std::map<Bitmap, SEG<ConstraintGraph::ObjID>::NodeID, BitmapLT> pts_to_pe;

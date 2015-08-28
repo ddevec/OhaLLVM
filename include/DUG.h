@@ -63,11 +63,16 @@ class DUGNode : public SEGNode<ObjectMap::ObjID> {
       return src_;
     }
 
+    bool strong() const {
+      return strong_;
+    }
     //}}}
+
  protected:
     // Private variables {{{
     ObjectMap::ObjID dest_;
     ObjectMap::ObjID src_;
+    bool strong_ = false;
     //}}}
   //}}}
 };
@@ -176,7 +181,8 @@ class DUG {
             {
               llvm::dbgs() << "  node is AddressOf\n";
               // Add AllocNode
-              auto ret = DUG_.addNode<AllocNode>(dest, src);
+              bool strong = cons.strong();
+              auto ret = DUG_.addNode<AllocNode>(dest, src, strong);
               llvm::dbgs() << "  DUGid is " << ret->second << "\n";
             }
             break;
@@ -501,8 +507,11 @@ class DUG {
       //{{{
      public:
         AllocNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest,
-            ObjectMap::ObjID src) :
-          DUGNode(NodeKind::AllocNode, node_id, dest, src) { }
+              ObjectMap::ObjID src, bool strong) :
+            DUGNode(NodeKind::AllocNode, node_id, dest, src) {
+          // FIXME: Hacky
+          strong_ = strong;
+        }
 
         // NOTE: Process implemented in "Solve.cpp"
         void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
@@ -613,10 +622,6 @@ class DUG {
             override {
           PartNode::setupPartGraph(vars);
           out_ = PtstoGraph(vars);
-        }
-
-        bool strong() const {
-          return strong_;
         }
 
         ObjectMap::ObjID rep() const override {

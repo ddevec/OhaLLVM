@@ -184,17 +184,19 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
 
     // Find the relevant value for any member of this partiton (they all have
     //   the same pointsto properties)
-    auto src_dest = getSrcDestValue(pr.second.front().second, omap, dug);
-
-    auto src_val = src_dest.first;
-    auto dest_val = src_dest.second;
+    // Val is dest
+    auto val = getSrcDestValue(pr.second.front().second, omap, dug).second;
 
     // Finding all relevant nodes:
     //   For each pointer modifying access, if it can alias with this ptsto set,
     //   add it to the relevant set
+    // This is part 3 from the paper:
+    //   For each partition P use the results of AUX to label each STORE that
+    //   may modify a variable in P with a function x(P), and label each LOAD
+    //   that may access a variable in P with a function u(P).
+    // Label each load/store
     std::for_each(cfg.obj_to_cfg_begin(), cfg.obj_to_cfg_end(),
-        [&aux, &dug, &cfg, &relevant_node_map, &omap, &part_id, &src_val,
-        &dest_val]
+        [&aux, &dug, &cfg, &relevant_node_map, &omap, &part_id, &val]
         (const std::pair<const ObjectMap::ObjID, CFG::CFGid> &pr) {
       auto obj_id = pr.first;
 
@@ -203,23 +205,30 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
       auto chk_dest_val = src_dest.first;
       auto chk_src_val = src_dest.second;
 
-      // If that value aliases with a value in the partition (note all values in
-      //   the partition are equivalent in this regard)
-      // Then add it to our relevant_node_map
-
-      if (llvm::isa<llvm::PointerType>(chk_dest_val->getType()) &&
-          llvm::isa<llvm::PointerType>(src_val->getType()) &&
-          aux.alias(AliasAnalysis::Location(src_val),
+      // If this is a store that can modify P
+      auto chk_val = omap.valueAtID(obj_id);
+      if (chk_val == nullptr) {
+        auto &nd = dug.getNode(obj_id);
+        chk_val = omap.valueAtID(nd.dest());
+      }
+      llvm::dbgs() << "Checking val: " << *val << " and chk_dest_val " <<
+          *chk_dest_val << "\n";
+      if (llvm::isa<llvm::StoreInst>(chk_val) &&
+          llvm::isa<llvm::PointerType>(chk_dest_val->getType()) &&
+          aux.alias(AliasAnalysis::Location(val),
             AliasAnalysis::Location(chk_dest_val)) != AliasResult::NoAlias) {
         auto &node = dug.getNode(obj_id);
 
         relevant_node_map[part_id].emplace_back(node.id(), obj_id);
       }
 
-      if (llvm::isa<llvm::PointerType>(chk_src_val->getType()) &&
-          llvm::isa<llvm::PointerType>(dest_val->getType()) &&
-          aux.alias(AliasAnalysis::Location(chk_src_val),
-            AliasAnalysis::Location(dest_val)) != AliasResult::NoAlias) {
+      llvm::dbgs() << "Checking val: " << *val << " and chk_src_val " <<
+          *chk_src_val << "\n";
+      // If this is a load that loads from P
+      if (llvm::isa<llvm::LoadInst>(chk_val) &&
+          llvm::isa<llvm::PointerType>(chk_src_val->getType()) &&
+          aux.alias(AliasAnalysis::Location(val),
+            AliasAnalysis::Location(chk_src_val)) != AliasResult::NoAlias) {
         auto &node = dug.getNode(obj_id);
 
         relevant_node_map[part_id].emplace_back(node.id(), obj_id);

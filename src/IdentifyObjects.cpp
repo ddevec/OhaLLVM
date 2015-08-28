@@ -769,10 +769,22 @@ static void idAllocaInst(ConstraintGraph &cg, ObjectMap &omap,
   // cg.associateNode(obj_id, omap.getValue(&inst));
 
   // Add a constraint pointing this value to that object
-  cg.add(ConstraintType::AddressOf,
+  auto cons_id = cg.add(ConstraintType::AddressOf,
       getValueUpdate(cg, omap, &alloc),
       omap.getValue(&alloc));
-      // obj_id);
+  auto &cons = cg.getConstraint(cons_id);
+
+  // If this is a concrete location (read non-array) set it to be strong
+  auto T = alloc.getAllocatedType();
+  if (auto at = llvm::dyn_cast<llvm::ArrayType>(T)) {
+    cons.setStrong(false);
+    T = at->getElementType();
+  } else {
+    cons.setStrong(true);
+  }
+
+  // FIXME: Now, handle structure fields...
+  // if (structtype...)
 }
 
 static void idLoadInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
@@ -841,7 +853,8 @@ static void idStoreInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
   } else if (llvm::isa<llvm::StructType>(st.getOperand(0)->getType())) {
     llvm::errs() << "FIXME: Ignoring struct store\n";
     /*
-    cg.add(ConstraintType::Store, omap.getValue(st.getOperand(1)),
+    cg.add(ConstraintType::Store, st_id,
+        omap.getValue(st.getOperand(1)),
         ObjectMap::AgregateNode);
         */
   } else {

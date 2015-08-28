@@ -97,7 +97,11 @@ class ID {
 
     template <typename T, class T2, T2 DV>
     friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
-        const ID<T, T2, DV> &id);
+         ID<T, T2, DV> id);
+
+    template <typename T, class T2, T2 DV>
+    friend std::ostream &operator<<(std::ostream &o,
+        ID<T, T2, DV> id);
 
  private:
     impl m_val = invalid_value;
@@ -135,9 +139,16 @@ class IDGenerator {
   //}}}
 };
 
-template<class Tag, class impl, impl default_value>
+template <typename T, class T2, T2 DV>
 llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
-     const ID<Tag, impl, default_value> &id) {
+    ID<T, T2, DV> id) {
+  o << id.m_val;
+  return o;
+}
+
+template <typename T, class T2, T2 DV>
+std::ostream &operator<<(std::ostream &o,
+    ID<T, T2, DV> id) {
   o << id.m_val;
   return o;
 }
