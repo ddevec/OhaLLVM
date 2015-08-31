@@ -103,11 +103,21 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
     // Get the actual instruction
     auto src_dest = getSrcDestValue(obj_id, omap, dug);
 
-    // val is dest...
-    auto val = src_dest.second;
+    const llvm::Value *val = omap.valueAtID(obj_id);
+    if (val == nullptr) {
+      auto &nd = dug.getNode(obj_id);
+      val = omap.valueAtID(nd.dest());
+    }
+    if (llvm::isa<llvm::StoreInst>(val)) {
+      // val is dest for stores...
+      val = src_dest.second;
+    } else {
+      // val is src for gv and loads
+      val = src_dest.first;
+    }
 
     // Now get the objects pointed to by it:
-    // llvm::dbgs() << "queried val is : " << *val << "\n";
+    llvm::dbgs() << "queried val is : " << *val << "\n";
     auto &ptsto = aux.getPointsTo(val);
 
     auto old_val = omap.valueAtID(obj_id);
@@ -205,14 +215,16 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
       auto chk_dest_val = src_dest.first;
       auto chk_src_val = src_dest.second;
 
-      // If this is a store that can modify P
       auto chk_val = omap.valueAtID(obj_id);
+      // Global values will give a nullptr, with the dest being the real id..
       if (chk_val == nullptr) {
         auto &nd = dug.getNode(obj_id);
         chk_val = omap.valueAtID(nd.dest());
       }
+
       llvm::dbgs() << "Checking val: " << *val << " and chk_dest_val " <<
           *chk_dest_val << "\n";
+      // If this is a store that can modify P
       if (llvm::isa<llvm::StoreInst>(chk_val) &&
           llvm::isa<llvm::PointerType>(chk_dest_val->getType()) &&
           aux.alias(AliasAnalysis::Location(val),
@@ -434,8 +446,11 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
         cfg_node.setR();
 
         // Convert the copy into a global init
-        cfg_node.addGlobalInit(ObjectMap::ObjID(node.id().val()));
-        node_to_partition[node.id()].push_back(part_id);
+        // FIXME:
+        // Similar to other FIXME's above, its hacky and bad, etc etc, fix
+        //   when I have time
+        cfg_node.addGlobalInit(ObjectMap::ObjID(dug_id.val()));
+        node_to_partition[dug_id].push_back(part_id);
       } else {
         llvm_unreachable("Unrecognized node type!");
       }
@@ -445,39 +460,6 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
     auto part_ssa = computeSSA(part_graph);
 
     part_ssa.printDotFile("part_ssa.dot", *g_omap);
-
-    /*
-    dout << "part_ssa_map contains cfg ids:";
-    std::for_each(part_ssa.node_map_begin(), part_ssa.node_map_end(),
-        [] (std::pair<const CFG::CFGid, CFG::NodeID> &node_pair) {
-      dout << " " << node_pair.first;
-    });
-    dout << "\n";
-    */
-
-    // Basically need to remap now... I can get a node by CFGid, and remap that
-    //   to a NodeID for each CFGid I need...
-    /*
-    std::map<CFG::NodeID, CFG::CFGid> cfg_to_node;
-
-    auto cfg_to_node_map = [&cfg_to_node, &part_ssa]
-          (std::pair<const CFG::CFGid, std::vector<DUG::DUGid>> &pr) {
-        auto node_pr = part_ssa.getNodes(pr.first);
-
-        assert(std::distance(node_pr.first, node_pr.second) == 1);
-        auto &node = part_ssa.getNode(node_pr.first->second);
-        llvm::dbgs() << "  cfg_to_node[" << node.id() << "] = " << pr.first <<
-          "\n";
-        assert(cfg_to_node.find(node.id()) == std::end(cfg_to_node) ||
-            cfg_to_node.at(node.id()) == pr.first);
-        cfg_to_node.emplace(node.id(), pr.first);
-      };
-
-    llvm::dbgs() << "cfg_to_node_map(part_uses)\n";
-    std::for_each(std::begin(part_uses), std::end(part_uses), cfg_to_node_map);
-    llvm::dbgs() << "cfg_to_node_map(part_defs)\n";
-    std::for_each(std::begin(part_defs), std::end(part_defs), cfg_to_node_map);
-    */
 
     // Here we group the partSSA info, indicating which DUG nodes are affected
     //   by this partition
@@ -553,7 +535,6 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
         assert(!have_glbl);
         bool first = true;
 
-        // for (auto &st_id : st_list) {
         std::for_each(ssa_node.defs_begin(), ssa_node.defs_end(),
             [&graph, &dug_id, &part_id, &first]
             (ObjectMap::ObjID obj_id) {

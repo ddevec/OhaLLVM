@@ -38,16 +38,7 @@ create_test(simple_indr_loop
     simple_indr_loop.c
   )
 
-#add_executable(simple_fcn
-#  simple_fcn.c)
-
-#add_executable(simple_fcn2
-#  simple_fcn2.c)
-
-#add_executable(simple_indr_fcn
-#  simple_indr_fcn.c)
-
-#create_dis(simple_fcn)
-#create_dis(simple_indr_fcn)
-#create_dis(simple_fcn2)
+create_test(test_strong_update
+    test_strong_update.c
+  )
 

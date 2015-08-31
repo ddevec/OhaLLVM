@@ -243,7 +243,11 @@ void DUG::StoreNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
             ValPrint(nd.extId()) << "\n";
 
         // This node should be in this partition
-        assert(dug.getPart(pr.second) == part_id);
+        llvm::dbgs() << "  ??Comparing parts " << dug.getPart(pr.second) <<
+            " and " << part_id << "\n";
+        // Okay, so it turns out this doesn't work, because some parts (ex.
+        //   intvalue parts, can have multiple ids per obj_id
+        // assert(dug.getPart(pr.second) == part_id);
 
         llvm::dbgs() << "  before in for nd is: " << nd.in() << "\n";
 

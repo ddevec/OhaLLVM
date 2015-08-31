@@ -744,10 +744,13 @@ static bool idCallInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
   llvm::CallSite CS(const_cast<llvm::Instruction *>(&inst));
 
   if (isMalloc(&inst)) {
-    // cg.associateNode(omap.getObject(&inst), omap.getValue(&inst));
+    // If its a malloc, we don't add constriants for the call, we pretend the
+    //   call is actually a addressof operation
     cg.add(ConstraintType::AddressOf,
         getValueUpdate(cg, omap, &inst),
         omap.getObject(&inst));
+
+    return false;
   }
 
   if (llvm::isa<llvm::PointerType>(CS.getType())) {
