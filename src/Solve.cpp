@@ -139,28 +139,25 @@ void DUG::LoadNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
   llvm::dbgs() << "  Load dest is: " << ValPrint(dest()) << "\n";
   llvm::dbgs() << "  Load src is: " << ValPrint(src()) << "\n";
   std::for_each(std::begin(part_succs_), std::end(part_succs_),
-      [this, &dug, &work] (DUG::PartID part_id) {
-    auto &part_to_obj = dug.getObjs(part_id);
+      [this, &dug, &work]
+      (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
+    auto part_id = part_pr.first;
+    auto dug_id = part_pr.second;
 
-    llvm::dbgs() << "  For part: " << part_id << "\n";
+    auto &nd = dug.getNode(dug_id);
+    /*
+    llvm::dbgs() << "    succ is: " << ValPrint(pr.second) << "\n";
+    llvm::dbgs() << "    part_to_obj contains: " << "\n";
     std::for_each(std::begin(part_to_obj), std::end(part_to_obj),
-        [this, &dug, &work, &part_id]
-        (std::pair<DUG::DUGid, ObjectMap::ObjID> &pr) {
-      auto &nd = dug.getNode(pr.first);
-      /*
-      llvm::dbgs() << "    succ is: " << ValPrint(pr.second) << "\n";
-      llvm::dbgs() << "    part_to_obj contains: " << "\n";
-      std::for_each(std::begin(part_to_obj), std::end(part_to_obj),
-        [](std::pair<DUG::DUGid, DUG::ObjID> &pr) {
-        llvm::dbgs() << "      " << ValPrint(pr.second) << "\n";
-      });
-      */
-      bool ch = nd.in().orPart(in_, dug.objToPartMap(), part_id);
-
-      if (ch) {
-        work.push(&nd);
-      }
+      [](std::pair<DUG::DUGid, DUG::ObjID> &pr) {
+      llvm::dbgs() << "      " << ValPrint(pr.second) << "\n";
     });
+    */
+    bool ch = nd.in().orPart(in_, dug.objToPartMap(), part_id);
+
+    if (ch) {
+      work.push(&nd);
+    }
   });
 
   if (changed) {
@@ -197,6 +194,7 @@ void DUG::StoreNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
   // NOTE: This is a strong update if we are updating a single concrete location
   if (strong() && dest_pts.size() == 1) {
     // Clear all outgoing edges from pts_top(src) from out
+    llvm::dbgs() << "DOING STRONG UPDATE!!!\n";
     in_tmp.clear(dest());
   }
 
@@ -228,40 +226,28 @@ void DUG::StoreNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
     // FIXME: Only do this for changed info?
     // For each successor partition of this store
     std::for_each(std::begin(part_succs_), std::end(part_succs_),
-        [this, &work, &dug] (DUG::PartID part_id) {
-      llvm::dbgs() << "  Checking part_id: " << part_id << "\n";
-      // Get the list of nodes assicated with that partition
-      auto &part_to_obj = dug.getObjs(part_id);
+        [this, &work, &dug]
+        (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
+      auto part_id = part_pr.first;
+      auto dug_id = part_pr.second;
+      auto &nd = dug.getNode(dug_id);
 
-      // For each node in the partition
-      std::for_each(std::begin(part_to_obj), std::end(part_to_obj),
-          [this, &dug, &work, &part_id]
-          (std::pair<DUG::DUGid, ObjectMap::ObjID> &pr) {
-        auto &nd = dug.getNode(pr.first);
+      llvm::dbgs() << "  Checking node: " << dug_id << " or: " <<
+          ValPrint(nd.extId()) << "\n";
 
-        llvm::dbgs() << "  Checking node: " << pr.first << " or: " <<
-            ValPrint(nd.extId()) << "\n";
 
-        // This node should be in this partition
-        llvm::dbgs() << "  ??Comparing parts " << dug.getPart(pr.second) <<
-            " and " << part_id << "\n";
-        // Okay, so it turns out this doesn't work, because some parts (ex.
-        //   intvalue parts, can have multiple ids per obj_id
-        // assert(dug.getPart(pr.second) == part_id);
+      llvm::dbgs() << "  before in for nd is: " << nd.in() << "\n";
 
-        llvm::dbgs() << "  before in for nd is: " << nd.in() << "\n";
+      // Update the input set of the successor node
+      bool c = nd.in().orPart(out_, dug.objToPartMap(), part_id);
 
-        // Update the input set of the successor node
-        bool c = nd.in().orPart(out_, dug.objToPartMap(), part_id);
+      llvm::dbgs() << "  after in for nd is: " << nd.in() << "\n";
 
-        llvm::dbgs() << "  after in for nd is: " << nd.in() << "\n";
-
-        if (c) {
-          llvm::dbgs() << "    Pushing nd to work: " << nd.id() << "\n";
-          // Propigate info?
-          work.push(&nd);
-        }
-      });
+      if (c) {
+        llvm::dbgs() << "    Pushing nd to work: " << nd.id() << "\n";
+        // Propigate info?
+        work.push(&nd);
+      }
     });
   }
 }
@@ -273,22 +259,19 @@ void DUG::PhiNode::process(DUG &dug, PtstoGraph &, Worklist &work) {
   // if succ.IN.changed():
   //   worklist.add(succ.IN)
   std::for_each(std::begin(part_succs_), std::end(part_succs_),
-      [this, &work, &dug](DUG::PartID part_id) {
-    auto &part_to_obj = dug.getObjs(part_id);
+      [this, &work, &dug]
+      (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
+    auto dug_id = part_pr.second;
+    bool change = false;
 
-    std::for_each(std::begin(part_to_obj), std::end(part_to_obj),
-        [this, &work, &dug] (std::pair<DUG::DUGid, ObjectMap::ObjID> &pr) {
-      bool change = false;
-      auto dug_id = pr.first;
+    auto &nd = dug.getNode(dug_id);
 
-      auto &nd = dug.getNode(dug_id);
-
-      change = (nd.in() |= in());
-      if (change) {
-        llvm::dbgs() << "  Pushing nd to work: " << nd.id() << "\n";
-        work.push(&nd);
-      }
-    });
+    // FIXME?? Does this need to be a part_or?
+    change = (nd.in() |= in());
+    if (change) {
+      llvm::dbgs() << "  Pushing nd to work: " << nd.id() << "\n";
+      work.push(&nd);
+    }
   });
 }
 
@@ -296,7 +279,7 @@ void DUG::GlobalInitNode::process(DUG &dug, PtstoGraph &pts_top,
     Worklist &work) {
   llvm::dbgs() << "Process GlobalInit\n";
 
-  bool change = false;
+  // bool change = false;
 
   llvm::dbgs() << "Adding " << src() << ", or " <<
       ValPrint(src()) << " to top " << dest() << ", or " <<
@@ -308,44 +291,38 @@ void DUG::GlobalInitNode::process(DUG &dug, PtstoGraph &pts_top,
   auto &src_pts = pts_top.at(src());
 
   llvm::dbgs() << "dest_pts before: " << dest_pts << "\n";
-  change = (dest_pts |= src_pts);
+  // FIXME: also respect strong updates?
+  // change =
+  dest_pts |= src_pts;
   llvm::dbgs() << "dest_pts after: " << dest_pts << "\n";
 
   // If we updated the set, wake all of our successors
-  if (change) {
-    // For each successor partition
-    std::for_each(std::begin(part_succs_), std::end(part_succs_),
-        [this, &work, &dug, &dest_pts] (DUG::PartID part_id) {
-      auto &part_to_obj = dug.getObjs(part_id);
+  // For each successor partition
+  std::for_each(std::begin(part_succs_), std::end(part_succs_),
+      [this, &work, &dug, &dest_pts]
+      (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
+    auto part_id = part_pr.first;
+    auto dug_id = part_pr.second;
+    auto &nd = dug.getNode(dug_id);
+    bool c = false;
 
+    llvm::dbgs() << "nd.in is: " << nd.in() << "\n";
 
-      // Wake each successor by that partition
-      std::for_each(std::begin(part_to_obj), std::end(part_to_obj),
-          [this, &work, &dug, &dest_pts, part_id]
-          (std::pair<DUG::DUGid, ObjectMap::ObjID> &pr) {
-        // Update their in for this partition, as the ptstoset for this global
-        //   variable has changed
-        auto &nd = dug.getNode(pr.first);
-        bool c = false;
+    // This is a strong update, right?  We should be able to just set it...
+    c = nd.in().orPart(dest_pts, dug.objToPartMap(), part_id);
 
-        llvm::dbgs() << "nd.in is: " << nd.in() << "\n";
-
-        c = nd.in().orPart(dest_pts, dug.objToPartMap(), part_id);
-
-        if (c) {
-          llvm::dbgs() << "  Pushing part nd to work: " << nd.id() << "\n";
-          work.push(&nd);
-        }
-      });
-    });
-
-    std::for_each(succ_begin(), succ_end(),
-        [&dug, &work](DUG::EdgeID id) {
-      auto &edge = dug.getEdge(id);
-      auto &nd = dug.getNode(edge.dest());
-      llvm::dbgs() << "  Pushing non-part nd to work: " << nd.id() << "\n";
+    if (c) {
+      llvm::dbgs() << "  Pushing part nd to work: " << nd.id() << "\n";
       work.push(&nd);
-    });
-  }
+    }
+  });
+
+  std::for_each(succ_begin(), succ_end(),
+      [&dug, &work](DUG::EdgeID id) {
+    auto &edge = dug.getEdge(id);
+    auto &nd = dug.getNode(edge.dest());
+    llvm::dbgs() << "  Pushing non-part nd to work: " << nd.id() << "\n";
+    work.push(&nd);
+  });
 }
 

@@ -463,9 +463,19 @@ static void addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
   // Simple case, single initializer
   if (C->getType()->isSingleValueType()) {
     if (llvm::isa<llvm::PointerType>(C->getType())) {
+      // FIXME -- see below
+      llvm::dbgs() << "FIXME: Ignoring global init constraint, because "
+        "Andersen's doesn't include it, and it causes my analysis to break\n";
+      llvm::dbgs() << "   To resolve this I should make Andersen's include "
+        "the constraint\n";
+      // NOTE: This is just to make us match Andersens... the "Correct" code is
+      // below
       auto glbl_id = omap.createPhonyID();
+      cg.add(ConstraintType::GlobalInit, glbl_id, dest, dest);
+      /*
       cg.add(ConstraintType::GlobalInit, glbl_id,
           omap.getConstValue(C), dest);
+      */
       cfg.addGlobalInit(glbl_id);
     }
 
@@ -851,7 +861,7 @@ static void idStoreInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
     cg.add(ConstraintType::Store,
         st_id,
         ObjectMap::IntValue,
-        omap.getValue(st.getOperand(0)));
+        omap.getValue(st.getOperand(1)));
   // Poop... structs
   } else if (llvm::isa<llvm::StructType>(st.getOperand(0)->getType())) {
     llvm::errs() << "FIXME: Ignoring struct store\n";

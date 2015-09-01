@@ -318,18 +318,6 @@ class Andersens : public llvm::ModulePass,
   // this is equivalent to the number of arguments + CallFirstArgPos)
   std::map<unsigned, unsigned> MaxK;
 
-  /// This enum defines the GraphNodes indices that correspond to important
-  /// fixed sets.
-  enum {
-    UniversalSet = 0,
-    NullPtr      = 1,
-    NullObject   = 2,
-    NumberSpecialNodes
-  };
-
-  unsigned IntNode;
-  unsigned AggregateNode;  // for extractvalue and insertvalue
-  unsigned PthreadSpecificNode;
   // Stack for Tarjan's
   std::stack<unsigned> SCCStack;
   // Map from Graph Node to DFS number
@@ -385,6 +373,20 @@ class Andersens : public llvm::ModulePass,
   bool SDTActive;
 
  public:
+  // FIXME-- ddevec -- moved this so I could remap values in Partiiton
+  /// This enum defines the GraphNodes indices that correspond to important
+  /// fixed sets.
+  enum {
+    UniversalSet = 0,
+    NullPtr      = 1,
+    NullObject   = 2,
+    NumberSpecialNodes
+  };
+
+  unsigned IntNode;
+  unsigned AggregateNode;  // for extractvalue and insertvalue
+  unsigned PthreadSpecificNode;
+
   static char ID;
   Andersens() : ModulePass(ID) {}
 
@@ -511,6 +513,10 @@ class Andersens : public llvm::ModulePass,
 
   const llvm::DenseMap<llvm::Value *, unsigned int> &getObjectMap() const {
     return ObjectNodes;
+  }
+
+  const llvm::DenseMap<llvm::Value *, unsigned int> &getValueMap() const {
+    return ValueNodes;
   }
 
  private:

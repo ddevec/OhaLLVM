@@ -63,6 +63,10 @@ class DUGNode : public SEGNode<ObjectMap::ObjID> {
       return src_;
     }
 
+    void setStrong() {
+      strong_ = true;
+    }
+
     bool strong() const {
       return strong_;
     }
@@ -158,8 +162,10 @@ class DUG {
       // The node has:  src, dest, type
       // Here we will also have to keep track of which cg::NodeID maps to which
       //   DUG::NodeID so we can transfer the ObjectMap mappings afterwards
+      std::map<ObjID, bool> strongCons;
+
       std::for_each(std::begin(cg), std::end(cg),
-          [this, &omap]
+          [this, &omap, &strongCons]
           (const ConstraintGraph::iter_type &pcons) {
         // Ignore nullptrs, they've been deleted
         if (pcons == nullptr) {
@@ -184,6 +190,9 @@ class DUG {
               bool strong = cons.strong();
               auto ret = DUG_.addNode<AllocNode>(dest, src, strong);
               llvm::dbgs() << "  DUGid is " << ret->second << "\n";
+
+              auto strong_ret = strongCons.emplace(dest, strong);
+              assert(strong_ret.second);
             }
             break;
           case ConstraintType::Store:
@@ -202,6 +211,8 @@ class DUG {
               auto ret =
                 DUG_.addNode<StoreNode>(st_id, dest, src);
               llvm::dbgs() << "  DUGid is " << ret->second << "\n";
+              auto strong_ret = strongCons.emplace(st_id, cons.strong());
+              assert(strong_ret.second);
             }
             break;
           case ConstraintType::Load:
@@ -219,6 +230,8 @@ class DUG {
               llvm::dbgs() << "    src is: " << ValPrint(nd.src())
                   << "\n";
               llvm::dbgs() << "  DUGid is " << ret->second << "\n";
+              auto strong_ret = strongCons.emplace(ld_id, cons.strong());
+              assert(strong_ret.second);
             }
             break;
           case ConstraintType::GlobalInit:
@@ -236,6 +249,8 @@ class DUG {
               llvm::dbgs() << "    src is: " << ValPrint(nd.src())
                   << "\n";
               llvm::dbgs() << "  DUGid is " << ret->second << "\n";
+              auto strong_ret = strongCons.emplace(glbl_id, cons.strong());
+              assert(strong_ret.second);
             }
             break;
           case ConstraintType::Copy:
@@ -243,10 +258,23 @@ class DUG {
               llvm::dbgs() << "  node is Copy\n";
               auto ret = DUG_.addNode<CopyNode>(dest, src);
               llvm::dbgs() << "  DUGid is " << ret->second << "\n";
+              strongCons.emplace(dest, cons.strong());
             }
             break;
           default:
             llvm_unreachable("Unrecognized constraint type");
+        }
+      });
+
+      // Update strength for each store node
+      std::for_each(std::begin(DUG_), std::end(DUG_),
+          [this, &strongCons] (SEG<ObjID>::node_iter_type &upnode) {
+        auto pnode = upnode.get();
+
+        if (auto pst = llvm::dyn_cast<DUG::StoreNode>(pnode)) {
+          if (strongCons[pst->src()]) {
+            pst->setStrong();
+          }
         }
       });
 
@@ -291,19 +319,6 @@ class DUG {
           });
         }
       });
-
-      // Now fixup the object mapping, using cg_to_dug and
-      //     seg node_map iteration
-      /*
-      std::for_each(seg.node_map_begin(), seg.node_map_end(),
-          [this, &cg_to_dug]
-          (const std::pair<const ObjID, SEG<ObjID>::NodeID> &pr) {
-        // Now, do the mapping for DUG's node_map
-        llvm::dbgs() << "adding mapping to DUG: (" << pr.first << ", " <<
-            cg_to_dug[pr.second] << ")\n";
-        DUG_.addMapping(pr.first, cg_to_dug[pr.second]);
-      });
-      */
     }
     //}}}
 
@@ -324,7 +339,7 @@ class DUG {
         auto &pn = DUG_.getNode<PartNode>(src);
 
         // Okay, we have the node, add a named edge
-        pn.addPartitionSuccessor(part);
+        pn.addPartitionSuccessor(part, dest);
       }
     }
     //}}}
@@ -372,23 +387,27 @@ class DUG {
     // Equivalence mappings {{{
     // Parititon stuffs:
     void setPartitionToNodes(
-        std::map<PartID, std::vector<std::pair<DUG::DUGid, ObjectMap::ObjID>>> mapping) {  // NOLINT
+        std::map<PartID, std::vector<ObjectMap::ObjID>> mapping) {
       partitionMap_ = std::move(mapping);
     }
 
-    void setRelevantNodes(
-        std::map<PartID, std::vector<std::pair<DUGid, ObjID>>>
-        mapping) {
+    void setRelevantNodes(std::map<ObjID, Bitmap> mapping) {
       relevantNodes_ = std::move(mapping);
     }
 
-    void setNodeToPartition(
-        std::map<ObjID, PartID> mapping) {
+    void setPartNodes(std::map<ObjID, std::vector<DUGid>> mapping) {
+      partNodes_ = std::move(mapping);
+    }
+
+    void setNodeToPartition(std::map<ObjID, PartID> mapping) {
       revPartitionMap_ = std::move(mapping);
     }
 
-    std::map<PartID, std::vector<std::pair<DUGid, ObjID>>>
-    &getRelevantNodes() {
+    std::vector<DUGid> &getPartNodes(ObjID obj_id) {
+      return partNodes_.at(obj_id);
+    }
+
+    std::map<ObjID, Bitmap> &getRelevantNodes() {
       return relevantNodes_;
     }
 
@@ -400,34 +419,16 @@ class DUG {
       return revPartitionMap_.at(obj_id);
     }
 
-    std::vector<std::pair<DUG::DUGid, ObjectMap::ObjID>> &getObjs(PartID part_id) {  // NOLINT
+    std::vector<ObjectMap::ObjID> &getObjs(PartID part_id) {
       return partitionMap_.at(part_id);
     }
-    /*
-    void setPartitions(std::map<ObjectMap::ObjID, PartID> mapping,
-        std::map<PartID, std::vector<ObjectMap::ObjID>> rev_mapping) {
-      partitionMap_ = std::move(mapping);
-      revPartitionMap_ = std::move(rev_mapping);
-    }
-
-    PartID getPartition(ObjectMap::ObjID id) const {
-      PartID ret;
-
-      auto it = partitionMap_.find(id);
-      if (it != std::end(partitionMap_)) {
-        return it->second;
-      }
-
-      return ret;
-    }
-    */
     //}}}
 
     // Iterators {{{
     // Partition map iterators {{{
-    typedef std::map<PartID, std::vector<std::pair<DUG::DUGid, ObjectMap::ObjID>>>::iterator // NOLINT
+    typedef std::map<PartID, std::vector<ObjectMap::ObjID>>::iterator
       part_iterator;
-    typedef std::map<PartID, std::vector<std::pair<DUG::DUGid, ObjectMap::ObjID>>>::const_iterator // NOLINT
+    typedef std::map<PartID, std::vector<ObjectMap::ObjID>>::const_iterator
       const_part_iterator;
 
     part_iterator part_begin() {
@@ -550,8 +551,8 @@ class DUG {
         return in_;
       }
 
-      void addPartitionSuccessor(PartID id) {
-        part_succs_.insert(id);
+      void addPartitionSuccessor(PartID part_id, DUGid dest_id) {
+        part_succs_.emplace_back(part_id, dest_id);
       }
 
       bool hasNoPartitionSuccessors() const {
@@ -569,7 +570,7 @@ class DUG {
 
      protected:
         // Successor partitons
-        std::set<DUG::PartID> part_succs_;
+        std::vector<std::pair<DUG::PartID, DUG::DUGid>> part_succs_;
 
         PtstoGraph in_;
       //}}}
@@ -688,12 +689,10 @@ class DUG {
  private:
     // Private variables {{{
     // The Partition equivalence for each object in the graph
-    // std::map<ObjectMap::ObjID, PartID> partitionMap_;
-    std::map<PartID, std::vector<std::pair<DUG::DUGid, ObjectMap::ObjID>>>
-      partitionMap_;
-    std::map<PartID, std::vector<std::pair<DUGid, ObjID>>>
-      relevantNodes_;
+    std::map<PartID, std::vector<ObjID>> partitionMap_;
+    std::map<ObjID, Bitmap> relevantNodes_;
     std::map<ObjID, PartID> revPartitionMap_;
+    std::map<ObjID, std::vector<DUGid>> partNodes_;
 
     SEG<ObjID> DUG_;
     //}}}
