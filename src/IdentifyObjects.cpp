@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "include/SpecSFS.h"
+#include "include/ObjectMap.h"
 #include "include/ConstraintGraph.h"
 #include "include/DUG.h"
 
@@ -26,23 +27,51 @@
 #include "llvm/Module.h"
 #include "llvm/Support/CFG.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/GetElementPtrTypeIterator.h"
 #include "llvm/Support/InstIterator.h"
 #include "llvm/Support/raw_ostream.h"
 
 // Private namespace for file-local info {{{
 namespace {
 
-// Debugging functions {{{
-if_debug(
-  static void smart_print(const llvm::Value *val) {
-    if (auto GV = llvm::dyn_cast<llvm::GlobalValue>(val)) {
-      dout << GV->getName();
-    } else {
-      dout << *val;
+// Structure Identification/offset helpers {{{
+std::pair<ObjectMap::ObjID, int32_t>
+getGEPOffs(ObjectMap &omap, const llvm::GetElementPtrInst &gep) {
+  auto obj_id = omap.getValue(&gep);
+  int32_t offs = 0;
+
+  auto type = gep.getPointerOperandType();
+
+  // If this isn't a struct (for example, its an array), ignore it
+  if (auto st_type = llvm::dyn_cast<llvm::StructType>(type)) {
+    auto &si = omap.getStructInfo(st_type);
+
+    // This loop is essentially to handle the nested nature of
+    //   GEP instructions
+    // It basically says, For the outer-layer of the struct
+    for (auto gi = llvm::gep_type_begin(gep),
+          en = llvm::gep_type_end(gep);
+        gi != en; ++gi) {
+      auto type = *gi;
+      auto operand = gi.getOperand();
+      // If it isn't a struct field, don't add subfield offsets
+      if (!llvm::isa<llvm::StructType>(type)) {
+        continue;
+      }
+
+      // Get the offset from this const value
+      auto cons_op = llvm::dyn_cast<llvm::ConstantInt>(operand);
+      assert(cons_op);
+      uint32_t idx = cons_op ? cons_op->getZExtValue() : 0;
+
+      // Add the translated offset
+      offs += si.getFieldOffset(idx);
     }
   }
-)
-//}}}
+
+  return std::make_pair(obj_id, offs);
+}
+// }}}
 
 // Using AUX with CFG helpers {{{
 // ID to keep track of anders return values
@@ -64,10 +93,7 @@ static void identifyAUXFcnCallRetInfo(CFG &cfg,
   if_debug(
     dout << "Got ids for functions:";
     for (auto pr : anders_to_fcn) {
-      dout << " {";
-      auto val = omap.valueAtID(pr.second);
-      smart_print(val);
-      dout << ", " << pr.first << "}";
+      dout << " {" << ValPrint(pr.second) << ", " << pr.first << "}";
     }
     dout << "\n");
 
@@ -872,7 +898,8 @@ static void idStoreInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
         */
   } else {
     // Didn't add it to the graph?
-    llvm::dbgs() << "Not adding store object to graph: " << st_id << "\n";
+    llvm::dbgs() << "FIXME: Not adding store object to graph: "
+        << st_id << "\n";
     return;
   }
 
@@ -884,9 +911,14 @@ static void idGEPInst(ConstraintGraph &cg, ObjectMap &omap,
     const llvm::Instruction &inst) {
   auto &gep = llvm::cast<const llvm::GetElementPtrInst>(inst);
 
+  auto src = getGEPOffs(omap, gep);
+  auto src_id = src.first;
+  auto src_offs = src.second;
+
   cg.add(ConstraintType::Copy,
       getValueUpdate(cg, omap, &gep),
-      omap.getValue(gep.getOperand(0)));
+      src_id,
+      src_offs);
 }
 
 static void idI2PInst(ConstraintGraph &cg, ObjectMap &omap,
@@ -1108,6 +1140,7 @@ bool SpecSFS::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
   // Id all globals
   std::for_each(M.global_begin(), M.global_end(),
       [&omap](const llvm::Value &glbl) {
+    // Need to do special stuffs for structures
     omap.addValue(&glbl);
     omap.addObject(&glbl);
   });
@@ -1133,8 +1166,13 @@ bool SpecSFS::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
     }
 
     // Args are also values...
+    // Structures here? Yuck!
     std::for_each(fcn.arg_begin(), fcn.arg_end(),
         [&omap](const llvm::Argument &arg) {
+      if (llvm::isa<llvm::StructType>(arg.getType())) {
+        llvm::dbgs() << "FIXME: Possibly missed ptsto in arg struct???\n";
+      }
+
       if (llvm::isa<llvm::PointerType>(arg.getType())) {
         omap.addValue(&arg);
       }
@@ -1156,6 +1194,7 @@ bool SpecSFS::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
 
       // Add alloc objects
       if (auto AI = llvm::dyn_cast<llvm::AllocaInst>(&inst)) {
+        // FIXME: Add object fields for the struct!
         omap.addObject(AI);
       }
 
@@ -1171,6 +1210,7 @@ bool SpecSFS::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
         omap.addValue(st);
       }
 
+      // How do I deal w/ structures here? -- something related to a bitcast?
       if (isMalloc(&inst)) {
         omap.addObject(&inst);
       }

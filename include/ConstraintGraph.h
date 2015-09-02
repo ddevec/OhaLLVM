@@ -223,11 +223,6 @@ class ConstraintGraph {
     }
 
     void removeConstraint(ConsID id) {
-      /*
-      auto it = std::begin(constraints_);
-      std::advance(it, id.val());
-      constraints_.erase(it);
-      */
       // Reset the ptr to nullptr
       constraints_.at(id.val()).reset(nullptr);
     }

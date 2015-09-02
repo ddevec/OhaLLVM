@@ -7,6 +7,7 @@
 
 #include <cstdint>
 
+#include <map>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -14,13 +15,13 @@
 #include "include/util.h"
 
 #include "llvm/Constants.h"
+#include "llvm/DerivedTypes.h"
 #include "llvm/Function.h"
 #include "llvm/GlobalValue.h"
 #include "llvm/Instruction.h"
 #include "llvm/Value.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Debug.h"
-
 
 class ObjectMap {
   //{{{
@@ -55,7 +56,92 @@ class ObjectMap {
     static const ObjID IntValue;
     static const ObjID UniversalValue;
     static const ObjID PthreadSpecificValue;
-    //}}};
+    //}}}
+
+    // Internal classes {{{
+    class StructInfo {
+      //{{{
+     public:
+        StructInfo(ObjectMap &omap, const llvm::StructType *type) {
+          int32_t field_count = 0;
+          std::for_each(type->element_begin(), type->element_end(),
+              [this, &omap, &field_count]
+              (const llvm::Type *element_type) {
+            // If this is an array, strip away the outer typing
+            while (auto at = llvm::dyn_cast<llvm::ArrayType>(element_type)) {
+              element_type = at;
+            }
+
+            offsets_.emplace_back(field_count);
+
+            if (auto struct_type =
+                llvm::dyn_cast<llvm::StructType>(element_type)) {
+              auto &struct_info = omap.getStructInfo(struct_type);
+
+              sizes_.insert(std::end(sizes_), struct_info.sizes_begin(),
+                struct_info.sizes_end());
+              field_count += struct_info.numFields();
+            } else {
+              sizes_.emplace_back(1);
+              field_count++;
+            }
+          });
+        }
+
+        size_t numSizes() const {
+          return sizes_.size();
+        }
+
+        size_t numFields() const {
+          return offsets_.size();
+        }
+
+        int32_t getFieldOffset(int32_t idx) const {
+          return offsets_.at(idx);
+        }
+
+        int32_t getFieldSize(int32_t idx) const {
+          return sizes_.at(idx);
+        }
+
+        // Iteration {{{
+        typedef std::vector<int32_t>::iterator size_iterator;
+        typedef std::vector<int32_t>::const_iterator const_size_iterator;
+
+        size_iterator sizes_begin() {
+          return std::begin(sizes_);
+        }
+
+        size_iterator sizes_end() {
+          return std::begin(sizes_);
+        }
+
+        const_size_iterator sizes_begin() const {
+          return std::begin(sizes_);
+        }
+
+        const_size_iterator sizes_end() const {
+          return std::begin(sizes_);
+        }
+
+        const_size_iterator sizes_cbegin() const {
+          return std::begin(sizes_);
+        }
+
+        const_size_iterator sizes_cend() const {
+          return std::begin(sizes_);
+        }
+        //}}}
+
+     private:
+        // Private Variables {{{
+        std::vector<int32_t> offsets_;
+        std::vector<int32_t> sizes_;
+        //}}}
+      //}}}
+    };
+    //}}}
+
 
     // Constructor/Copiers {{{
     ObjectMap();
@@ -180,6 +266,23 @@ class ObjectMap {
     }
     //}}}
 
+    // Structure field tracking {{{
+    const StructInfo &getStructInfo(const llvm::StructType *type) {
+      auto st_type = llvm::cast<llvm::StructType>(type);
+
+      auto struct_info_it = structInfo_.find(st_type);
+
+      // Its not in our struct list, create a new one
+      if (struct_info_it == std::end(structInfo_)) {
+        auto emp_ret = structInfo_.emplace(st_type, StructInfo(*this, st_type));
+        assert(emp_ret.second);
+        struct_info_it = emp_ret.first;
+      }
+
+      return struct_info_it->second;
+    }
+    //}}}
+
     // Iterators {{{
     typedef std::unordered_map<const llvm::Value *, ObjID>::iterator
       to_id_iterator;
@@ -266,6 +369,9 @@ class ObjectMap {
     idToValMap idToRet_;
     idToValMap idToVararg_;
 
+    // Struct info
+    std::map<const llvm::StructType *, StructInfo> structInfo_;
+
     IDGenerator<ObjID, 1<<30> phonyIdGen_;
     ///}}}
 
@@ -280,6 +386,7 @@ class ObjectMap {
     ObjID createMapping(const llvm::Value *val) {
       ObjID ret = getNextID();
       mapping_.emplace_back(val);
+      assert(ret.val() >= 0 && ret.val() < (1<<30));
       return ret;
     }
 
@@ -296,13 +403,29 @@ class ObjectMap {
     ObjID __do_add(const llvm::Value *val,
         std::unordered_map<const llvm::Value *, ObjID> &mp,
         idToValMap &pm) {
+      ObjID id;
+
       assert(mp.find(val) == std::end(mp));
 
       // getNextID must happen before emplace back... ugh
-      auto id = createMapping(val);
+      id = createMapping(val);
 
       mp.insert(std::make_pair(val, id));
       pm.insert(std::make_pair(id, val));
+
+      // If its a struct we must preserve an ObjID per field
+      if (auto struct_type = llvm::dyn_cast<llvm::StructType>(val->getType())) {
+        // id is the first field of the struct
+        // Fill out the struct:
+        auto &struct_info = getStructInfo(struct_type);
+
+        std::for_each(struct_info.sizes_begin(), struct_info.sizes_end(),
+            [this] (int32_t ) {
+          // This is logically reserving an ObjID for this index within the
+          //   struct
+          getNextID();
+        });
+      }
 
       return id;
     }
@@ -330,6 +453,7 @@ extern ObjectMap *g_omap;
 
 // Also for debug, using g_omap
 class ValPrint {
+  //{{{
  public:
     explicit ValPrint(ObjectMap::ObjID id) : id_(id) { }
 
@@ -353,6 +477,7 @@ class ValPrint {
 
  private:
     ObjectMap::ObjID id_;
+  //}}}
 };
 
 #endif  // INCLUDE_OBJECTMAP_H_
