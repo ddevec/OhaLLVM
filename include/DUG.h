@@ -31,9 +31,9 @@ class DUGNode : public SEGNode<ObjectMap::ObjID> {
  public:
     // Constructors {{{
      DUGNode(NodeKind kind, SEG<ObjectMap::ObjID>::NodeID id,
-         ObjectMap::ObjID dest, ObjectMap::ObjID src) :
+         ObjectMap::ObjID dest, ObjectMap::ObjID src, int32_t offset) :
       SEGNode<ObjectMap::ObjID>(kind, id, dest),
-      dest_(dest), src_(src) { }
+      dest_(dest), src_(src), offset_(offset) { }
     //}}}
 
     // For llvm RTTI {{{
@@ -60,7 +60,7 @@ class DUGNode : public SEGNode<ObjectMap::ObjID> {
     }
 
     ObjectMap::ObjID src() const {
-      return src_;
+      return ObjectMap::getOffsID(src_, offset_);
     }
 
     void setStrong() {
@@ -76,6 +76,7 @@ class DUGNode : public SEGNode<ObjectMap::ObjID> {
     // Private variables {{{
     ObjectMap::ObjID dest_;
     ObjectMap::ObjID src_;
+    int32_t offset_;
     bool strong_ = false;
     //}}}
   //}}}
@@ -175,6 +176,7 @@ class DUG {
         // Insert the node into the seg
         auto dest = cons.dest();
         auto src = cons.src();
+        auto offs = cons.offs();
 
         llvm::dbgs() << "Adding node to DUG for obj_id: " << dest << ": " <<
             ValPrint(dest) << "\n";
@@ -188,7 +190,7 @@ class DUG {
               llvm::dbgs() << "  node is AddressOf\n";
               // Add AllocNode
               bool strong = cons.strong();
-              auto ret = DUG_.addNode<AllocNode>(dest, src, strong);
+              auto ret = DUG_.addNode<AllocNode>(dest, src, offs, strong);
               llvm::dbgs() << "  DUGid is " << ret->second << "\n";
 
               auto strong_ret = strongCons.emplace(dest, strong);
@@ -209,7 +211,7 @@ class DUG {
               llvm::dbgs() << "  adding for store: (" << st_id << ") "
                 << ValPrint(st_id) << "\n";
               auto ret =
-                DUG_.addNode<StoreNode>(st_id, dest, src);
+                DUG_.addNode<StoreNode>(st_id, dest, src, offs);
               llvm::dbgs() << "  DUGid is " << ret->second << "\n";
               auto strong_ret = strongCons.emplace(st_id, cons.strong());
               assert(strong_ret.second);
@@ -222,7 +224,7 @@ class DUG {
               auto ld_id = ldcons.nodeId();
               llvm::dbgs() << "  Actual load_id is: (" << ld_id << ") " <<
                 ValPrint(ld_id) << "\n";
-              auto ret = DUG_.addNode<LoadNode>(ld_id, dest, src);
+              auto ret = DUG_.addNode<LoadNode>(ld_id, dest, src, offs);
               llvm::dbgs() << "  Confirming load node!\n";
               auto &nd = DUG_.getNode<LoadNode>(ret->second);
               llvm::dbgs() << "    dest is: " << ValPrint(nd.dest())
@@ -241,7 +243,7 @@ class DUG {
 
               auto glbl_id = glblcons.nodeId();
               llvm::dbgs() << "  Actual glbl_id is: (" << glbl_id << ")\n";
-              auto ret = DUG_.addNode<GlobalInitNode>(glbl_id, dest, src);
+              auto ret = DUG_.addNode<GlobalInitNode>(glbl_id, dest, src, offs);
               llvm::dbgs() << "  Confirming GlobalInit node!\n";
               auto &nd = DUG_.getNode<GlobalInitNode>(ret->second);
               llvm::dbgs() << "    dest is: " << ValPrint(nd.dest())
@@ -256,7 +258,7 @@ class DUG {
           case ConstraintType::Copy:
             {
               llvm::dbgs() << "  node is Copy\n";
-              auto ret = DUG_.addNode<CopyNode>(dest, src);
+              auto ret = DUG_.addNode<CopyNode>(dest, src, offs);
               llvm::dbgs() << "  DUGid is " << ret->second << "\n";
               strongCons.emplace(dest, cons.strong());
             }
@@ -303,6 +305,8 @@ class DUG {
         auto src_node_set = DUG_.getNodesOrNull(node.src());
         std::for_each(src_node_set.first, src_node_set.second,
             [this, &node] (std::pair<const ObjID, SEG<ObjID>::NodeID> &pr) {
+          llvm::dbgs() << "Adding edge: " << pr.second << " -> " << node.id() <<
+              "\n";
           DUG_.addEdge<DUGEdge>(pr.second, node.id());
         });
 
@@ -315,6 +319,8 @@ class DUG {
 
           std::for_each(dest_nodes.first, dest_nodes.second,
               [this, &node] (std::pair<const ObjID, SEG<ObjID>::NodeID> &pr) {
+            llvm::dbgs() << "Adding store edge: " << pr.second << " -> "
+                << node.id() << "\n";
             DUG_.addEdge<DUGEdge>(pr.second, node.id());
           });
         }
@@ -324,7 +330,7 @@ class DUG {
 
     // DUG Construction Methods {{{
     DUGid addPhi() {
-      return DUG_.addNode<PhiNode>(ObjectMap::UniversalValue)->second;
+      return DUG_.addNode<PhiNode>(ObjectMap::UniversalValue, 0)->second;
     }
 
     void addEdge(DUGid src, DUGid dest) {
@@ -508,8 +514,8 @@ class DUG {
       //{{{
      public:
         AllocNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest,
-              ObjectMap::ObjID src, bool strong) :
-            DUGNode(NodeKind::AllocNode, node_id, dest, src) {
+              ObjectMap::ObjID src, int32_t offset, bool strong) :
+            DUGNode(NodeKind::AllocNode, node_id, dest, src, offset) {
           // FIXME: Hacky
           strong_ = strong;
         }
@@ -527,8 +533,8 @@ class DUG {
       //{{{
      public:
         CopyNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest,
-            ObjectMap::ObjID src)
-          : DUGNode(NodeKind::CopyNode, node_id, dest, src) { }
+            ObjectMap::ObjID src, int32_t offset)
+          : DUGNode(NodeKind::CopyNode, node_id, dest, src, offset) { }
 
         // NOTE: Process implemented in "Solve.cpp"
         void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
@@ -543,7 +549,8 @@ class DUG {
       //{{{
      public:
       PartNode(NodeKind kind, SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest,
-          ObjectMap::ObjID src) : DUGNode(kind, node_id, dest, src) {
+            ObjectMap::ObjID src, int32_t offset) :
+          DUGNode(kind, node_id, dest, src, offset) {
         assert(kind > NodeKind::PartNode && kind < NodeKind::PartNodeEnd);
       }
 
@@ -580,9 +587,9 @@ class DUG {
       //{{{
      public:
         LoadNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID rep,
-            ObjectMap::ObjID dest, ObjectMap::ObjID src)
-          : PartNode(NodeKind::LoadNode, node_id, rep, src),
-        realDest_(dest) { }
+            ObjectMap::ObjID dest, ObjectMap::ObjID src, int32_t offset)
+          : PartNode(NodeKind::LoadNode, node_id, rep, src, offset),
+            realDest_(dest) { }
 
         // NOTE: Process implemented in "Solve.cpp"
         void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
@@ -608,8 +615,8 @@ class DUG {
       //{{{
      public:
         StoreNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID rep,
-            ObjectMap::ObjID dest, ObjectMap::ObjID src)
-          : PartNode(NodeKind::StoreNode, node_id, rep, src),
+            ObjectMap::ObjID dest, ObjectMap::ObjID src, int32_t offset)
+          : PartNode(NodeKind::StoreNode, node_id, rep, src, offset),
           realDest_(dest) { }
 
         // NOTE: Process implemented in "Solve.cpp"
@@ -646,8 +653,8 @@ class DUG {
       //{{{
      public:
         GlobalInitNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID rep,
-            ObjectMap::ObjID dest, ObjectMap::ObjID src)
-          : PartNode(NodeKind::GlobalInitNode, node_id, rep, src),
+            ObjectMap::ObjID dest, ObjectMap::ObjID src, int32_t offset)
+          : PartNode(NodeKind::GlobalInitNode, node_id, rep, src, offset),
           realDest_(dest) { }
 
         // NOTE: Process implemented in "Solve.cpp"
@@ -673,8 +680,8 @@ class DUG {
     class PhiNode : public PartNode {
       //{{{
      public:
-        PhiNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID id)
-          : PartNode(NodeKind::PhiNode, node_id, id, id) { }
+        PhiNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID id, int32_t offset)
+          : PartNode(NodeKind::PhiNode, node_id, id, id, offset) { }
 
         // NOTE: Process implemented in "Solve.cpp"
         void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;

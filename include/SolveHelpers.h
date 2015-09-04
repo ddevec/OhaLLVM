@@ -84,6 +84,15 @@ class PtstoSet {
       return ptsto_.test_and_set(id.val());
     }
 
+    bool assign(const PtstoSet &rhs) {
+      bool ret = (ptsto_ == rhs.ptsto_);
+
+      ptsto_.clear();
+      ptsto_ |= rhs.ptsto_;
+
+      return ret;
+    }
+
     void clear() {
       ptsto_.clear();
     }
@@ -96,7 +105,7 @@ class PtstoSet {
       return ptsto_.test_and_set(id.val());
     }
 
-    bool size() const {
+    size_t size() const {
       return ptsto_.count();
     }
 
@@ -297,6 +306,10 @@ class PtstoGraph {
       return ret;
     }
 
+    bool assign(ObjID elm, const PtstoSet &ptsset) {
+      return data_.at(elm).assign(ptsset);
+    }
+
     bool orPart(const PtstoSet &rhs,
         std::map<ObjID, __PartID> &part_map, __PartID part_id) {
       bool ret = false;
@@ -307,6 +320,34 @@ class PtstoGraph {
         if (part_id == part_map.at(obj_id)) {
           auto &lhs_ptsset = pr.second;
           ret |= (lhs_ptsset |= rhs);
+        }
+      });
+
+      return ret;
+    }
+
+    bool orElement(ObjID elm, const PtstoSet &rhs) {
+      bool ret = false;
+
+      auto &lhs_ptsset = data_.at(elm);
+
+      ret |= (lhs_ptsset |= rhs);
+
+      return ret;
+    }
+
+    bool orExcept(const PtstoGraph &rhs,
+        ObjID exception) {
+      bool ret = false;
+
+      std::for_each(std::begin(data_), std::end(data_),
+          [this, &ret, &rhs, &exception]
+          (std::pair<const ObjID, PtstoSet> &pr) {
+        auto obj_id = pr.first;
+        if (obj_id != exception) {
+          auto &lhs_ptsset = pr.second;
+          auto &rhs_ptsset = rhs.data_.at(obj_id);
+          ret |= (lhs_ptsset |= rhs_ptsset);
         }
       });
 

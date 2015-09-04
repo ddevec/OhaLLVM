@@ -89,7 +89,8 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
   std::for_each(std::begin(aux_val_nodes), std::end(aux_val_nodes),
       [&aux, &aux_to_obj, &omap, &dug]
       (const std::pair<const llvm::Value *, uint32_t> &pr) {
-    auto obj_id = omap.getValue(pr.first);
+    auto obj_id = omap.getObject(pr.first);
+    // auto obj_id = omap.getValue(pr.first);
     auto aux_val_id = pr.second;
 
     llvm::dbgs() << "  " << aux_val_id << "->" << obj_id <<
@@ -113,33 +114,35 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
     // Get info about this node
     auto &node = dug.getNode(pr.first);
 
-    ObjectMap::ObjID val;
-    /*
+    ObjectMap::ObjID val_id;
     llvm::dbgs() << "Creating part_nodes for obj_id " << pr.first << " : " <<
         ValPrint(pr.first) << "\n";;
-    */
     if (llvm::isa<DUG::StoreNode>(node)) {
       // val is dest for stores...
-      val = node.dest();
-      /*
+      val_id = node.dest();
       llvm::dbgs() << "  Have store node: " << node.rep() << " : " <<
         ValPrint(node.rep()) << "\n";;
       llvm::dbgs() << "    store dest: " << node.dest() << " : " <<
         ValPrint(node.dest()) << "\n";;
       llvm::dbgs() << "    store src: " << node.src() << " : " <<
         ValPrint(node.src()) << "\n";;
-      */
     } else {
       assert(llvm::isa<DUG::LoadNode>(node) ||
         llvm::isa<DUG::GlobalInitNode>(node));
       // val is src for gv and loads
-      val = node.src();
+      val_id = node.src();
     }
+    /*
+    auto val = omap.valueAtID(val_id);
+    auto obj_id = omap.getObject(val);
+    */
+    // We use the value to label which part nodes are associated with which
+    //   obj_ids
+    auto obj_id = val_id;
+    llvm::dbgs() << "  Adding part_node for obj: " << obj_id << " : " <<
+        ValPrint(obj_id) << "->" << node.id() << "\n";;
 
-    llvm::dbgs() << "  Adding part_node for obj: " << val << " : " <<
-        ValPrint(val) << "->" << node.id() << "\n";;
-
-    part_nodes[val].push_back(node.id());
+    part_nodes[obj_id].push_back(node.id());
   });
 
   // Now, create a grouping of each relevant obj_id for a given DUGid
@@ -586,7 +589,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
   //   Add dug_mapping to node ptsto
   llvm::dbgs() << "Setting up partGraph for each node!\n";
   std::for_each(node_to_partition.cbegin(), node_to_partition.cend(),
-      [&graph]
+      [&graph, &omap]
       (const std::pair<const DUG::DUGid, std::vector<DUG::PartID>> &pr) {
     auto &part_node = llvm::cast<DUG::PartNode>(graph.getNode(pr.first));
     auto &parts = pr.second;
@@ -595,12 +598,12 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
     llvm::dbgs() << "  Looking at ID: " << part_node.id() << "\n";
 
     std::for_each(std::begin(parts), std::end(parts),
-        [&graph, &vars] (const DUG::PartID &part_id) {
+        [&graph, &vars, &omap] (const DUG::PartID &part_id) {
       auto &objs = graph.getObjs(part_id);
       llvm::dbgs() << "    Checking part_id: " << part_id << "\n";
       std::for_each(std::begin(objs), std::end(objs),
-          [&graph, &vars] (ObjectMap::ObjID &obj_id) {
-        llvm::dbgs() << "      Adding var: " << obj_id << "\n";
+          [&graph, &vars, &omap] (ObjectMap::ObjID &obj_id) {
+        // We're going to try converting these to objects instead of values...
         vars.emplace_back(obj_id);
       });
     });

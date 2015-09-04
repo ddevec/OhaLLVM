@@ -92,9 +92,11 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   // Runs HU on the graph as it stands, w/ only top level info filled in
   // Removes any nodes deemed to be non-ptr (definitely null), and merges nodes
   //   with statically equivalent ptsto sets
+  /* FIXME: -- ddevec -- Skipping for now to help debug
   if (optimizeConstraints(cg, cfg, omap)) {
     error("OptimizeConstraints failure!");
   }
+  */
 
   // cg.getSEG().printDotFile("top_HU.dot", omap);
 

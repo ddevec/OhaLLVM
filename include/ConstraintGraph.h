@@ -42,6 +42,10 @@ class Constraint {
       return src_;
     }
 
+    ObjID offsSrc() const {
+      return ObjectMap::getOffsID(src(), offs());
+    }
+
     ObjID dest() const {
       return dest_;
     }

@@ -105,6 +105,8 @@ void DUG::LoadNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
   // If we added any edges:
   //   Add all successors to work
   PtstoSet &src_pts = pts_top.at(src());
+  llvm::dbgs() << "value at src() (" << src() << ") is: " <<
+    ValPrint(src()) << "\n";
   llvm::dbgs() << "value at dest() (" << dest() << ") is: " <<
     ValPrint(dest()) << "\n";
   PtstoSet &dest_pts = pts_top.at(dest());
@@ -184,39 +186,43 @@ void DUG::StoreNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
   //     add OUT(v) to their succ.IN(v)
   //     if (succ.IN.changed)
   //       Add succ to worklist
+  llvm::dbgs() << "  Source is: " << src() << " : " << ValPrint(src()) << "\n";
+  llvm::dbgs() << "  Dest is: " << dest() << " : " << ValPrint(dest()) << "\n";
   PtstoSet &src_pts = pts_top.at(src());
   PtstoSet &dest_pts = pts_top.at(dest());
   bool change = false;
 
-  PtstoGraph in_tmp(in_);
+  llvm::dbgs() << "  Initial src_pts: " << src_pts << "\n";
+  llvm::dbgs() << "  Initial dest_pts: " << dest_pts << "\n";
 
   // If this is a strong update, remove all outgoing edges from dest
   // NOTE: This is a strong update if we are updating a single concrete location
   if (strong() && dest_pts.size() == 1) {
     // Clear all outgoing edges from pts_top(src) from out
     llvm::dbgs() << "DOING STRONG UPDATE!!!\n";
-    in_tmp.clear(dest());
+    llvm::dbgs() << "dest is: " << dest() << "\n";
+    llvm::dbgs() << "in is: " << in() << "\n";
+
+    change |= out_.orExcept(in(), *std::begin(dest_pts));
+
+    // Add edges to out with in
+    change |= out_.assign(*std::begin(dest_pts), src_pts);
+  } else {
+    llvm::dbgs() << "  Weak store:\n";
+    llvm::dbgs() << "    Initial out: " << out_ << "\n";
+    llvm::dbgs() << "    Initial in: " << in() << "\n";
+    // Combine out with in
+    change |= (out_ |= in());
+
+    // Also, add the stored element(s):
+    std::for_each(std::begin(dest_pts), std::end(dest_pts),
+        [this, &change, &src_pts] (ObjectMap::ObjID elm) {
+      change |= out_.orElement(elm, src_pts);
+    });
+
+    llvm::dbgs() << "    Final out: " << out_ << "\n";
+    llvm::dbgs() << "    Final in: " << in() << "\n";
   }
-
-  // Add edges to out with in
-  change |= (out_ |= in_tmp);
-
-  // Debug {{{
-  /*
-  llvm::dbgs() << "About to update out_.  out_ contains ids: ";
-  std::for_each(out_.cbegin(), out_.cend(),
-      [](const std::pair<const ObjID, PtstoSet> &pr) {
-    llvm::dbgs() << " " << pr.first;
-  });
-  llvm::dbgs() << "\n";
-  */
-  //}}}
-
-  std::for_each(std::begin(out_), std::end(out_),
-      [this, &change, &src_pts]
-      (std::pair<const ObjID, PtstoSet> &pr) {
-    change |= (pr.second |= src_pts);
-  });
 
   // If something changed, update all successors
   if (change) {

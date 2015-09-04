@@ -1718,26 +1718,13 @@ class SEG {
     }
 
     template <typename node_type, typename... va_args>
-    node_map_iterator addNode(id_type id, va_args&... args) {
+    node_map_iterator addNode(id_type id, va_args&&... args) {
       auto node_id = NodeID(nodes_.size());
-      // llvm::dbgs() << "Adding node: " << node_id << "\n";
-      nodes_.emplace_back(new node_type(node_id, id, args...));
+      nodes_.emplace_back(new node_type(node_id, id,
+            std::forward<va_args>(args)...));
 
-      /*
-      llvm::dbgs() << "Adding node_map_ entry for: (" << id << ", " << node_id
-        << ")\n";
-      */
       auto ret = node_map_.emplace(id, node_id);
 
-      /*
-      llvm::dbgs() << "Entries for: " << id << " are now:";
-      auto pr = node_map_.equal_range(id);
-      std::for_each(pr.first, pr.second,
-          [] (std::pair<const id_type, NodeID> &id_pr) {
-        llvm::dbgs() << " " << id_pr.second;
-      });
-      llvm::dbgs() << "\n";
-      */
 
       return ret;
     }

@@ -10,7 +10,6 @@ function(create_dis TARGET_NAME)
 endfunction(create_dis)
 
 function(create_test TARGET_NAME)
-
   add_executable(${TARGET_NAME} ${ARGN})
 
   create_dis(${TARGET_NAME})
@@ -40,5 +39,9 @@ create_test(simple_indr_loop
 
 create_test(test_strong_update
     test_strong_update.c
+  )
+
+create_test(test_struct
+    test_struct.c
   )
 

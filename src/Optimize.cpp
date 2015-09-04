@@ -276,8 +276,8 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
       huSeg.addNode<HUNode>(dest);
     }
 
-    if (huSeg.findNode(pcons->src()) == huSeg.node_map_end()) {
-      huSeg.addNode<HUNode>(pcons->src());
+    if (huSeg.findNode(pcons->offsSrc()) == huSeg.node_map_end()) {
+      huSeg.addNode<HUNode>(pcons->offsSrc());
     }
   });
 
@@ -287,7 +287,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
       (const ConstraintGraph::iter_type &pcons) {
     auto cons = *pcons;
 
-    auto src_pr = huSeg.getNodes(cons.src());
+    auto src_pr = huSeg.getNodes(cons.offsSrc());
     assert(std::distance(src_pr.first, src_pr.second) == 1);
     auto src_id = src_pr.first->second;
 
@@ -373,7 +373,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
   // Now iterate each constraint, and update their ObjIDs to point to reps
   std::for_each(std::begin(graph), std::end(graph),
       [&huSeg, &load_remap, &graph] (ConstraintGraph::iter_type &pcons) {
-    auto src_pr = huSeg.getNodes(pcons->src());
+    auto src_pr = huSeg.getNodes(pcons->offsSrc());
     assert(std::distance(src_pr.first, src_pr.second) == 1);
     auto hu_src_id = src_pr.first->second;
     auto src_rep_id = huSeg.getNode(hu_src_id).extId();
@@ -393,7 +393,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
 
       load_remap.emplace(pcons->dest(), dest_rep_id);
 
-      dout << "retarget: (" << pcons->src() << ", " << pcons->dest() <<
+      dout << "retarget: (" << pcons->offsSrc() << ", " << pcons->dest() <<
         ") -> ("<< src_rep_id << ", " << dest_rep_id << ")\n";
 
       pcons->retarget(src_rep_id, dest_rep_id);

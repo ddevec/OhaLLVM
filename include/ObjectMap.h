@@ -62,30 +62,61 @@ class ObjectMap {
     class StructInfo {
       //{{{
      public:
-        StructInfo(ObjectMap &omap, const llvm::StructType *type) {
+        StructInfo(ObjectMap &omap, const llvm::StructType *type) :
+            type_(type) {
           int32_t field_count = 0;
+          llvm::dbgs() << "Creating struct info for: " << type->getName() <<
+            "\n";
           std::for_each(type->element_begin(), type->element_end(),
               [this, &omap, &field_count]
               (const llvm::Type *element_type) {
             // If this is an array, strip away the outer typing
+            llvm::dbgs() << "  Have element type!!!\n";
             while (auto at = llvm::dyn_cast<llvm::ArrayType>(element_type)) {
               element_type = at;
             }
 
+            llvm::dbgs() << "Adding field to offsets_" << "\n";
             offsets_.emplace_back(field_count);
 
             if (auto struct_type =
                 llvm::dyn_cast<llvm::StructType>(element_type)) {
               auto &struct_info = omap.getStructInfo(struct_type);
 
+              llvm::dbgs() << "Inserting sizes from nested struct!\n";
               sizes_.insert(std::end(sizes_), struct_info.sizes_begin(),
                 struct_info.sizes_end());
               field_count += struct_info.numFields();
             } else {
+              llvm::dbgs() << "Inserting size 1\n";
               sizes_.emplace_back(1);
               field_count++;
             }
+
+
+            llvm::dbgs() << "end loop iter, have sizes: ";
+            for (auto size : sizes_) {
+              llvm::dbgs() << " " << size;
+            }
+            llvm::dbgs() << "\n";
           });
+
+          if (omap.maxStructInfo_ == nullptr ||
+              size() > omap.maxStructInfo_->size()) {
+            omap.maxStructInfo_ = this;
+          }
+
+          llvm::dbgs() << "End of create: " << *this << "\n";
+        }
+
+        StructInfo(StructInfo &&) = default;
+        StructInfo &operator=(StructInfo &&) = default;
+        StructInfo(const StructInfo &) = delete;
+        StructInfo &operator=(const StructInfo &) = delete;
+
+        // The number of elements in the structure
+        int32_t size() const {
+          return sizes_.size();
         }
 
         size_t numSizes() const {
@@ -104,6 +135,10 @@ class ObjectMap {
           return sizes_.at(idx);
         }
 
+        const llvm::StructType *type() const {
+          return type_;
+        }
+
         // Iteration {{{
         typedef std::vector<int32_t>::iterator size_iterator;
         typedef std::vector<int32_t>::const_iterator const_size_iterator;
@@ -113,7 +148,7 @@ class ObjectMap {
         }
 
         size_iterator sizes_end() {
-          return std::begin(sizes_);
+          return std::end(sizes_);
         }
 
         const_size_iterator sizes_begin() const {
@@ -121,7 +156,7 @@ class ObjectMap {
         }
 
         const_size_iterator sizes_end() const {
-          return std::begin(sizes_);
+          return std::end(sizes_);
         }
 
         const_size_iterator sizes_cbegin() const {
@@ -129,7 +164,20 @@ class ObjectMap {
         }
 
         const_size_iterator sizes_cend() const {
-          return std::begin(sizes_);
+          return std::end(sizes_);
+        }
+        //}}}
+
+        // Wohoo printing {{{
+        friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+            const StructInfo &si) {
+          os << "StructInfo( " << si.type()->getName() << ", [";
+          std::for_each(si.sizes_begin(), si.sizes_end(),
+              [&os] (int32_t size) {
+            os << " " << size;
+          });
+          os << " ] )";
+          return os;
         }
         //}}}
 
@@ -137,6 +185,7 @@ class ObjectMap {
         // Private Variables {{{
         std::vector<int32_t> offsets_;
         std::vector<int32_t> sizes_;
+        const llvm::StructType *type_;
         //}}}
       //}}}
     };
@@ -166,6 +215,10 @@ class ObjectMap {
 
     void addValue(const llvm::Value *val) {
       __do_add(val, valToID_, idToVal_);
+    }
+
+    ObjID addObject(const llvm::StructType *ty, const llvm::Value *val) {
+      return allocStructSpace(ty, val, idToObj_);
     }
 
     // Allocation site
@@ -267,6 +320,13 @@ class ObjectMap {
     //}}}
 
     // Structure field tracking {{{
+    bool addStructInfo(const llvm::StructType *type) {
+      auto emp_ret = structInfo_.emplace(type, StructInfo(*this, type));
+      assert(emp_ret.second);
+
+      return emp_ret.second;
+    }
+
     const StructInfo &getStructInfo(const llvm::StructType *type) {
       auto st_type = llvm::cast<llvm::StructType>(type);
 
@@ -280,6 +340,10 @@ class ObjectMap {
       }
 
       return struct_info_it->second;
+    }
+
+    const StructInfo &getMaxStructInfo() const {
+      return *maxStructInfo_;
     }
     //}}}
 
@@ -371,6 +435,7 @@ class ObjectMap {
 
     // Struct info
     std::map<const llvm::StructType *, StructInfo> structInfo_;
+    const StructInfo *maxStructInfo_ = nullptr;
 
     IDGenerator<ObjID, 1<<30> phonyIdGen_;
     ///}}}
@@ -400,6 +465,40 @@ class ObjectMap {
       return nullptr;
     }
 
+    ObjID allocStructSpace(const llvm::StructType *struct_type,
+        const llvm::Value *val, idToValMap &pm, bool skip_first = false) {
+      ObjID ret;
+      // id is the first field of the struct
+      // Fill out the struct:
+      auto &struct_info = getStructInfo(struct_type);
+
+      llvm::dbgs() << "Got StructInfo: " << struct_info << "\n";
+      bool first = true;
+      std::for_each(struct_info.sizes_begin(), struct_info.sizes_end(),
+          [this, &ret, &pm, &first, &skip_first, &val] (int32_t) {
+        // This is logically reserving an ObjID for this index within the
+        //   struct
+
+        ObjID id;
+        if (first) {
+          if (!skip_first) {
+            id = createMapping(val);
+            auto em_ret = pm.emplace(id, val);
+            assert(em_ret.second);
+          }
+          ret = id;
+          first = false;
+        } else {
+          id = createMapping(val);
+          auto em_ret = pm.emplace(id, val);
+          assert(em_ret.second);
+        }
+      });
+
+      assert(ret != ObjID::invalid());
+      return ret;
+    }
+
     ObjID __do_add(const llvm::Value *val,
         std::unordered_map<const llvm::Value *, ObjID> &mp,
         idToValMap &pm) {
@@ -407,24 +506,14 @@ class ObjectMap {
 
       assert(mp.find(val) == std::end(mp));
 
-      // getNextID must happen before emplace back... ugh
       id = createMapping(val);
 
-      mp.insert(std::make_pair(val, id));
-      pm.insert(std::make_pair(id, val));
+      mp.emplace(val, id);
+      pm.emplace(id, val);
 
       // If its a struct we must preserve an ObjID per field
       if (auto struct_type = llvm::dyn_cast<llvm::StructType>(val->getType())) {
-        // id is the first field of the struct
-        // Fill out the struct:
-        auto &struct_info = getStructInfo(struct_type);
-
-        std::for_each(struct_info.sizes_begin(), struct_info.sizes_end(),
-            [this] (int32_t ) {
-          // This is logically reserving an ObjID for this index within the
-          //   struct
-          getNextID();
-        });
+        allocStructSpace(struct_type, val, pm, true);
       }
 
       return id;
