@@ -19,9 +19,11 @@
 #include "llvm/Function.h"
 #include "llvm/GlobalValue.h"
 #include "llvm/Instruction.h"
+#include "llvm/Instructions.h"
 #include "llvm/Value.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/GetElementPtrTypeIterator.h"
 
 class ObjectMap {
   //{{{
@@ -139,6 +141,11 @@ class ObjectMap {
           return type_;
         }
 
+        // ddevec - TODO: Should keep track of if field is within array...
+        bool fieldStrong(int32_t) const {
+          return false;
+        }
+
         // Iteration {{{
         typedef std::vector<int32_t>::iterator size_iterator;
         typedef std::vector<int32_t>::const_iterator const_size_iterator;
@@ -213,12 +220,16 @@ class ObjectMap {
       return id;
     }
 
+    void addValues(const llvm::Type *type, const llvm::Value *val) {
+      __do_add_struct(type, val, valToID_, idToVal_);
+    }
+
     void addValue(const llvm::Value *val) {
       __do_add(val, valToID_, idToVal_);
     }
 
-    ObjID addObject(const llvm::StructType *ty, const llvm::Value *val) {
-      return allocStructSpace(ty, val, idToObj_);
+    void addObjects(const llvm::Type *type, const llvm::Value *val) {
+      __do_add_struct(type, val, objToID_, idToObj_);
     }
 
     // Allocation site
@@ -245,7 +256,7 @@ class ObjectMap {
       return mapping_.at(id.val());
     }
 
-    ObjID getValue(const llvm::Value *val) const {
+    ObjID getValue(const llvm::Value *val) {
       // Check for a constant first
       if (auto C = llvm::dyn_cast<const llvm::Constant>(val)) {
         if (!llvm::isa<llvm::GlobalValue>(C)) {
@@ -272,7 +283,7 @@ class ObjectMap {
     }
 
     // Allocated object id
-    ObjID getObject(const llvm::Value *val) const {
+    ObjID getObject(const llvm::Value *val) {
       return __do_get(val, objToID_);
     }
 
@@ -297,11 +308,11 @@ class ObjectMap {
     }
 
     // ddevec -- FIXME: Does this really belong here?
-    ObjID getConstValue(const llvm::Constant *C) const {
+    ObjID getConstValue(const llvm::Constant *C) {
       return __const_node_helper(C, &ObjectMap::getValue, NullValue);
     }
 
-    ObjID getConstValueTarget(const llvm::Constant *C) const {
+    ObjID getConstValueTarget(const llvm::Constant *C) {
       return __const_node_helper(C, &ObjectMap::getObject, NullObjectValue);
     }
 
@@ -344,6 +355,17 @@ class ObjectMap {
 
     const StructInfo &getMaxStructInfo() const {
       return *maxStructInfo_;
+    }
+
+    std::pair<bool, const std::vector<ObjID> &>
+    findFieldsForObj(ObjID obj_id) const {
+      // To return on failure;
+      static std::vector<ObjID> empty_vector;
+      auto it =  objToStructFields_.find(obj_id);
+      if (it == std::end(objToStructFields_)) {
+        return std::make_pair(false, std::ref(empty_vector));
+      }
+      return std::make_pair(true, std::ref(it->second));
     }
     //}}}
 
@@ -435,14 +457,16 @@ class ObjectMap {
 
     // Struct info
     std::map<const llvm::StructType *, StructInfo> structInfo_;
+    std::map<ObjID, std::vector<ObjID>> objToStructFields_;
     const StructInfo *maxStructInfo_ = nullptr;
 
-    IDGenerator<ObjID, 1<<30> phonyIdGen_;
+    static constexpr int32_t phonyIdBase = 1<<30;
+    IDGenerator<ObjID, phonyIdBase> phonyIdGen_;
     ///}}}
 
     // Internal helpers {{{
     bool isPhony(ObjID id) const {
-      return id.val() >= (1<<30);
+      return id.val() >= phonyIdBase;
     }
     ObjID getNextID() const {
       return ObjID(mapping_.size());
@@ -451,7 +475,7 @@ class ObjectMap {
     ObjID createMapping(const llvm::Value *val) {
       ObjID ret = getNextID();
       mapping_.emplace_back(val);
-      assert(ret.val() >= 0 && ret.val() < (1<<30));
+      assert(ret.val() >= 0 && ret.val() < phonyIdBase);
       return ret;
     }
 
@@ -465,38 +489,58 @@ class ObjectMap {
       return nullptr;
     }
 
-    ObjID allocStructSpace(const llvm::StructType *struct_type,
-        const llvm::Value *val, idToValMap &pm, bool skip_first = false) {
-      ObjID ret;
-      // id is the first field of the struct
-      // Fill out the struct:
-      auto &struct_info = getStructInfo(struct_type);
+    ObjID __do_add_struct(const llvm::Type *type,
+        const llvm::Value *val,
+        std::unordered_map<const llvm::Value *, ObjID> &mp,
+        idToValMap &pm) {
+      ObjID ret_id;
 
-      llvm::dbgs() << "Got StructInfo: " << struct_info << "\n";
-      bool first = true;
-      std::for_each(struct_info.sizes_begin(), struct_info.sizes_end(),
-          [this, &ret, &pm, &first, &skip_first, &val] (int32_t) {
-        // This is logically reserving an ObjID for this index within the
-        //   struct
+      // Strip away array references:
+      while (auto at = llvm::dyn_cast<llvm::ArrayType>(type)) {
+        type = at->getElementType();
+      }
 
-        ObjID id;
-        if (first) {
-          if (!skip_first) {
-            id = createMapping(val);
-            auto em_ret = pm.emplace(id, val);
-            assert(em_ret.second);
+      if (auto st = llvm::dyn_cast<llvm::StructType>(type)) {
+        // id is the first field of the struct
+        // Fill out the struct:
+        auto &struct_info = getStructInfo(st);
+
+        llvm::dbgs() << "Got StructInfo: " << struct_info << "\n";
+        bool first = true;
+        std::for_each(struct_info.sizes_begin(), struct_info.sizes_end(),
+            [this, &ret_id, &pm, &mp, &first, &val] (int32_t) {
+          // This is logically reserving an ObjID for this index within the
+          //   struct
+          ObjID id = createMapping(val);
+
+          if (first) {
+            ret_id = id;
+            assert(mp.find(val) == std::end(mp));
+            mp.emplace(val, id);
+            first = false;
           }
-          ret = id;
-          first = false;
-        } else {
-          id = createMapping(val);
-          auto em_ret = pm.emplace(id, val);
-          assert(em_ret.second);
-        }
-      });
 
-      assert(ret != ObjID::invalid());
-      return ret;
+          llvm::dbgs() << "Allocating struct id: " << id << "\n";
+
+          assert(pm.find(id) == std::end(pm));
+          pm.emplace(id, val);
+
+          // Denote which objects this structure field occupies
+          objToStructFields_[ret_id].emplace_back(id);
+        });
+
+        assert(ret_id != ObjID::invalid());
+      // Not a struct
+      } else {
+        assert(mp.find(val) == std::end(mp));
+        ret_id = createMapping(val);
+
+        mp.emplace(val, ret_id);
+        assert(pm.find(ret_id) == std::end(pm));
+        pm.emplace(ret_id, val);
+      }
+
+      return ret_id;
     }
 
     ObjID __do_add(const llvm::Value *val,
@@ -510,11 +554,6 @@ class ObjectMap {
 
       mp.emplace(val, id);
       pm.emplace(id, val);
-
-      // If its a struct we must preserve an ObjID per field
-      if (auto struct_type = llvm::dyn_cast<llvm::StructType>(val->getType())) {
-        allocStructSpace(struct_type, val, pm, true);
-      }
 
       return id;
     }
@@ -531,11 +570,106 @@ class ObjectMap {
     }
 
     ObjID __const_node_helper(const llvm::Constant *C,
-        ObjID (ObjectMap::*diff)(const llvm::Value *) const,
-        ObjID nullv) const;
+        ObjID (ObjectMap::*diff)(const llvm::Value *),
+        ObjID nullv);
   //}}}
   //}}}
 };
+
+// structure identification/offset helpers {{{
+// called from malloc-like allocations, to find the largest strcuture size the
+// untyped allocation is cast to.
+// FIXME: Should put somewhere I don't have to deal with unused warnings
+__attribute__((unused))
+static const llvm::Type *findLargestType(ObjectMap &omap,
+    const llvm::Instruction &ins) {
+  auto biggest_type = ins.getType()->getContainedType(0);
+
+  bool found = false;
+  int32_t max_size = 0;
+
+  while (auto at = llvm::dyn_cast<llvm::ArrayType>(biggest_type)) {
+    biggest_type = at->getElementType();
+  }
+
+  if (auto st = llvm::dyn_cast<llvm::StructType>(biggest_type)) {
+    max_size = omap.getStructInfo(st).size();
+  }
+
+  // now, see how each use is cast...
+  std::for_each(ins.use_begin(), ins.use_end(),
+      [&max_size, &found, &biggest_type, &omap]
+      (const llvm::User *use) {
+    auto cast = llvm::dyn_cast<llvm::CastInst>(use);
+
+    if (cast && llvm::isa<llvm::PointerType>(cast->getType())) {
+      found = true;
+
+      // this is the type were casting to
+      auto cast_type = cast->getType()->getContainedType(0);
+
+      int32_t size = 0;
+
+      // strip off array qualifiers
+      while (auto at = llvm::dyn_cast<llvm::ArrayType>(cast_type)) {
+        cast_type = at->getElementType();
+      }
+
+      // if we're casting to a strucutre
+      if (auto st = llvm::dyn_cast<llvm::StructType>(cast_type)) {
+        size = omap.getStructInfo(st).size();
+      }
+
+      if (size > max_size) {
+        max_size = size;
+        biggest_type = cast_type;
+      }
+    }
+  });
+
+  if (!found && max_size == 0) {
+    return omap.getMaxStructInfo().type();
+  }
+
+  return biggest_type;
+}
+
+// FIXME: Should put somewhere I don't have to deal with unused warnings
+// NOTE: User can be both a ConstantExpr, and a GetElementPtrInst
+__attribute__((unused))
+static int32_t getGEPOffs(ObjectMap &omap, const llvm::User &gep) {
+  int32_t offs = 0;
+
+  // This loop is essentially to handle the nested nature of
+  //   GEP instructions
+  // It basically says, For the outer-layer of the struct
+  for (auto gi = llvm::gep_type_begin(gep),
+        en = llvm::gep_type_end(gep);
+      gi != en; ++gi) {
+    auto type = *gi;
+    auto struct_type = llvm::dyn_cast<llvm::StructType>(type);
+    // If it isn't a struct field, don't add subfield offsets
+    if (!struct_type) {
+      continue;
+    }
+
+    auto &si = omap.getStructInfo(llvm::cast<llvm::StructType>(type));
+
+    auto operand = gi.getOperand();
+
+    // Get the offset from this const value
+    auto cons_op = llvm::dyn_cast<llvm::ConstantInt>(operand);
+    assert(cons_op);
+    uint32_t idx = cons_op ? cons_op->getZExtValue() : 0;
+
+    // Add the translated offset
+    offs += si.getFieldOffset(idx);
+  }
+
+  return offs;
+}
+
+// }}}
 
 // For debug only, not guaranteed to persist
 extern ObjectMap *g_omap;

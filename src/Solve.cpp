@@ -34,7 +34,7 @@ bool SpecSFS::solve(DUG &dug, ObjectMap &) {
   auto dest_it = std::unique(std::begin(dests), std::end(dests));
   dests.erase(dest_it, std::end(dests));
 
-  PtstoGraph pts_top(dests);
+  TopLevelPtsto pts_top(dests);
 
   // Solve the graph
   while (auto pnd = work.pop()) {
@@ -50,14 +50,15 @@ bool SpecSFS::solve(DUG &dug, ObjectMap &) {
   return false;
 }
 
-void DUG::AllocNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
+void DUG::AllocNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   llvm::dbgs() << "Process alloc start\n";
   // Update the top level variables for this alloc
-  PtstoSet &dest_pts = pts_top.at(dest());
+  PtstoSet &dest_pts = pts_top.at(dest(), offset());
 
-  bool change = dest_pts.set(src());
+  bool change = dest_pts.set(ObjectMap::getOffsID(src(), offset()));
 
-  llvm::dbgs() << "  pts_top[" << dest() << "] is now: " << dest_pts << "\n";
+  llvm::dbgs() << "  pts_top[" << dest() << "] + " << offset() << " is now: "
+      << dest_pts << "\n";
 
   // Add all top level variables updated to worklist
   if (change) {
@@ -71,12 +72,20 @@ void DUG::AllocNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
   }
 }
 
-void DUG::CopyNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
+void DUG::CopyNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   llvm::dbgs() << "Process copy start\n";
+
   // Update the top level variables for this copy
   PtstoSet &dest_pts = pts_top.at(dest());
+
+  // Get this offset for top level variables
   PtstoSet &src_pts = pts_top.at(src());
-  bool change = (dest_pts |= src_pts);
+
+  llvm::dbgs() << "  src_top[" << src() << "] + " << offset() << " is: " <<
+      src_pts << "\n";
+
+  // bool change = (dest_pts |= src_pts);
+  bool change = dest_pts.orOffs(src_pts, offset());
 
   llvm::dbgs() << "  pts_top[" << dest() << "] is now: " << dest_pts << "\n";
 
@@ -92,7 +101,7 @@ void DUG::CopyNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
   }
 }
 
-void DUG::LoadNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
+void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   llvm::dbgs() << "Process load start\n";
   // add a ptsto from src to the values contained in our partition set from the
   //    top level varaible dest
@@ -173,7 +182,7 @@ void DUG::LoadNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
   }
 }
 
-void DUG::StoreNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
+void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   llvm::dbgs() << "Process store start\n";
   llvm::dbgs() << "Store is: " << rep() << ": " << ValPrint(rep()) << "\n";
   // if strong && concrete
@@ -258,7 +267,7 @@ void DUG::StoreNode::process(DUG &dug, PtstoGraph &pts_top, Worklist &work) {
   }
 }
 
-void DUG::PhiNode::process(DUG &dug, PtstoGraph &, Worklist &work) {
+void DUG::PhiNode::process(DUG &dug, TopLevelPtsto &, Worklist &work) {
   llvm::dbgs() << "Process PHI start\n";
   // For all successors:
   //   succ.IN |= IN
@@ -281,7 +290,7 @@ void DUG::PhiNode::process(DUG &dug, PtstoGraph &, Worklist &work) {
   });
 }
 
-void DUG::GlobalInitNode::process(DUG &dug, PtstoGraph &pts_top,
+void DUG::GlobalInitNode::process(DUG &dug, TopLevelPtsto &pts_top,
     Worklist &work) {
   llvm::dbgs() << "Process GlobalInit\n";
 

@@ -72,8 +72,8 @@ ObjectMap::getValueInfo(ObjectMap::ObjID id) const {
 }
 
 ObjectMap::ObjID ObjectMap::__const_node_helper(const llvm::Constant *C,
-    ObjID (ObjectMap::*diff)(const llvm::Value *) const,
-    ObjID nullv) const {
+    ObjID (ObjectMap::*diff)(const llvm::Value *),
+    ObjID nullv) {
   if (llvm::isa<const llvm::ConstantPointerNull>(C) ||
       llvm::isa<const llvm::UndefValue>(C)) {
     return nullv;
@@ -82,7 +82,13 @@ ObjectMap::ObjID ObjectMap::__const_node_helper(const llvm::Constant *C,
   } else if (auto CE = llvm::dyn_cast<llvm::ConstantExpr>(C)) {
     switch (CE->getOpcode()) {
       case llvm::Instruction::GetElementPtr:
-        return __const_node_helper(CE->getOperand(0), diff, nullv);
+        {
+          // Need to calc offset here...
+          // But this encounters obj vs value issues...
+          auto offs = getGEPOffs(*this, *CE);
+          auto obj_id = __const_node_helper(CE->getOperand(0), diff, nullv);
+          return getOffsID(obj_id, offs);
+        }
       case llvm::Instruction::IntToPtr:
         return UniversalValue;
       case llvm::Instruction::PtrToInt:

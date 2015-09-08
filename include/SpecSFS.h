@@ -61,7 +61,7 @@ class SpecSFS : public llvm::ModulePass,
   // NOTE: ObjectMap is required to convert DUG::ObjID to llvm::Value as
   //   Andersens works with llvm::Value's
   bool computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
-      const ObjectMap &omap);
+      ObjectMap &omap);
 
   // Computes the SSA form of each partition
   bool addPartitionsToDUG(DUG &graph, const CFG &cfg, const ObjectMap &omap);
@@ -72,7 +72,7 @@ class SpecSFS : public llvm::ModulePass,
 
   // Private data {{{
   ObjectMap omap_;
-  PtstoGraph pts_top_;
+  TopLevelPtsto pts_top_;
   //}}}
 };
 

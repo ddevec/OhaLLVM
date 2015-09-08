@@ -42,7 +42,7 @@ class DUGNode : public SEGNode<ObjectMap::ObjID> {
         node->getKind() < NodeKind::DUGNodeEnd;
     }
 
-    virtual void process(DUG &dug, PtstoGraph &pts, Worklist &wl) = 0;
+    virtual void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) = 0;
 
     virtual PtstoGraph &in() {
       static PtstoGraph bad;
@@ -60,7 +60,11 @@ class DUGNode : public SEGNode<ObjectMap::ObjID> {
     }
 
     ObjectMap::ObjID src() const {
-      return ObjectMap::getOffsID(src_, offset_);
+      return src_;
+    }
+
+    int32_t offset() const {
+      return offset_;
     }
 
     void setStrong() {
@@ -193,8 +197,14 @@ class DUG {
               auto ret = DUG_.addNode<AllocNode>(dest, src, offs, strong);
               llvm::dbgs() << "  DUGid is " << ret->second << "\n";
 
-              auto strong_ret = strongCons.emplace(dest, strong);
-              assert(strong_ret.second);
+              // FIXME: Should store strong information in ptsset for top lvl
+              //    variables...
+              auto it = strongCons.find(dest);
+              if (it == std::end(strongCons)) {
+                strongCons.emplace(dest, strong);
+              } else {
+                it->second &= strong;
+              }
             }
             break;
           case ConstraintType::Store:
@@ -521,7 +531,7 @@ class DUG {
         }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
 
         static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
           return node->getKind() == NodeKind::AllocNode;
@@ -537,7 +547,7 @@ class DUG {
           : DUGNode(NodeKind::CopyNode, node_id, dest, src, offset) { }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
 
         static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
           return node->getKind() == NodeKind::CopyNode;
@@ -592,7 +602,7 @@ class DUG {
             realDest_(dest) { }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
 
         static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
           return node->getKind() == NodeKind::LoadNode;
@@ -620,7 +630,7 @@ class DUG {
           realDest_(dest) { }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
 
         static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
           return node->getKind() == NodeKind::StoreNode;
@@ -658,7 +668,7 @@ class DUG {
           realDest_(dest) { }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
 
         static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
           return node->getKind() == NodeKind::GlobalInitNode;
@@ -684,7 +694,7 @@ class DUG {
           : PartNode(NodeKind::PhiNode, node_id, id, id, offset) { }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, PtstoGraph &pts, Worklist &wl) override;
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
 
         static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
           return node->getKind() == NodeKind::PhiNode;

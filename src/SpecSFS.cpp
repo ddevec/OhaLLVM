@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "llvm/Pass.h"
 #include "llvm/Function.h"
@@ -154,7 +155,7 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   llvm::dbgs() << "Printing final ptsto set for top level variables:\n";
   std::for_each(pts_top_.cbegin(), pts_top_.cend(),
       [&omap]
-      (const std::pair<const ObjectMap::ObjID, PtstoSet> &pr) {
+      (const std::pair<const ObjectMap::ObjID, std::vector<PtstoSet>> &pr) {
     auto top_val = omap.valueAtID(pr.first);
 
     if (top_val == nullptr) {
@@ -169,20 +170,23 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
       llvm::dbgs() << "Value (" << pr.first << ") is: " << *top_val << "\n";
     }
 
-    std::for_each(pr.second.cbegin(), pr.second.cend(),
-        [&omap] (const ObjectMap::ObjID obj_id) {
-      auto loc_val = omap.valueAtID(obj_id);
+    for (uint32_t i = 0; i < pr.second.size(); i++) {
+      llvm::dbgs() << "  Offset: " << i << "\n";
+      std::for_each(pr.second[i].cbegin(), pr.second[i].cend(),
+          [&omap] (const ObjectMap::ObjID obj_id) {
+        auto loc_val = omap.valueAtID(obj_id);
 
-      if (loc_val == nullptr) {
-        llvm::dbgs() << "  Value is (id): " << obj_id << "\n";
-      } else if (auto gv = llvm::dyn_cast<llvm::GlobalValue>(loc_val)) {
-        llvm::dbgs() << "  " << obj_id << ": " << gv->getName() << "\n";
-      } else if (auto fcn = llvm::dyn_cast<llvm::Function>(loc_val)) {
-        llvm::dbgs() << "  " << obj_id << ": " << fcn->getName() << "\n";
-      } else {
-        llvm::dbgs() << "  " << obj_id << ": " << *loc_val << "\n";
-      }
-    });
+        if (loc_val == nullptr) {
+          llvm::dbgs() << "    Value is (id): " << obj_id << "\n";
+        } else if (auto gv = llvm::dyn_cast<llvm::GlobalValue>(loc_val)) {
+          llvm::dbgs() << "    " << obj_id << ": " << gv->getName() << "\n";
+        } else if (auto fcn = llvm::dyn_cast<llvm::Function>(loc_val)) {
+          llvm::dbgs() << "    " << obj_id << ": " << fcn->getName() << "\n";
+        } else {
+          llvm::dbgs() << "    " << obj_id << ": " << *loc_val << "\n";
+        }
+      });
+    }
   });
 
   // We do not modify code, ever!

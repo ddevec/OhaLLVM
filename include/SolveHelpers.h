@@ -5,6 +5,7 @@
 #ifndef INCLUDE_SOLVEHELPERS_H_
 #define INCLUDE_SOLVEHELPERS_H_
 
+#include <algorithm>
 #include <map>
 #include <queue>
 #include <utility>
@@ -103,6 +104,16 @@ class PtstoSet {
 
     bool operator|=(ObjectMap::ObjID &id) {
       return ptsto_.test_and_set(id.val());
+    }
+
+    bool orOffs(const PtstoSet &rhs, int32_t offs) {
+      bool ret = false;
+      std::for_each(std::begin(rhs.ptsto_), std::end(rhs.ptsto_),
+          [this, &ret, &offs] (const int32_t &val) {
+        ret |= ptsto_.test_and_set(val + offs);
+      });
+
+      return ret;
     }
 
     size_t size() const {
@@ -254,6 +265,98 @@ class PtstoSet {
   //}}}
 };
 
+class TopLevelPtsto {
+  //{{{
+ public:
+    typedef typename SEG<ObjectMap::ObjID>::NodeID NodeID;
+    typedef ObjectMap::ObjID ObjID;
+
+    TopLevelPtsto() = default;
+
+    explicit TopLevelPtsto(const std::vector<ObjID> &objs) {
+      std::for_each(std::begin(objs), std::end(objs),
+          [this] (const ObjID &id) {
+        data_.emplace(id, std::vector<PtstoSet>());
+      });
+    }
+
+    // Allow move assignment {{{
+    TopLevelPtsto(TopLevelPtsto &&) = delete;
+    // Allow copying... needed in store?
+    TopLevelPtsto(const TopLevelPtsto &) = default;
+
+    TopLevelPtsto &operator=(TopLevelPtsto &&) = default;
+    TopLevelPtsto &operator=(const TopLevelPtsto &) = delete;
+    //}}}
+
+    PtstoSet &at(ObjID id, int32_t offset) {
+      auto &vec = data_.at(id);
+
+      assert(offset >= 0);
+      if (vec.size() < (uint32_t)offset+1) {
+        vec.resize(offset+1);
+      }
+
+      auto &ret = vec.at(offset);
+
+      return ret;
+    }
+
+    PtstoSet &at(ObjID id) {
+      return at(id, 0);
+    }
+
+    typedef std::map<ObjID, std::vector<PtstoSet>>::iterator iterator;
+    typedef std::map<ObjID, std::vector<PtstoSet>>::const_iterator
+      const_iterator;
+
+    iterator begin() {
+      return std::begin(data_);
+    }
+
+    iterator end() {
+      return std::end(data_);
+    }
+
+    const_iterator begin() const {
+      return std::begin(data_);
+    }
+
+    const_iterator end() const {
+      return std::end(data_);
+    }
+
+    const_iterator cbegin() const {
+      return data_.cbegin();
+    }
+
+    const_iterator cend() const {
+      return data_.cend();
+    }
+
+    friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
+        const TopLevelPtsto &g) {
+      o << "( ";
+      bool first = true;
+      for (auto &pr : g) {
+        if (!first) {
+          o << ", ";
+        }
+
+        for (auto &pts_set : pr.second) {
+          o << pr.first << "->" << pts_set;
+        }
+        first = false;
+      }
+      o << " )";
+      return o;
+    }
+
+ private:
+    std::map<ObjID, std::vector<PtstoSet>> data_;
+  //}}}
+};
+
 // This is fine?
 // FIXME: Need to have a way to add objects to our ptsto graph
 class PtstoGraph {
@@ -267,9 +370,11 @@ class PtstoGraph {
     explicit PtstoGraph(const std::vector<ObjID> &objs) {
       std::for_each(std::begin(objs), std::end(objs),
           [this] (const ObjID &id) {
-        data_.emplace(std::piecewise_construct, std::make_tuple(id),
-          std::make_tuple());
+        llvm::dbgs() << "Adding : " << id << " to PtstoGraph data_\n";
+        data_.emplace(id, PtstoSet());
       });
+
+      llvm::dbgs() << "PtstoGraph is: " << *this << "\n";
     }
 
     // Allow move assignment {{{
@@ -285,22 +390,16 @@ class PtstoGraph {
       return data_.at(id);
     }
 
-    bool operator|=(const PtstoGraph &rhs) {
+    bool operator|=(PtstoGraph &rhs) {
       // Oh goody...
       bool ret = false;
       std::for_each(std::begin(rhs.data_), std::end(rhs.data_),
-          [this, &ret] (const std::pair<const ObjID, PtstoSet> &pr) {
-        ret |= (data_.at(pr.first) |= pr.second);
-      });
+          [this, &ret]
+          (std::pair<const ObjID, PtstoSet> &pr) {
+        auto &rhs_ptsset = pr.second;
+        auto &lhs_ptsset = data_.at(pr.first);
 
-      return ret;
-    }
-
-    bool set(ObjID id) {
-      bool ret = false;
-      std::for_each(std::begin(data_), std::end(data_),
-          [&id, &ret] (std::pair<const ObjID, PtstoSet> &pr) {
-        ret |= (pr.second.set(id));
+        ret |= (lhs_ptsset |= rhs_ptsset);
       });
 
       return ret;
@@ -317,6 +416,7 @@ class PtstoGraph {
           [this, &ret, &rhs, &part_id, &part_map]
           (std::pair<const ObjID, PtstoSet> &pr) {
         auto obj_id = pr.first;
+
         if (part_id == part_map.at(obj_id)) {
           auto &lhs_ptsset = pr.second;
           ret |= (lhs_ptsset |= rhs);
@@ -330,13 +430,12 @@ class PtstoGraph {
       bool ret = false;
 
       auto &lhs_ptsset = data_.at(elm);
-
       ret |= (lhs_ptsset |= rhs);
 
       return ret;
     }
 
-    bool orExcept(const PtstoGraph &rhs,
+    bool orExcept(PtstoGraph &rhs,
         ObjID exception) {
       bool ret = false;
 
@@ -347,6 +446,7 @@ class PtstoGraph {
         if (obj_id != exception) {
           auto &lhs_ptsset = pr.second;
           auto &rhs_ptsset = rhs.data_.at(obj_id);
+
           ret |= (lhs_ptsset |= rhs_ptsset);
         }
       });
@@ -354,7 +454,7 @@ class PtstoGraph {
       return ret;
     }
 
-    bool orPart(const PtstoGraph &rhs,
+    bool orPart(PtstoGraph &rhs,
         std::map<ObjID, __PartID> &part_map, __PartID part_id) {
       bool ret = false;
       std::for_each(std::begin(data_), std::end(data_),
@@ -364,6 +464,7 @@ class PtstoGraph {
         if (part_id == part_map.at(obj_id)) {
           auto &lhs_ptsset = pr.second;
           auto &rhs_ptsset = rhs.data_.at(obj_id);
+
           ret |= (lhs_ptsset |= rhs_ptsset);
         }
       });
@@ -371,12 +472,9 @@ class PtstoGraph {
       return ret;
     }
 
-    void clear(ObjID id) {
-      data_.at(id).clear();
-    }
-
     typedef std::map<ObjID, PtstoSet>::iterator iterator;
-    typedef std::map<ObjID, PtstoSet>::const_iterator const_iterator;
+    typedef std::map<ObjID, PtstoSet>::const_iterator
+      const_iterator;
 
     iterator begin() {
       return std::begin(data_);
@@ -410,7 +508,9 @@ class PtstoGraph {
         if (!first) {
           o << ", ";
         }
+
         o << pr.first << "->" << pr.second;
+
         first = false;
       }
       o << " )";

@@ -34,107 +34,13 @@
 // Private namespace for file-local info {{{
 namespace {
 
-// Structure Identification/offset helpers {{{
-// Called from malloc-like allocations, to find the largest strcuture size the
-// untyped allocation is cast to.
-const llvm::Type *findLargestType(ObjectMap &omap,
-    const llvm::Instruction &ins) {
-  auto biggest_type = ins.getType()->getContainedType(0);
-
-  bool found = false;
-  int32_t max_size = 0;
-
-  while (auto at = llvm::dyn_cast<llvm::ArrayType>(biggest_type)) {
-    biggest_type = at->getElementType();
-  }
-
-  if (auto st = llvm::dyn_cast<llvm::StructType>(biggest_type)) {
-    max_size = omap.getStructInfo(st).size();
-  }
-
-  // Now, see how each use is cast...
-  std::for_each(ins.use_begin(), ins.use_end(),
-      [&max_size, &found, &biggest_type, &omap]
-      (const llvm::User *use) {
-    auto cast = llvm::dyn_cast<llvm::CastInst>(use);
-
-    if (cast && llvm::isa<llvm::PointerType>(cast->getType())) {
-      found = true;
-
-      // This is the type were casting to
-      auto cast_type = cast->getType()->getContainedType(0);
-
-      int32_t size = 0;
-
-      // Strip off array qualifiers
-      while (auto at = llvm::dyn_cast<llvm::ArrayType>(cast_type)) {
-        cast_type = at->getElementType();
-      }
-
-      // If we're casting to a strucutre
-      if (auto st = llvm::dyn_cast<llvm::StructType>(cast_type)) {
-        size = omap.getStructInfo(st).size();
-      }
-
-      if (size > max_size) {
-        max_size = size;
-        biggest_type = cast_type;
-      }
-    }
-  });
-
-  if (!found && max_size == 0) {
-    return omap.getMaxStructInfo().type();
-  }
-
-  return biggest_type;
-}
-
-std::pair<ObjectMap::ObjID, int32_t>
-getGEPOffs(ObjectMap &omap, const llvm::GetElementPtrInst &gep) {
-  auto obj_id = omap.getValue(&gep);
-  int32_t offs = 0;
-
-  auto type = gep.getPointerOperandType();
-
-  // If this isn't a struct (for example, its an array), ignore it
-  if (auto st_type = llvm::dyn_cast<llvm::StructType>(type)) {
-    auto &si = omap.getStructInfo(st_type);
-
-    // This loop is essentially to handle the nested nature of
-    //   GEP instructions
-    // It basically says, For the outer-layer of the struct
-    for (auto gi = llvm::gep_type_begin(gep),
-          en = llvm::gep_type_end(gep);
-        gi != en; ++gi) {
-      auto type = *gi;
-      auto operand = gi.getOperand();
-      // If it isn't a struct field, don't add subfield offsets
-      if (!llvm::isa<llvm::StructType>(type)) {
-        continue;
-      }
-
-      // Get the offset from this const value
-      auto cons_op = llvm::dyn_cast<llvm::ConstantInt>(operand);
-      assert(cons_op);
-      uint32_t idx = cons_op ? cons_op->getZExtValue() : 0;
-
-      // Add the translated offset
-      offs += si.getFieldOffset(idx);
-    }
-  }
-
-  return std::make_pair(obj_id, offs);
-}
-// }}}
-
 // Using AUX with CFG helpers {{{
 // ID to keep track of anders return values
 struct aux_id { };
 typedef ID<aux_id, int32_t, -1> AuxID;
 
 static void identifyAUXFcnCallRetInfo(CFG &cfg,
-    const ObjectMap &omap, const Andersens &aux) {
+    ObjectMap &omap, const Andersens &aux) {
 
   // The mapping of andersen's values to functions
   std::map<AuxID, ObjectMap::ObjID> anders_to_fcn;
@@ -206,7 +112,7 @@ static void identifyAUXFcnCallRetInfo(CFG &cfg,
 int32_t CallReturnPos = 1;
 int32_t CallFirstArgPos = 2;
 
-ObjectMap::ObjID getValueReturn(const ObjectMap &omap, const llvm::Value *v) {
+ObjectMap::ObjID getValueReturn(ObjectMap &omap, const llvm::Value *v) {
   return ObjectMap::getOffsID(omap.getValue(v), CallReturnPos);
 }
 
@@ -527,6 +433,7 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
       // auto dest_obj = omap.getObject(dest_val);
       auto glbl_id = omap.createPhonyID();
       // cg.add(ConstraintType::GlobalInit, glbl_id, dest_obj, dest);
+      llvm::dbgs() << "Adding global init for: " << ValPrint(dest) << "\n";
       cg.add(ConstraintType::GlobalInit, glbl_id, dest, dest);
       /*
       cg.add(ConstraintType::GlobalInit, glbl_id,
@@ -540,6 +447,7 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
   // Initialized to null value
   } else if (C->isNullValue()) {
     auto glbl_id = omap.createPhonyID();
+    llvm::dbgs() << "Adding NULL global init for: " << ValPrint(dest) << "\n";
     cg.add(ConstraintType::GlobalInit, glbl_id, ObjectMap::NullValue, dest);
     cfg.addGlobalInit(glbl_id);
 
@@ -552,9 +460,11 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
         llvm::isa<llvm::ConstantStruct>(C) ||
         llvm::isa<llvm::ConstantDataSequential>(C));
 
+    llvm::dbgs() << "Adding STRUCT global init for: " << ValPrint(dest) << "\n";
     // For each field of the initializer, add a constraint for the field
     // This is done differently for structs than for array
     if (auto cs = llvm::dyn_cast<llvm::ConstantStruct>(C)) {
+      /* BROKEN
       std::for_each(cs->op_begin(), cs->op_end(),
           [&offset, &cg, &cfg, &cs, &omap, &dest]
           (const llvm::Use &field) {
@@ -562,6 +472,7 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
         offset += addGlobalInitializerConstraints(cg, cfg, omap,
           omap.getOffsID(dest, offset), field_cons);
       });
+      */
     } else {
       std::for_each(C->op_begin(), C->op_end(),
           [&offset, &cg, &cfg, &cs, &omap, &dest]
@@ -825,6 +736,83 @@ static void idRetInst(ConstraintGraph &cg, ObjectMap &omap,
       omap.getReturn(F), omap.getValue(src));
 }
 
+static void addGlobalConstraintForType(ConstraintType ctype,
+    ConstraintGraph &cg, ObjectMap &omap,
+    const llvm::Type *type, ObjectMap::ObjID dest,
+    ObjectMap::ObjID src_obj, bool strong) {
+
+  // All globals are (implicitly) pointers, I'm evaluating based off of the
+  //   contained type
+  type = type->getContainedType(0);
+
+  // Strip wrapping arrays
+  while (auto at = llvm::dyn_cast<llvm::ArrayType>(type)) {
+    // Arrays invalidate strength
+    strong = false;
+    type = at->getContainedType(0);
+  }
+
+
+  if (auto st = llvm::dyn_cast<llvm::StructType>(type)) {
+    auto &si = omap.getStructInfo(st);
+
+    for (size_t i = 0; i < si.numSizes(); i++) {
+      // Add an addr of to this offset
+      llvm::dbgs() << "Adding Global AddressOf for struct.  Dest: " << dest
+          << ", src " << src_obj << " + " << i << "\n";
+
+      // For global object, force the src, dest offset to + i
+      auto cons_id = cg.add(ctype,
+          ObjectMap::getOffsID(dest, i),
+          ObjectMap::getOffsID(src_obj, i));
+      auto &cons = cg.getConstraint(cons_id);
+      // Update strength as appropriate
+      cons.setStrong(strong && si.fieldStrong(i));
+    }
+  } else {
+    llvm::dbgs() << "Adding Global AddressOf for NON-struct.  Dest: " << dest
+        << ", src " << src_obj << "\n";
+    // No offs defaults to 0 in offs column, which is what we want for a
+    //   non-struct object
+    auto cons_id = cg.add(ctype, dest, src_obj);
+    auto &cons = cg.getConstraint(cons_id);
+    cons.setStrong(strong);
+  }
+}
+
+static void addConstraintForType(ConstraintType ctype,
+    ConstraintGraph &cg, ObjectMap &omap,
+    const llvm::Type *type, ObjectMap::ObjID dest,
+    ObjectMap::ObjID src_obj, bool strong) {
+
+  // Strip wrapping arrays
+  while (auto at = llvm::dyn_cast<llvm::ArrayType>(type)) {
+    // Arrays invalidate strength
+    strong = false;
+    type = at->getContainedType(0);
+  }
+
+  if (auto st = llvm::dyn_cast<llvm::StructType>(type)) {
+    auto &si = omap.getStructInfo(st);
+
+    for (size_t i = 0; i < si.numSizes(); i++) {
+      // Add an addr of to this offset
+      llvm::dbgs() << "Adding AddressOf for struct.  Dest: " << dest << ", src "
+        << src_obj << " + " << i << "\n";
+      auto cons_id = cg.add(ctype, dest, src_obj, i);
+      auto &cons = cg.getConstraint(cons_id);
+      // Update strength as appropriate
+      cons.setStrong(strong && si.fieldStrong(i));
+    }
+  } else {
+    // No offs defaults to 0 in offs column, which is what we want for a
+    //   non-struct object
+    auto cons_id = cg.add(ctype, dest, src_obj);
+    auto &cons = cg.getConstraint(cons_id);
+    cons.setStrong(strong);
+  }
+}
+
 static bool idCallInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
     const llvm::Instruction &inst, CFG::CFGid *bb_id) {
   // Meh, Callsites don't take consts... bleh
@@ -837,16 +825,14 @@ static bool idCallInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
     // Unfortunately, malloc doesn't tell us what size strucutre is
     //   being allocated, we infer this information from its uses
     auto inferred_type = findLargestType(omap, inst);
-    // Now, allocate space for this in the object map:
-    auto src_obj = omap.getObject(&inst);
-    if (auto st = llvm::dyn_cast<llvm::StructType>(inferred_type)) {
-      // Create a new dest for this malloc
-      llvm::dbgs() << "Adding type for malloc: " << inst << "\n";
-      src_obj = omap.addObject(st, &inst);
-    }
-    cg.add(ConstraintType::AddressOf,
-        getValueUpdate(cg, omap, &inst),
-        src_obj);
+
+    auto dest_id = omap.getValue(&inst);
+    auto src_obj_id = omap.getObject(&inst);
+
+    llvm::dbgs() << "Malloc addAddressForType(" << dest_id << ", " << src_obj_id
+        << ")\n";
+    addConstraintForType(ConstraintType::AddressOf, cg, omap,
+        inferred_type, dest_id, src_obj_id, false);
 
     return false;
   }
@@ -863,30 +849,15 @@ static void idAllocaInst(ConstraintGraph &cg, ObjectMap &omap,
     const llvm::Instruction &inst) {
   auto &alloc = *llvm::cast<const llvm::AllocaInst>(&inst);
 
-  // Get the object associated with this allocation
-  // auto obj_id = omap.getObject(&alloc);
+  // If the thing we're allocating is a structure... then we need to handle
+  //   addressof for all sub-fields!
+  auto type = alloc.getAllocatedType();
 
-  // Associate that obj with this value
-  // cg.associateNode(obj_id, omap.getValue(&inst));
+  auto dest_id = omap.getValue(&alloc);
+  auto src_obj_id = omap.getObject(&alloc);
 
-  // Add a constraint pointing this value to that object
-  auto cons_id = cg.add(ConstraintType::AddressOf,
-      getValueUpdate(cg, omap, &alloc),
-      omap.getObject(&alloc));
-
-  auto &cons = cg.getConstraint(cons_id);
-
-  // If this is a concrete location (read non-array) set it to be strong
-  auto T = alloc.getAllocatedType();
-  if (auto at = llvm::dyn_cast<llvm::ArrayType>(T)) {
-    cons.setStrong(false);
-    T = at->getElementType();
-  } else {
-    cons.setStrong(true);
-  }
-
-  // FIXME: Now, handle structure fields...
-  // if (structtype...)
+  addConstraintForType(ConstraintType::AddressOf, cg, omap,
+      type, dest_id, src_obj_id, true);
 }
 
 static void idLoadInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
@@ -926,16 +897,16 @@ static void idStoreInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
 
   auto st_id = omap.getValue(&st);
 
+  llvm::dbgs() << "store is: " << ValPrint(st_id) << "\n";
+  llvm::dbgs() << "arg(0) is: " << *st.getOperand(0) << "\n";
+  llvm::dbgs() << "arg(1) is: " << *st.getOperand(1) << "\n";
+
   if (llvm::isa<llvm::PointerType>(st.getOperand(0)->getType())) {
     // Store from ptr
     // auto dest = omap.getObject(st.getOperand(1));
     auto dest = omap.getValue(st.getOperand(1));
-    if (dest == ObjectMap::NullValue) {
-      // If this is not an object, store to the value
-      dest = omap.getValue(st.getOperand(1));
-      llvm::dbgs() << "No object for store dest: " << dest << " : " <<
-        ValPrint(dest) << "\n";
-    }
+    llvm::dbgs() << "Got ptr dest of: " << dest << " : " << ValPrint(dest) <<
+      "\n";
     cg.add(ConstraintType::Store,
         st_id,
         omap.getValue(st.getOperand(0)),
@@ -998,9 +969,8 @@ static void idGEPInst(ConstraintGraph &cg, ObjectMap &omap,
     const llvm::Instruction &inst) {
   auto &gep = llvm::cast<const llvm::GetElementPtrInst>(inst);
 
-  auto src = getGEPOffs(omap, gep);
-  auto src_id = src.first;
-  auto src_offs = src.second;
+  auto src_offs = getGEPOffs(omap, gep);
+  auto src_id = omap.getValue(gep.getOperand(0));
 
   cg.add(ConstraintType::Copy,
       getValueUpdate(cg, omap, &gep),
@@ -1028,12 +998,16 @@ static void idBitcastInst(ConstraintGraph &cg, ObjectMap &omap,
 
   assert(llvm::isa<llvm::PointerType>(inst.getType()));
 
-  auto id = getValueUpdate(cg, omap, &bcast);
+  auto dest_id = omap.getValue(&bcast);
+  auto src_id = omap.getValue(bcast.getOperand(0));
 
   assert(llvm::isa<llvm::PointerType>(bcast.getOperand(0)->getType()));
-  auto op = omap.getValue(bcast.getOperand(0));
 
-  cg.add(ConstraintType::Copy, id, op);
+  /*
+  addConstraintForType(ConstraintType::Copy, cg, omap,
+      bcast.getType()->getContainedType(0), dest_id, src_id, false);
+      */
+  cg.add(ConstraintType::Copy, dest_id, src_id);
 }
 
 static void idPhiInst(ConstraintGraph &cg, ObjectMap &omap,
@@ -1237,9 +1211,14 @@ bool SpecSFS::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
   // Id all globals
   std::for_each(M.global_begin(), M.global_end(),
       [&omap](const llvm::Value &glbl) {
-    // Need to do special stuffs for structures
-    omap.addValue(&glbl);
-    omap.addObject(&glbl);
+    // addValues (note valueS) takes into account structure fields.  We do this
+    // for values on global variables because they can be statically accessed by
+    // constant expressions.  ObjectS are also treated this way, and are treated
+    // for staic/heap allocations
+    assert(llvm::isa<llvm::PointerType>(glbl.getType()));
+    auto type = glbl.getType()->getContainedType(0);
+    omap.addValues(type, &glbl);
+    omap.addObjects(type, &glbl);
   });
 
   // Functions are memory objects
@@ -1286,13 +1265,16 @@ bool SpecSFS::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
         [&omap](const llvm::Instruction &inst) {
       // Add pointer values
       if (llvm::isa<llvm::PointerType>(inst.getType())) {
+        // Do we reserve values for the pointer inst here?
         omap.addValue(&inst);
       }
 
       // Add alloc objects
       if (auto AI = llvm::dyn_cast<llvm::AllocaInst>(&inst)) {
-        // FIXME: Add object fields for the struct!
-        omap.addObject(AI);
+        // add objectS in a similar manner to add valueS in glbls
+        auto type = AI->getAllocatedType();
+
+        omap.addObjects(type, AI);
       }
 
       // Also add values for loads/stores, even if they return int types
@@ -1309,7 +1291,10 @@ bool SpecSFS::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
 
       // How do I deal w/ structures here? -- something related to a bitcast?
       if (isMalloc(&inst)) {
-        omap.addObject(&inst);
+        // Once again, add objectS
+        auto inferred_type = findLargestType(omap, inst);
+        llvm::dbgs() << "Finding type for malloc: " << inst << "\n";
+        omap.addObjects(inferred_type, &inst);
       }
     });
   }
@@ -1347,14 +1332,16 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
   std::for_each(M.global_begin(), M.global_end(),
       [&cg, &cfg, &omap](const llvm::GlobalVariable &glbl) {
     // Associate the global address with a node:
-    // graph.associateNode(obj_id, &glbl);
+    auto type = glbl.getType();
+
+    // Okay, so I need to do this for each global...
     auto val_id = omap.getValue(&glbl);
     auto obj_id = omap.getObject(&glbl);
 
-    // Create the constraint for the actual global
-     cg.add(ConstraintType::AddressOf,
-      getValueUpdate(cg, omap, &glbl),
-      obj_id);
+    llvm::dbgs() << "Adding glbl constraint for: " << glbl << "\n";
+
+    addGlobalConstraintForType(ConstraintType::AddressOf, cg, omap,
+      type, val_id, obj_id, true);
 
     // If its a global w/ an initalizer
     if (glbl.hasDefinitiveInitializer()) {
@@ -1369,10 +1356,23 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
 
     // Doesn't have initializer
     } else {
-      cg.add(ConstraintType::Copy, omap.getObject(&glbl),
-          ObjectMap::UniversalValue);
-      cg.add(ConstraintType::Copy, omap.getValue(&glbl),
-          ObjectMap::UniversalValue);
+      if (glbl.hasInitializer() &&
+          llvm::isa<llvm::ConstantAggregateZero>(glbl.getInitializer())) {
+        llvm::dbgs() << "Global Zero Initializer: " << glbl.getName() << "\n";
+        llvm::dbgs() << "FIXME: Ignoring zero initializer: Andersen's assumes"
+          << " its a univeral value, and that breaks struct stuff, so I'm "
+          " (unsoundly) ignoring\n";
+        /*
+        cg.add(ConstraintType::Copy, omap.getValue(&glbl),
+            ObjectMap::NullValue);
+        */
+      } else {
+        llvm::dbgs() << "NO GLOBAL INITIALIZER: " << glbl.getName() << "\n";
+        cg.add(ConstraintType::Copy, omap.getObject(&glbl),
+            ObjectMap::UniversalValue);
+        cg.add(ConstraintType::Copy, omap.getValue(&glbl),
+            ObjectMap::UniversalValue);
+      }
     }
   });
   //}}}

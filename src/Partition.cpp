@@ -57,7 +57,7 @@ getSrcDestValue(ObjectMap::ObjID obj_id, const ObjectMap &omap,
 // Computes "access equivalent" partitions as described in "Flow-Sensitive
 // Pointer ANalysis for Millions fo Lines of Code"
 bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
-    const ObjectMap &omap) {
+    ObjectMap &omap) {
   // Okay, heres what we do...
   // Let AE be a map from addr-taken variables to instructions
   //
@@ -219,7 +219,20 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
     std::for_each(std::begin(pr.second), std::end(pr.second),
         [&pr, &part_map, &omap]
         (ObjectMap::ObjID &obj_id) {
-      part_map[obj_id] = pr.first;
+      // Check to see if this is a strucutre field...
+      auto field_pr = omap.findFieldsForObj(obj_id);
+
+      // If so, add each field to the part map
+      if (field_pr.first) {
+        auto &field_vec = field_pr.second;
+        std::for_each(std::begin(field_vec), std::end(field_vec),
+            [&pr, &part_map] (ObjectMap::ObjID id) {
+          part_map[id] = pr.first;
+        });
+      // Otherwise, just add the obj
+      } else {
+        part_map[obj_id] = pr.first;
+      }
     });
   });
 
@@ -604,10 +617,22 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
       std::for_each(std::begin(objs), std::end(objs),
           [&graph, &vars, &omap] (ObjectMap::ObjID &obj_id) {
         // We're going to try converting these to objects instead of values...
-        vars.emplace_back(obj_id);
+        auto field_pr = omap.findFieldsForObj(obj_id);
+        if (field_pr.first) {
+          auto &field_vec = field_pr.second;
+          vars.insert(std::end(vars), std::begin(field_vec),
+            std::end(field_vec));
+        } else {
+          vars.emplace_back(obj_id);
+        }
       });
     });
 
+    llvm::dbgs() << "  Setting up vars as:";
+    for (auto &obj : vars) {
+      llvm::dbgs() << " " << obj;
+    }
+    llvm::dbgs() << "\n";
     part_node.setupPartGraph(vars);
   });
 
