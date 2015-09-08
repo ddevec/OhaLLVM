@@ -72,9 +72,13 @@ class ObjectMap {
           std::for_each(type->element_begin(), type->element_end(),
               [this, &omap, &field_count]
               (const llvm::Type *element_type) {
+            // We start by assuming structure fields are strong
+            bool strong = true;
+
             // If this is an array, strip away the outer typing
             llvm::dbgs() << "  Have element type!!!\n";
             while (auto at = llvm::dyn_cast<llvm::ArrayType>(element_type)) {
+              strong = false;
               element_type = at;
             }
 
@@ -88,10 +92,21 @@ class ObjectMap {
               llvm::dbgs() << "Inserting sizes from nested struct!\n";
               sizes_.insert(std::end(sizes_), struct_info.sizes_begin(),
                 struct_info.sizes_end());
+
+              // This field is strong if the substruct field was strong, and
+              //   we're currently strong
+              std::for_each(struct_info.strong_begin(),
+                  struct_info.strong_end(),
+                  [this, &strong] (bool sub_strong) {
+                // If we're strong, and their strong the field is strong
+                fieldStrong_.push_back(strong & sub_strong);
+              });
+
               field_count += struct_info.numFields();
             } else {
               llvm::dbgs() << "Inserting size 1\n";
               sizes_.emplace_back(1);
+              fieldStrong_.push_back(strong);
               field_count++;
             }
 
@@ -142,8 +157,8 @@ class ObjectMap {
         }
 
         // ddevec - TODO: Should keep track of if field is within array...
-        bool fieldStrong(int32_t) const {
-          return false;
+        bool fieldStrong(int32_t idx) const {
+          return fieldStrong_.at(idx);
         }
 
         // Iteration {{{
@@ -173,6 +188,34 @@ class ObjectMap {
         const_size_iterator sizes_cend() const {
           return std::end(sizes_);
         }
+
+        typedef std::vector<bool>::iterator strong_iterator;
+        typedef std::vector<bool>::const_iterator const_strong_iterator;
+
+        strong_iterator strong_begin() {
+          return std::begin(fieldStrong_);
+        }
+
+        strong_iterator strong_end() {
+          return std::end(fieldStrong_);
+        }
+
+        const_strong_iterator strong_begin() const {
+          return std::begin(fieldStrong_);
+        }
+
+        const_strong_iterator strong_end() const {
+          return std::end(fieldStrong_);
+        }
+
+        const_strong_iterator strong_cbegin() const {
+          return std::begin(fieldStrong_);
+        }
+
+        const_strong_iterator strong_cend() const {
+          return std::end(fieldStrong_);
+        }
+
         //}}}
 
         // Wohoo printing {{{
@@ -192,6 +235,7 @@ class ObjectMap {
         // Private Variables {{{
         std::vector<int32_t> offsets_;
         std::vector<int32_t> sizes_;
+        std::vector<bool> fieldStrong_;
         const llvm::StructType *type_;
         //}}}
       //}}}
