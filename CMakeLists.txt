@@ -12,6 +12,24 @@ function(list_prefix var prefix)
 
 endfunction(list_prefix)
 
+function(add_cpplint_headers TARGET_NAME)
+
+  set(lint_names "")
+  list_prefix(lint_names ${PROJECT_SOURCE_DIR}/include ${ARGN})
+
+  add_custom_command(TARGET ${TARGET_NAME} 
+    PRE_BUILD
+    COMMAND "/home/ddevec/prefix/bin/cpplint.py" 
+    ARGS    "--counting=detailed"
+            "--extensions=cpp,h"
+            "--linelength=80"
+            "--filter=-readability/function"
+            ${lint_names}
+    COMMENT "Linting ${TARGET_NAME}"
+    VERBATIM)
+
+endfunction(add_cpplint_headers)
+
 function(add_cpplint_target TARGET_NAME)
 
   set(lint_names "")
@@ -30,7 +48,7 @@ function(add_cpplint_target TARGET_NAME)
 
 endfunction(add_cpplint_target)
 
-include_directories( . )
+include_directories( . ${PROJECT_SOURCE_DIR}/include )
 
 find_package(LLVM REQUIRED CONFIG)
 
@@ -45,7 +63,7 @@ list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
 #set(CMAKE_CXX_COMPILER "clang-3.6")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
 
-set(SOURCES
+set(SPECSFS_SOURCES
   src/SpecSFS.cpp
 
   src/Debug.cpp
@@ -62,27 +80,28 @@ set(SOURCES
   src/Solve.cpp
   )
 
-set(HEADERS
-  include/SpecSFS.h
+set(SPECSFS_HEADERS
+  SpecSFS.h
 
-  include/util.h
-  include/SEG.h
-  include/Debug.h
+  util.h
+  SEG.h
+  Debug.h
 
-  include/SolveHelpers.h
+  SolveHelpers.h
 
-  include/ObjectMap.h
-  include/DUG.h
+  ObjectMap.h
+  DUG.h
 
-  include/Andersens.h
+  Andersens.h
   )
 
 add_llvm_loadable_module(SpecSFS
-    ${SOURCES}
+    ${SPECSFS_SOURCES}
   )
 
-add_cpplint_target(SpecSFS ${SOURCES})
-add_cpplint_target(SpecSFS ${HEADERS})
+add_cpplint_target(SpecSFS ${SPECSFS_SOURCES})
+add_cpplint_headers(SpecSFS ${SPECSFS_HEADERS})
 
 add_subdirectory(test)
+add_subdirectory(lib)
 
