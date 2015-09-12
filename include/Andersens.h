@@ -491,6 +491,10 @@ class Andersens : public llvm::ModulePass,
     getAnalysis<AliasAnalysis>().copyValue(From, To);
   }
 
+  const llvm::SparseBitVector<> &getPointsTo(int fnode) const {
+    return *GraphNodes[fnode].PointsTo;
+  }
+
   const llvm::SparseBitVector<> &getPointsTo(const llvm::Value *val) const {
     auto node = getNode(const_cast<llvm::Value*>(val));
 

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <functional>
 #include <map>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -76,9 +77,16 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
 
   // Converting from aux_id to obj_ids
   std::map<int, ObjectMap::ObjID> aux_to_obj;
+  std::map<ObjectMap::ObjID, int> special_aux;
   // For each pointer value we care about:
   llvm::dbgs() << "Filling aux_to_obj:\n";
   auto &aux_val_nodes = aux.getObjectMap();
+
+  special_aux.emplace(ObjectMap::NullValue, Andersens::NullPtr);
+  special_aux.emplace(ObjectMap::NullObjectValue, Andersens::NullObject);
+  special_aux.emplace(ObjectMap::IntValue, aux.IntNode);
+  special_aux.emplace(ObjectMap::UniversalValue, Andersens::UniversalSet);
+  special_aux.emplace(ObjectMap::PthreadSpecificValue, aux.PthreadSpecificNode);
 
   aux_to_obj.emplace(Andersens::NullPtr, ObjectMap::NullValue);
   aux_to_obj.emplace(Andersens::NullObject, ObjectMap::NullObjectValue);
@@ -127,6 +135,7 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
       llvm::dbgs() << "    store src: " << node.src() << " : " <<
         ValPrint(node.src()) << "\n";;
     } else {
+      llvm::dbgs() << "node_id is: " << node.id() << "\n";
       assert(llvm::isa<DUG::LoadNode>(node) ||
         llvm::isa<DUG::GlobalInitNode>(node));
       // val is src for gv and loads
@@ -147,28 +156,48 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
 
   // Now, create a grouping of each relevant obj_id for a given DUGid
   std::for_each(part_nodes.cbegin(), part_nodes.cend(),
-      [&AE, &omap, &dug, &aux_to_obj, &aux]
+      [&AE, &omap, &dug, &aux_to_obj, &aux, &special_aux]
       (const std::pair<const ObjectMap::ObjID, std::vector<DUG::DUGid>> &pr) {
     auto obj_id = pr.first;
 
-    // Actually, should be: for each pts_id in aux(omap[obj_id])... ugh
-    auto val = omap.valueAtID(obj_id);
-    if (val == nullptr) {
-      auto &nd = dug.getNode(obj_id);
+    const llvm::SparseBitVector<> *paux_ptsto;
+    // Specially handle our special object ids...
+    if (omap.isSpecial(obj_id)) {
+      auto aux_obj = special_aux.at(obj_id);
+      paux_ptsto = &aux.getPointsTo(aux_obj);
+      llvm::dbgs() << "Got Special ptsto: " << obj_id << "\n";
+    } else {
+      // Actually, should be: for each pts_id in aux(omap[obj_id])... ugh
+      auto val = omap.valueAtID(obj_id);
+      if (val == nullptr) {
+        auto &nd = dug.getNode(obj_id);
 
-      val = omap.valueAtID(nd.dest());
+        val = omap.valueAtID(nd.dest());
+      }
+
+      paux_ptsto = &aux.getPointsTo(val);
     }
-    auto aux_ptsto = aux.getPointsTo(val);
+    auto aux_ptsto = *paux_ptsto;
+
     llvm::dbgs() << "aux ptsto for: " << obj_id << " : " << ValPrint(obj_id)
         << " is:";
     for (auto id : aux_ptsto) {
       llvm::dbgs() << " " << id;
     }
     llvm::dbgs() << "\n";
+
     std::for_each(std::begin(aux_ptsto), std::end(aux_ptsto),
         [&AE, &obj_id, &aux_to_obj] (uint32_t ptsto_id) {
-      auto aux_obj_id = aux_to_obj.at(ptsto_id);
-      AE[aux_obj_id].set(obj_id.val());
+      auto aux_it = aux_to_obj.find(ptsto_id);
+      llvm::dbgs() << "  Checking aux_to_obj[" << ptsto_id << "]\n";
+      // If I have a value in aux, but not in my object set, ignore it, its an
+      //   aux internal node which I've already accounted for
+      if (aux_it != std::end(aux_to_obj)) {
+        llvm::dbgs() << "  aux_to_obj[" << ptsto_id << "] is: " <<
+            aux_it->second << "\n";
+        auto aux_obj_id = aux_it->second;
+        AE[aux_obj_id].set(obj_id.val());
+      }
     });
   });
 
@@ -219,8 +248,10 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
     std::for_each(std::begin(pr.second), std::end(pr.second),
         [&pr, &part_map, &omap]
         (ObjectMap::ObjID &obj_id) {
-      // Check to see if this is a strucutre field...
-      auto field_pr = omap.findFieldsForObj(obj_id);
+      // Check to see if this is an internal alias I introduced...
+      //    An example of this would be structure fields
+      //    Or copies to universal values
+      auto field_pr = omap.findObjAliases(obj_id);
 
       // If so, add each field to the part map
       if (field_pr.first) {
@@ -319,21 +350,14 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
         // If this is a load:
         if (llvm::isa<DUG::LoadNode>(node)) {
           auto cfg_id = ssa.getCFGid(node.extId());
+
           auto node_set = part_graph.getNodes(cfg_id);
           assert(std::distance(node_set.first, node_set.second) == 1);
           // Ooops, I aliased a variable... shame on me
-          // auto &ld_node = node;
           auto &node = part_graph.getNode<CFG::Node>(node_set.first->second);
 
           // Set R
           node.setR();
-
-          // Force M for part nodes?
-          /*
-          if (graph.getPart(ld_node.src()) == part_id) {
-            node.setM();
-          }
-          */
 
           // Denote this CFG node maps to this DUG node
           // FIXME:
@@ -346,14 +370,13 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
           node_to_partition[dug_id].push_back(part_id);
         // If its a store:
         } else if (llvm::isa<DUG::StoreNode>(node)) {
-          assert(llvm::isa<DUG::StoreNode>(graph.getNode(dug_id)));
-
           // Get the cfg_id of this node
           auto cfg_id = ssa.getCFGid(node.extId());
 
           // Get the node in the CFG
           auto node_set = part_graph.getNodes(cfg_id);
           assert(std::distance(node_set.first, node_set.second) == 1);
+          // Ooops, I aliased a variable... shame on me
           auto &node = part_graph.getNode<CFG::Node>(node_set.first->second);
 
           // Set M and R
@@ -400,7 +423,10 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
     // Now, calculate ssa form for this graph:
     auto part_ssa = computeSSA(part_graph);
 
-    part_ssa.printDotFile("part_ssa.dot", *g_omap);
+    std::string part_file("part_ssa");
+    part_file += std::to_string(part_id.val());
+    part_file += ".dot";
+    part_ssa.printDotFile(part_file, *g_omap);
 
     // Here we group the partSSA info, indicating which DUG nodes are affected
     //   by this partition
@@ -536,7 +562,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
         auto pred_node_id = part_ssa.getEdge(pred_edge_id).src();
 
         auto pred_cfg_id = part_ssa.getNode<CFG::Node>(pred_node_id).extId();
-        // llvm::dbgs() << "have pred_node_id of: " << pred_node_id << "\n";
+        llvm::dbgs() << "    have pred_node_id of: " << pred_node_id << "\n";
 
         // NOTE: if we were not doing a topo order we may have to evaluate the
         //   pred here
@@ -544,13 +570,13 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
         auto pred_rep_it = cfg_node_rep.find(pred_cfg_id);
         if (pred_rep_it == std::end(cfg_node_rep)) {
           // Delay our rep resolving until after we've visited all nodes
-          llvm::dbgs() << "  ||Delaying cfg edge (pred id: " << pred_cfg_id
+          llvm::dbgs() << "    ||Delaying cfg edge (pred id: " << pred_cfg_id
               << ") {" << "??" << " -(" << part_id << ")-> " << dug_id << "}\n";
           delayed_edges.emplace_back(pred_node_id, dug_id, part_id);
         } else {
           DUG::DUGid &pred_rep_id = pred_rep_it->second;
 
-          llvm::dbgs() << "  --Adding cfg edge {" << pred_rep_id << " -(" <<
+          llvm::dbgs() << "    --Adding cfg edge {" << pred_rep_id << " -(" <<
             part_id << ")-> " << dug_id << "}\n";
           graph.addEdge(pred_rep_id, dug_id, part_id);
         }
@@ -617,7 +643,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
       std::for_each(std::begin(objs), std::end(objs),
           [&graph, &vars, &omap] (ObjectMap::ObjID &obj_id) {
         // We're going to try converting these to objects instead of values...
-        auto field_pr = omap.findFieldsForObj(obj_id);
+        auto field_pr = omap.findObjAliases(obj_id);
         if (field_pr.first) {
           auto &field_vec = field_pr.second;
           vars.insert(std::end(vars), std::begin(field_vec),

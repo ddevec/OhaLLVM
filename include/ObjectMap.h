@@ -67,8 +67,10 @@ class ObjectMap {
         StructInfo(ObjectMap &omap, const llvm::StructType *type) :
             type_(type) {
           int32_t field_count = 0;
+          /*
           llvm::dbgs() << "Creating struct info for: " << type->getName() <<
             "\n";
+          */
           std::for_each(type->element_begin(), type->element_end(),
               [this, &omap, &field_count]
               (const llvm::Type *element_type) {
@@ -79,7 +81,7 @@ class ObjectMap {
             llvm::dbgs() << "  Have element type!!!\n";
             while (auto at = llvm::dyn_cast<llvm::ArrayType>(element_type)) {
               strong = false;
-              element_type = at;
+              element_type = at->getContainedType(0);
             }
 
             llvm::dbgs() << "Adding field to offsets_" << "\n";
@@ -221,7 +223,8 @@ class ObjectMap {
         // Wohoo printing {{{
         friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
             const StructInfo &si) {
-          os << "StructInfo( " << si.type()->getName() << ", [";
+          // FIXME(ddevec): Cannot do getName on "literal" structs
+          // os << "StructInfo( " << si.type()->getName() << ", [";
           std::for_each(si.sizes_begin(), si.sizes_end(),
               [&os] (int32_t size) {
             os << " " << size;
@@ -256,6 +259,15 @@ class ObjectMap {
     // Used to create phony identifers for nodes that don't have values
     ObjID createPhonyID() {
       return phonyIdGen_.next();
+    }
+
+    ObjID createPhonyID(const llvm::Value *val) {
+      auto ret = phonyIdGen_.next();
+
+      assert(phonyMap_.find(ret) == std::end(phonyMap_));
+      phonyMap_.emplace(ret, val);
+
+      return ret;
     }
     // Top level variable/node
     ObjID addValueFunction(const llvm::Value *val) {
@@ -293,8 +305,33 @@ class ObjectMap {
     //}}}
 
     // Value Retrieval {{{
+    static bool isSpecial(ObjID id) {
+      assert(id.val() >= 0);
+      return id.val() < static_cast<int32_t>(ObjEnum::eNumDefaultObjs);
+    }
+
+    static void printSpecial(llvm::raw_ostream &o, ObjID id) {
+      if (id == NullValue) {
+        o << "(NullValue)";
+      } else if (id == NullObjectValue) {
+        o << "(NullObjectValue)";
+      } else if (id == IntValue) {
+        o << "(IntValue)";
+      } else if (id == UniversalValue) {
+        o << "(UniversalValue)";
+      } else if (id == PthreadSpecificValue) {
+        o << "(PthreadSpecificValue)";
+      } else {
+        llvm_unreachable("not special");
+      }
+    }
+
     const llvm::Value *valueAtID(ObjID id) const {
       if (isPhony(id)) {
+        auto phony_it = phonyMap_.find(id);
+        if (phony_it != std::end(phonyMap_)) {
+          return phony_it->second;
+        }
         return nullptr;
       }
       return mapping_.at(id.val());
@@ -344,7 +381,7 @@ class ObjectMap {
     }
 
     ObjID getReturn(const llvm::Value *val) const {
-      return __do_get(val, valToID_);
+      return __do_get(val, retToID_);
     }
 
     ObjID getVarArg(const llvm::Value *val) const {
@@ -376,10 +413,18 @@ class ObjectMap {
 
     // Structure field tracking {{{
     bool addStructInfo(const llvm::StructType *type) {
-      auto emp_ret = structInfo_.emplace(type, StructInfo(*this, type));
-      assert(emp_ret.second);
+      bool ret = true;
+      auto it = structInfo_.find(type);
 
-      return emp_ret.second;
+      if (it == std::end(structInfo_)) {
+        auto emp_ret = structInfo_.emplace(type, StructInfo(*this, type));
+        assert(emp_ret.second);
+
+        it = emp_ret.first;
+        ret = emp_ret.second;
+      }
+
+      return ret;
     }
 
     const StructInfo &getStructInfo(const llvm::StructType *type) {
@@ -401,12 +446,26 @@ class ObjectMap {
       return *maxStructInfo_;
     }
 
+    void addObjAlias(ObjID obj_id, ObjID alias_id) {
+      auto it =  objToAliases_.find(obj_id);
+      if (it == std::end(objToAliases_)) {
+        auto em_ret = objToAliases_.emplace(
+            obj_id, std::vector<ObjID>());
+        assert(em_ret.second);
+
+        it = em_ret.first;
+        it->second.emplace_back(obj_id);
+      }
+
+      it->second.emplace_back(alias_id);
+    }
+
     std::pair<bool, const std::vector<ObjID> &>
-    findFieldsForObj(ObjID obj_id) const {
+    findObjAliases(ObjID obj_id) const {
       // To return on failure;
       static std::vector<ObjID> empty_vector;
-      auto it =  objToStructFields_.find(obj_id);
-      if (it == std::end(objToStructFields_)) {
+      auto it =  objToAliases_.find(obj_id);
+      if (it == std::end(objToAliases_)) {
         return std::make_pair(false, std::ref(empty_vector));
       }
       return std::make_pair(true, std::ref(it->second));
@@ -498,10 +557,11 @@ class ObjectMap {
     idToValMap idToObj_;
     idToValMap idToRet_;
     idToValMap idToVararg_;
+    idToValMap phonyMap_;
 
     // Struct info
     std::map<const llvm::StructType *, StructInfo> structInfo_;
-    std::map<ObjID, std::vector<ObjID>> objToStructFields_;
+    std::map<ObjID, std::vector<ObjID>> objToAliases_;
     const StructInfo *maxStructInfo_ = nullptr;
 
     static constexpr int32_t phonyIdBase = 1<<30;
@@ -570,7 +630,7 @@ class ObjectMap {
           pm.emplace(id, val);
 
           // Denote which objects this structure field occupies
-          objToStructFields_[ret_id].emplace_back(id);
+          objToAliases_[ret_id].emplace_back(id);
         });
 
         assert(ret_id != ObjID::invalid());
@@ -621,6 +681,23 @@ class ObjectMap {
 };
 
 // structure identification/offset helpers {{{
+
+// Gets the type of a value, stripping the first layer of bitcasts if needed
+// NOTE: Does not strip away pointer type
+__attribute__((unused))
+static const llvm::Type *getTypeOfVal(llvm::Value *val) {
+  auto ret = val->getType();
+
+  if (auto ce = llvm::dyn_cast<llvm::ConstantExpr>(val)) {
+    if (ce->getOpcode() == llvm::Instruction::BitCast) {
+      // Also strip away pointer type
+      ret = ce->getOperand(0)->getType();
+    }
+  }
+
+  return ret;
+}
+
 // called from malloc-like allocations, to find the largest strcuture size the
 // untyped allocation is cast to.
 // FIXME: Should put somewhere I don't have to deal with unused warnings
@@ -693,7 +770,7 @@ static int32_t getGEPOffs(ObjectMap &omap, const llvm::User &gep) {
     auto type = *gi;
     auto struct_type = llvm::dyn_cast<llvm::StructType>(type);
     // If it isn't a struct field, don't add subfield offsets
-    if (!struct_type) {
+    if (struct_type == nullptr) {
       continue;
     }
 
@@ -737,7 +814,12 @@ class ValPrint {
           o << *val;
         }
       } else {
-        o << "(null)";
+        // If its a special value:
+        if (ObjectMap::isSpecial(pr.id_)) {
+          ObjectMap::printSpecial(o, pr.id_);
+        } else {
+          o << "(null)";
+        }
       }
       return o;
     }

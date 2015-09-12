@@ -110,7 +110,11 @@ class PtstoSet {
       bool ret = false;
       std::for_each(std::begin(rhs.ptsto_), std::end(rhs.ptsto_),
           [this, &ret, &offs] (const int32_t &val) {
-        ret |= ptsto_.test_and_set(val + offs);
+        auto or_offs = offs;
+        if (ObjectMap::isSpecial(ObjectMap::ObjID(val))) {
+          or_offs = 0;
+        }
+        ret |= ptsto_.test_and_set(val + or_offs);
       });
 
       return ret;

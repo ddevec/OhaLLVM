@@ -242,8 +242,9 @@ class DUG {
               llvm::dbgs() << "    src is: " << ValPrint(nd.src())
                   << "\n";
               llvm::dbgs() << "  DUGid is " << ret->second << "\n";
-              auto strong_ret = strongCons.emplace(ld_id, cons.strong());
-              assert(strong_ret.second);
+              strongCons.emplace(ld_id, cons.strong());
+              // Just trust me on this one...
+              // We don't enforce this... assert(strong_ret.second);
             }
             break;
           case ConstraintType::GlobalInit:
@@ -267,10 +268,18 @@ class DUG {
             break;
           case ConstraintType::Copy:
             {
-              llvm::dbgs() << "  node is Copy\n";
-              auto ret = DUG_.addNode<CopyNode>(dest, src, offs);
-              llvm::dbgs() << "  DUGid is " << ret->second << "\n";
-              strongCons.emplace(dest, cons.strong());
+              if (auto ncons = llvm::dyn_cast<NodeConstraint>(&cons)) {
+                llvm::dbgs() << "  node is Copy\n";
+                auto ret = DUG_.addNode<CopyNode>(ncons->nodeId(), dest, src,
+                    offs);
+                llvm::dbgs() << "  DUGid is " << ret->second << "\n";
+                strongCons.emplace(dest, cons.strong());
+              } else {
+                llvm::dbgs() << "  node is Copy\n";
+                auto ret = DUG_.addNode<CopyNode>(dest, src, offs);
+                llvm::dbgs() << "  DUGid is " << ret->second << "\n";
+                strongCons.emplace(dest, cons.strong());
+              }
             }
             break;
           default:
@@ -544,7 +553,13 @@ class DUG {
      public:
         CopyNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest,
             ObjectMap::ObjID src, int32_t offset)
-          : DUGNode(NodeKind::CopyNode, node_id, dest, src, offset) { }
+          : DUGNode(NodeKind::CopyNode, node_id, dest, src, offset),
+            realDest_(dest) { }
+
+        CopyNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID node,
+            ObjectMap::ObjID dest, ObjectMap::ObjID src, int32_t offset)
+          : DUGNode(NodeKind::CopyNode, node_id, node, src, offset),
+          realDest_(dest) { }
 
         // NOTE: Process implemented in "Solve.cpp"
         void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
@@ -552,6 +567,17 @@ class DUG {
         static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
           return node->getKind() == NodeKind::CopyNode;
         }
+
+        ObjectMap::ObjID rep() const override {
+          return dest_;
+        }
+
+        ObjectMap::ObjID dest() const override {
+          return realDest_;
+        }
+
+     private:
+        ObjectMap::ObjID realDest_;
       //}}}
     };
 

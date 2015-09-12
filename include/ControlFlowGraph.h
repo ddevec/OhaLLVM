@@ -42,6 +42,9 @@ class CFG {
         Node(SEG<CFGid>::NodeID node_id, CFGid id) :
           UnifyNode<CFGid>(NodeKind::CFGNode, node_id, id) { }
 
+        Node(SEG<CFGid>::NodeID node_id, CFGid id, const llvm::BasicBlock *bb) :
+          UnifyNode<CFGid>(NodeKind::CFGNode, node_id, id), bb_(bb) { }
+
         // No Copy/move {{{
         Node(const Node &) = default;
         Node(Node &&) = default;
@@ -76,7 +79,12 @@ class CFG {
         // Print support {{{
         void print_label(llvm::raw_ostream &ofil,
             const ObjectMap &) const override {
-          ofil << SEGNode<CFGid>::extId() << " : {";
+          if (bb_ == nullptr) {
+            ofil << SEGNode<CFGid>::extId() << " : {";
+          } else {
+            ofil << SEGNode<CFGid>::extId() << "(" << bb_->getName() << ")" <<
+                " : {";
+          }
 
           std::for_each(UnifyNode<CFGid>::rep_begin(),
               UnifyNode<CFGid>::rep_end(),
@@ -282,6 +290,10 @@ class CFG {
         //}}}
 
      private:
+      // Debug Variables {{{
+      const llvm::BasicBlock *bb_ = nullptr;
+      //}}}
+
       // Private variables {{{
       // The objects defined/uses by this node
       std::set<ObjectMap::ObjID> defs_;
@@ -346,9 +358,6 @@ class CFG {
 
     void addIndirectCall(CFGid call_id, ConstraintGraph::ObjID obj_id,
         CFGid ret_id) {
-      // Don't think I actually need this... I'm using another function
-      // instead... I should clean it up at some point
-      // cfgIndirCallsites_[call_id].push_back(call_insn_id);
       indirectCalls_.emplace_back(obj_id, call_id);
       cfgCallSuccessors_[call_id] = ret_id;
     }
@@ -410,8 +419,16 @@ class CFG {
       return cfgFcnToCallRet_.at(fcn_id);
     }
 
+    bool hasFunctionStart(ConstraintGraph::ObjID fcn_id) const {
+      return cfgFunctionEntries_.find(fcn_id) != std::end(cfgFunctionEntries_);
+    }
+
     CFGid getFunctionStart(ConstraintGraph::ObjID fcn_id) const {
       return cfgFunctionEntries_.at(fcn_id);
+    }
+
+    bool hasFunctionReturn(ConstraintGraph::ObjID fcn_id) const {
+      return cfgFunctionReturns_.find(fcn_id) != std::end(cfgFunctionReturns_);
     }
 
     CFGid getFunctionReturn(ConstraintGraph::ObjID fcn_id) const {
@@ -490,6 +507,14 @@ class CFG {
       auto ret = idGenerator_.next();
 
       CFG_.addNode<Node>(ret);
+
+      return ret;
+    }
+
+    CFGid nextNode(const llvm::BasicBlock *bb) {
+      auto ret = idGenerator_.next();
+
+      CFG_.addNode<Node>(ret, bb);
 
       return ret;
     }

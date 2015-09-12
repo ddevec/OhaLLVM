@@ -2,6 +2,7 @@
  * Copyright (C) 2015 David Devecsery
  */
 
+#include <algorithm>
 #include <set>
 #include <utility>
 #include <vector>
@@ -154,13 +155,13 @@ void T6(CFG::ControlFlowGraph &G) {
 
 // merge all up-nodes with exactly one successor with their successor
 void T5(CFG::ControlFlowGraph &G) {
-  // Get a topological ordering of all up-nodes
-  // For each up-node in said ordering
-  // Visit each node topologically
   dout << "Running T5\n";
 
+  // Get a topological ordering of all up-nodes
+  // For each up-node in said ordering
   // Create a new graph, with only up-nodes
   // Start with Gup as a clone of G
+
   CFG::ControlFlowGraph Gup = G.clone<CFG::Node, CFG::Edge>();
 
   // Now, remove any non-up nodes
@@ -171,14 +172,16 @@ void T5(CFG::ControlFlowGraph &G) {
       auto &node = llvm::cast<CFG::Node>(*pnode);
       // Note any non-up node to be removed post iteration
       if (!node.u() || !node.p()) {
-        // llvm::dbgs() << "Adding node to rm list: " << node.id() << "\n";
+        llvm::dbgs() << "Adding node to rm list: " << node.id() << "\n";
         remove_list.push_back(node.id());
       }
     }
   });
 
+  /*
   assert(std::unique(std::begin(remove_list), std::end(remove_list)) ==
       std::end(remove_list));
+  */
 
   // Remove any non-up-nodes from Gup
   std::for_each(std::begin(remove_list), std::end(remove_list),
@@ -202,7 +205,6 @@ void T5(CFG::ControlFlowGraph &G) {
   std::for_each(Gup.topo_begin(), Gup.topo_end(),
       [&G, &unite_ids](CFG::NodeID topo_id) {
     auto &nd = G.getNode<CFG::Node>(topo_id);
-    // llvm::dbgs() << "Checking node: " << topo_id << "\n";
     // This had better be a up-node...
     assert(nd.u() && nd.p());
 
@@ -216,14 +218,14 @@ void T5(CFG::ControlFlowGraph &G) {
 
   // Now, unite any note that was denoted as being united
   std::for_each(std::begin(unite_ids), std::end(unite_ids),
-    [&G](CFG::NodeID unite_id) {
+      [&G](CFG::NodeID unite_id) {
     auto &unite_node = G.getNode<CFG::Node>(unite_id);
     assert(unite_node.succs().size() == 1);
 
     auto &succ_edge = G.getEdge(*std::begin(unite_node.succs()));
     auto &succ_node = G.getNode<CFG::Node>(succ_edge.dest());
 
-    unite_node.unite(G, succ_node);
+    succ_node.unite(G, unite_node);
   });
   dout << "Finished T5\n";
 }

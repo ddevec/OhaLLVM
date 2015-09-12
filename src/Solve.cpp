@@ -306,8 +306,6 @@ void DUG::GlobalInitNode::process(DUG &dug, TopLevelPtsto &pts_top,
   auto &src_pts = pts_top.at(src());
 
   llvm::dbgs() << "dest_pts before: " << dest_pts << "\n";
-  // FIXME: also respect strong updates?
-  // change =
   dest_pts |= src_pts;
   llvm::dbgs() << "dest_pts after: " << dest_pts << "\n";
 

@@ -45,3 +45,15 @@ create_test(test_struct
     test_struct.c
   )
 
+create_test(test_memcpy
+    test_memcpy.c
+  )
+
+create_test(simple_universal_value
+    simple_universal_value.c
+  )
+
+create_test(test_echo_break
+    test_echo_break.c
+  )
+
