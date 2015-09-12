@@ -16,18 +16,21 @@
 #include "llvm/Support/raw_ostream.h"
 
 
-class UnusedFcns : public llvm::ModulePass {
+class UnusedFunctions : public llvm::ModulePass {
  public:
     static char ID;
 
-    // UnusedFcns() : FunctionPass(ID) { }
-    UnusedFcns() : llvm::ModulePass(ID) { }
+    UnusedFunctions() : llvm::ModulePass(ID) { }
 
     bool runOnModule(llvm::Module &m) override;
 
     void getAnalysisUsage(llvm::AnalysisUsage &AU) const override;
 
-    bool isUsed(llvm::Function *fcn) {
+    bool isUsed(const llvm::Function &fcn) const {
+      return isUsed(&fcn);
+    }
+
+    bool isUsed(const llvm::Function *fcn) const {
       if (fcn->getName() == "main") {
         return true;
       }
@@ -35,11 +38,11 @@ class UnusedFcns : public llvm::ModulePass {
       if (fcn->hasExternalLinkage()) {
         return true;
       }
-      return visited.count(fcn) != 0;
+      return visited.find(fcn) != std::end(visited);
     }
 
  private:
-    std::set<llvm::Function *> visited;
+    std::set<const llvm::Function *> visited;
 };
 
 #endif  // INCLUDE_LIB_UNUSEDFUNCTIONS_H__

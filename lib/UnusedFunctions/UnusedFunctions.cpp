@@ -6,12 +6,12 @@
 
 #include "llvm/Support/Debug.h"
 
-void UnusedFcns::getAnalysisUsage(llvm::AnalysisUsage &AU) const {
+void UnusedFunctions::getAnalysisUsage(llvm::AnalysisUsage &AU) const {
   AU.setPreservesAll();
   AU.addRequired<llvm::PathProfileInfo>();
 }
 
-bool UnusedFcns::runOnModule(llvm::Module &m) {
+bool UnusedFunctions::runOnModule(llvm::Module &m) {
   llvm::dbgs() << "In runOnModule!\n";
 
   auto &PI = getAnalysis<llvm::PathProfileInfo>();
@@ -40,8 +40,8 @@ bool UnusedFcns::runOnModule(llvm::Module &m) {
   return false;
 }
 
-char UnusedFcns::ID = 0;
-static llvm::RegisterPass<UnusedFcns> X("unused-fcns",
+char UnusedFunctions::ID = 0;
+static llvm::RegisterPass<UnusedFunctions> X("unused-functions",
     "Simple pass, analyses pathprofileinfo to determine which functions are"
     " unused",
     false, false);

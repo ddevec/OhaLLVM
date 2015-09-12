@@ -11,6 +11,7 @@
 #include "include/Andersens.h"
 #include "include/DUG.h"
 #include "include/ObjectMap.h"
+#include "include/lib/UnusedFunctions.h"
 
 #include "llvm/Pass.h"
 #include "llvm/Function.h"
@@ -28,6 +29,8 @@ class SpecSFS : public llvm::ModulePass,
 
   bool runOnModule(llvm::Module &M) override;
 
+  void getAnalysisUsage(llvm::AnalysisUsage &usage) const;
+
  private:
   // The functions which do the primary (high-level) work of SFS
 
@@ -37,7 +40,7 @@ class SpecSFS : public llvm::ModulePass,
   // Creates constraints for each top-lvel operatioon in the module
   // Also populates Def/Use info for later address-taken constraints
   bool createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
-      const llvm::Module &M);
+      const llvm::Module &M, const UnusedFunctions &unused);
 
   // Optimizes the top-level constraints in the DUG
   // This requires the omap, so it knows which ids are objects, and doesn't

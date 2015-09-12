@@ -1456,7 +1456,7 @@ bool SpecSFS::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
 }
 
 bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
-    const llvm::Module &M) {
+    const llvm::Module &M, const UnusedFunctions &unused_fcns) {
   //{{{
 
   // Special Constraints {{{
@@ -1532,118 +1532,123 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
   // Functions {{{
   // Now that we've dealt with globals, move on to functions
   for (auto &fcn : M) {
-    auto obj_id = omap.getObject(&fcn);
-    // graph.associateNode(obj_id, &fcn);
+    if (!unused_fcns.isUsed(fcn)) {
+      auto obj_id = omap.getObject(&fcn);
+      // graph.associateNode(obj_id, &fcn);
 
-    cg.add(ConstraintType::AddressOf,
-        getValueUpdate(cg, omap, &fcn),
-        obj_id);
+      cg.add(ConstraintType::AddressOf,
+          getValueUpdate(cg, omap, &fcn),
+          obj_id);
 
-    // Functions are constant pointers
-    addConstraintForConstPtr(cg, omap, fcn);
+      // Functions are constant pointers
+      addConstraintForConstPtr(cg, omap, fcn);
+    }
   }
 
   // Now we deal with the actual internals of functions
   for (auto &fcn : M) {
-    /* -- I'm pretty sure this stuff is out-of-date on my new implementation
-    // If we return a pointer
-    if (llvm::isa<llvm::PointerType>(fcn.getFunctionType()->getReturnType())) {
-      // Create a node for this fcn's return
-    }
-    // Set up our vararg node
-    if (fcn.getFunctionType()->isVarArg()) {
-    }
-
-    // Update the value for each arg
-    std::for_each(fcn.arg_begin(), fcn.arg_end(),
-        [&cg, &omap](const llvm::Argument &arg) {
-      if (llvm::isa<llvm::PointerType>(arg.getType())) {
-        getValueUpdate(cg, omap, &arg);
+    if (!unused_fcns.isUsed(fcn)) {
+      /* -- I'm pretty sure this stuff is out-of-date on my new implementation
+      // If we return a pointer
+      if (llvm::isa<llvm::PointerType>(fcn.getFunctionType()->getReturnType())) {
+        // Create a node for this fcn's return
       }
-    });
-
-    // ddevec - I assume that this function is indirect, so it shouldn't be
-    //   linked to the universal value
-    // If this function isn't used locally
-    if (!fcn.hasLocalLinkage() || analyzeUsesOfFunction(fcn)) {
-      addConstraintsForNonInternalLinkage(graph, omap, fcn);
-    }
-    */
-
-    if (!fcn.hasLocalLinkage() || analyzeUsesOfFunction(fcn)) {
-      // If it appears that the function is unused, I'm going to add some fake
-      // constraints for the arguments, to stop HU from combining them together
-      // with other arguments that aren't filled until after HU
-      // We add in a fake address of to make the node unusable
-      // Don't add unused function pieces for main or llvm.dbg.declare, they are
-      //     special, and don't need to be tracked
-      if (fcn.getName() != "main" && fcn.getName() != "llvm.dbg.declare") {
-        std::vector<ConstraintGraph::ConsID> con_ids;
-        std::for_each(fcn.arg_begin(), fcn.arg_end(),
-            [&cg, &cfg, &omap, &con_ids](const llvm::Argument &arg) {
-          auto arg_id = omap.getValue(&arg);
-          auto id = omap.makeTempValue();
-
-          auto con_id = cg.add(ConstraintType::AddressOf, arg_id, id);
-          assert(con_id != ConstraintGraph::ConsID::invalid());
-          con_ids.emplace_back(con_id);
-        });
-        cfg.addUnusedFunction(omap.getFunction(&fcn), std::move(con_ids));
-      }
-    }
-
-    // If this function has a body
-    if (!fcn.isDeclaration() && !fcnIsMalloc(&fcn)) {
-      scanFcn(cg, cfg, omap, fcn);
-    // There is no body...
-    } else {
-      // FIXME:
-      // This used to create constraints for function arguments, but for
-      //   external calls... This caused issue with not being able to get the
-      //   UniversalValue set from Andersens... so I'm once again unsoundly
-      //   removing it
-      if (llvm::isa<llvm::PointerType>(
-            fcn.getFunctionType()->getReturnType())) {
-        auto ret_id = omap.getReturn(&fcn);
-        cg.add(ConstraintType::Copy, ret_id,
-            ObjectMap::UniversalValue);
+      // Set up our vararg node
+      if (fcn.getFunctionType()->isVarArg()) {
       }
 
-      // Add a universal constraint for each pointer arg
+      // Update the value for each arg
       std::for_each(fcn.arg_begin(), fcn.arg_end(),
-          [&cg, &omap, &fcn](const llvm::Argument &arg) {
+          [&cg, &omap](const llvm::Argument &arg) {
         if (llvm::isa<llvm::PointerType>(arg.getType())) {
-          // Must deal with pointers passed into extrernal fcns
-          // We add a phony store object?, so we can uniquely refer
-          //   to this later
-          /*
-          auto st_id = omap.createPhonyID();
-          llvm::dbgs() << "Creating universal value arg pass to id: " << st_id
-              << "\n";
-          cg.add(ConstraintType::Store, st_id,
-            ObjectMap::UniversalValue, omap.getValue(&arg));
-          */
-
-          llvm::dbgs() << "fcn is: " << fcn.getName() << "\n";
-          llvm::dbgs() << "arg is: " << arg << "\n";
-
-          auto arg_id = omap.getValue(&arg);
-          // must deal w/ memory object passed into external fcns
-          cg.add(ConstraintType::Copy, arg_id,
-            ObjectMap::UniversalValue);
+          getValueUpdate(cg, omap, &arg);
         }
       });
 
-      if (fcn.getFunctionType()->isVarArg()) {
-        auto st_id = omap.createPhonyID();
-        llvm::dbgs() << "Creating universal value vararg pass to id: " << st_id
-            << "\n";
-        /*
-        cg.add(ConstraintType::Store, st_id,
-            ObjectMap::UniversalValue, omap.getVarArg(&fcn));
-        */
-        cg.add(ConstraintType::Copy, omap.getVarArg(&fcn),
-            ObjectMap::UniversalValue);
+      // ddevec - I assume that this function is indirect, so it shouldn't be
+      //   linked to the universal value
+      // If this function isn't used locally
+      if (!fcn.hasLocalLinkage() || analyzeUsesOfFunction(fcn)) {
+        addConstraintsForNonInternalLinkage(graph, omap, fcn);
+      }
+      */
+
+      if (!fcn.hasLocalLinkage() || analyzeUsesOfFunction(fcn)) {
+        // If it appears that the function is unused, I'm going to add some fake
+        // constraints for the arguments, to stop HU from combining them
+        // together with other arguments that aren't filled until after HU
+        // We add in a fake address of to make the node unusable.
+        //
+        // Don't add unused function pieces for main or llvm.dbg.declare,
+        //    they are special, and don't need to be tracked
+        if (fcn.getName() != "main" && fcn.getName() != "llvm.dbg.declare") {
+          std::vector<ConstraintGraph::ConsID> con_ids;
+          std::for_each(fcn.arg_begin(), fcn.arg_end(),
+              [&cg, &cfg, &omap, &con_ids](const llvm::Argument &arg) {
+            auto arg_id = omap.getValue(&arg);
+            auto id = omap.makeTempValue();
+
+            auto con_id = cg.add(ConstraintType::AddressOf, arg_id, id);
+            assert(con_id != ConstraintGraph::ConsID::invalid());
+            con_ids.emplace_back(con_id);
+          });
+          cfg.addUnusedFunction(omap.getFunction(&fcn), std::move(con_ids));
+        }
+      }
+
+      // If this function has a body
+      if (!fcn.isDeclaration() && !fcnIsMalloc(&fcn)) {
+        scanFcn(cg, cfg, omap, fcn);
+      // There is no body...
+      } else {
+        // FIXME:
+        // This used to create constraints for function arguments, but for
+        //   external calls... This caused issue with not being able to get the
+        //   UniversalValue set from Andersens... so I'm once again unsoundly
+        //   removing it
+        if (llvm::isa<llvm::PointerType>(
+              fcn.getFunctionType()->getReturnType())) {
+          auto ret_id = omap.getReturn(&fcn);
+          cg.add(ConstraintType::Copy, ret_id,
+              ObjectMap::UniversalValue);
+        }
+
+        // Add a universal constraint for each pointer arg
+        std::for_each(fcn.arg_begin(), fcn.arg_end(),
+            [&cg, &omap, &fcn](const llvm::Argument &arg) {
+          if (llvm::isa<llvm::PointerType>(arg.getType())) {
+            // Must deal with pointers passed into extrernal fcns
+            // We add a phony store object?, so we can uniquely refer
+            //   to this later
+            /*
+            auto st_id = omap.createPhonyID();
+            llvm::dbgs() << "Creating universal value arg pass to id: " << st_id
+                << "\n";
+            cg.add(ConstraintType::Store, st_id,
+              ObjectMap::UniversalValue, omap.getValue(&arg));
+            */
+
+            llvm::dbgs() << "fcn is: " << fcn.getName() << "\n";
+            llvm::dbgs() << "arg is: " << arg << "\n";
+
+            auto arg_id = omap.getValue(&arg);
+            // must deal w/ memory object passed into external fcns
+            cg.add(ConstraintType::Copy, arg_id,
+              ObjectMap::UniversalValue);
+          }
+        });
+
+        if (fcn.getFunctionType()->isVarArg()) {
+          auto st_id = omap.createPhonyID();
+          llvm::dbgs() << "Creating universal value vararg pass to id: " <<
+              st_id << "\n";
+          /*
+          cg.add(ConstraintType::Store, st_id,
+              ObjectMap::UniversalValue, omap.getVarArg(&fcn));
+          */
+          cg.add(ConstraintType::Copy, omap.getVarArg(&fcn),
+              ObjectMap::UniversalValue);
+        }
       }
     }
   }

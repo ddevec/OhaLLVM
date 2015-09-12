@@ -20,9 +20,11 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Debug.h"
 
-#include "include/Debug.h"
+
 #include "include/Andersens.h"
+#include "include/Debug.h"
 #include "include/ObjectMap.h"
+#include "include/lib/UnusedFunctions.h"
 
 using std::swap;
 
@@ -61,6 +63,11 @@ static llvm::RegisterPass<SpecSFS>
 X("SpecSFS", "Speculative Sparse Flow-sensitive Analysis", false, false);
 // static RegisterAnalysisGroup<AliasAnalysis> Y(X);
 
+void SpecSFS::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
+  usage.setPreservesAll();
+  usage.addRequired<UnusedFunctions>();
+}
+
 // runOnModule, the primary pass
 bool SpecSFS::runOnModule(llvm::Module &M) {
   // Set up our alias analysis
@@ -73,6 +80,9 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   CFG cfg;
   ObjectMap &omap = omap_;
 
+  const UnusedFunctions &unused_fcns =
+      getAnalysis<UnusedFunctions>();
+
   // Identify all of the objects in the source
   if (identifyObjects(omap, M)) {
     error("Identify objects failure!");
@@ -83,7 +93,7 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   // NOTE: This function will create a graph of all top-level variables,
   //   and a def/use mapping, but it will not fill in address-taken edges.
   //   Those will be populated later, once we have AUX info available.
-  if (createConstraints(cg, cfg, omap, M)) {
+  if (createConstraints(cg, cfg, omap, M, unused_fcns)) {
     error("CreateConstraints failure!");
   }
 
