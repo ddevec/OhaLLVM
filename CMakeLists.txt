@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 2.8)
 
 function(list_prefix var prefix)
 
-  set(list_var "")
+  set(listvar "")
 
   foreach(f ${ARGN})
     list(APPEND listvar "${prefix}/${f}")

@@ -1,25 +1,131 @@
+#function(create_dis TARGET_NAME)
+  #add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
+    #COMMAND   "llvm-dis"
+    #ARGS      "${TARGET_NAME}.bc"
+    #COMMENT   "Disassembling ${TARGET_NAME}"
+    #VERBATIM)
+#endfunction(create_dis)
 
 function(create_dis TARGET_NAME)
-
-  add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
-    COMMAND   "llvm-dis"
-    ARGS      "${TARGET_NAME}.bc"
-    COMMENT   "Disassembling ${TARGET_NAME}"
+  # message("Creating DIS: ${TARGET_NAME} : ${ARGN}")
+  add_custom_command(OUTPUT ${TARGET_NAME} POST_BUILD
+    COMMAND "clang" -S -Wno-format-security -O0 -g -emit-llvm ${ARGN} -o ${TARGET_NAME}
+    DEPENDS ${ARGN}
+    COMMENT  "Disassembling ${TARGET_NAME}"
     VERBATIM)
-
 endfunction(create_dis)
 
-function(create_test TARGET_NAME)
-  add_executable(${TARGET_NAME} ${ARGN})
+function(create_bc TARGET_NAME)
+  # message("Creating bc: ${TARGET_NAME} : ${ARGN}")
+  add_custom_command(OUTPUT ${TARGET_NAME} POST_BUILD
+    COMMAND "llvm-as" -o=${TARGET_NAME} ${ARGN}
+    DEPENDS ${ARGN}
+    VERBATIM)
+endfunction(create_bc)
 
-  create_dis(${TARGET_NAME})
+function(create_opt OPT_FLAG OPT_SUFFIX opt_output)
+
+  set(output_files "")
+
+  foreach(f ${ARGN})
+    set(f_nosuffix "")
+    strip_suffix(f_nosuffix ".bc" ${f})
+    set(output_var "${f_nosuffix}.${OPT_SUFFIX}.bc")
+
+
+    add_custom_command(OUTPUT ${output_var} POST_BUILD
+      COMMAND "opt" -${OPT_FLAG} ${f} > ${output_var}
+      DEPENDS ${f}
+      VERBATIM)
+
+    list(APPEND output_files ${output_var})
+  endforeach(f)
+
+  set(${opt_output} "${output_files}" PARENT_SCOPE)
+
+endfunction(create_opt)
+
+function(llvm_compile TARGET_NAME OPTS)
+
+  add_custom_target(${TARGET_NAME} ALL
+    COMMAND "clang" ${OPTS} -g -O0 -o ${TARGET_NAME} ${ARGN}
+    DEPENDS ${ARGN})
+
+endfunction(llvm_compile)
+
+function(append_suffix var appstr)
+  set(listvar "")
+
+  foreach(f ${ARGN})
+    list(APPEND listvar "${f}${appstr}")
+  endforeach(f)
+
+  set(${var} "${listvar}" PARENT_SCOPE)
+endfunction(append_suffix)
+
+function(strip_suffix var suffix)
+  set(listvar "")
+
+  foreach(f ${ARGN})
+    STRING(REGEX REPLACE "${suffix}$" "" VAR_WITHOUT_SUFFIX ${f})
+
+    list(APPEND listvar "${VAR_WITHOUT_SUFFIX}")
+  endforeach(f)
+
+  set(${var} "${listvar}" PARENT_SCOPE)
+endfunction(strip_suffix)
+
+function(create_test TARGET_NAME)
+  set(bc_list "")
+  foreach(arg ${ARGN})
+    set(base_name "")
+    set(asm_name "")
+    set(bc_name "")
+    set(source_file "${CMAKE_CURRENT_SOURCE_DIR}/${arg}")
+
+    strip_suffix(base_name ".c" ${arg})
+    append_suffix(asm_name ".ll" ${base_name})
+    append_suffix(bc_name ".bc" ${base_name})
+    # message("have arg: " ${arg})
+    # message("have source_file: " ${source_file})
+    # message("have base_name: " ${base_name})
+    # message("have asm_name: " ${asm_name})
+    # message("have bc_name: " ${bc_name})
+
+    # Convert the .c file to assembly
+    create_dis(${asm_name} ${source_file})
+
+    # Compile the assembly to bc
+    create_bc(${bc_name} ${asm_name})
+
+    list(APPEND bc_list ${bc_name})
+  endforeach(arg)
+
+  llvm_compile(${TARGET_NAME} "" ${bc_list})
 endfunction(create_test)
 
+function(create_profile TARGET_NAME)
+  set(bc_list "")
+  foreach(arg ${ARGN})
+    set(base_name "")
+    set(bc_name "")
 
-set(CMAKE_C_COMPILER "clang")
-#-Wno-format-security gets rid of some warnings due to the fakeness of my tests
-set(CMAKE_C_FLAGS "-Wno-format-security -O0 -emit-llvm")
-set(CMAKE_C_LINK_EXECUTABLE "llvm-ld -disable-opt <LINK_FLAGS> <OBJECTS> -o <TARGET>")
+    strip_suffix(base_name ".c" ${arg})
+    append_suffix(bc_name ".bc" ${base_name})
+
+    list(APPEND bc_list ${bc_name})
+  endforeach(arg)
+
+  set(path_prof_list "")
+
+  create_opt("insert-path-profiling" "path" path_prof_list ${bc_list})
+
+  set(prof_name "")
+  append_suffix(prof_name ".path" ${TARGET_NAME})
+
+  llvm_compile(${prof_name} "-lprofile_rt" ${path_prof_list})
+
+endfunction(create_test)
 
 create_test(simple_fcn
     simple_fcn.c
@@ -56,4 +162,6 @@ create_test(simple_universal_value
 create_test(test_echo_break
     test_echo_break.c
   )
+
+add_subdirectory(dce)
 

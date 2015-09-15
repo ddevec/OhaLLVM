@@ -774,6 +774,8 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
         auto node_id = omap.createPhonyID();
         auto dest_id = omap.getValue(FargI);
         auto src_id = omap.getValue(*ArgI);
+        dout << "Copy src: " << ValPrint(src_id) << " -> " << ValPrint(dest_id)
+          << "\n";
         cg.add(ConstraintType::Copy, node_id, src_id, dest_id);
       // But if its not a pointer type...
       } else {
@@ -1532,7 +1534,7 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
   // Functions {{{
   // Now that we've dealt with globals, move on to functions
   for (auto &fcn : M) {
-    if (!unused_fcns.isUsed(fcn)) {
+    if (unused_fcns.isUsed(fcn)) {
       auto obj_id = omap.getObject(&fcn);
       // graph.associateNode(obj_id, &fcn);
 
@@ -1547,7 +1549,7 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
 
   // Now we deal with the actual internals of functions
   for (auto &fcn : M) {
-    if (!unused_fcns.isUsed(fcn)) {
+    if (unused_fcns.isUsed(fcn)) {
       /* -- I'm pretty sure this stuff is out-of-date on my new implementation
       // If we return a pointer
       if (llvm::isa<llvm::PointerType>(fcn.getFunctionType()->getReturnType())) {

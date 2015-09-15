@@ -314,19 +314,34 @@ class DUG {
 
       // We add unnamed edges for top-level transitions
       // For each node, add an edge from its src() (if it exists) to it
+      // FIXME: Due to phony ids this doesn't work!!!
+      // Need to create a list of providers for each id, and go from there...
+      // First, map all ids to sources
+      std::multimap<ObjID, DUGid> dest_to_node;
       std::for_each(std::begin(DUG_), std::end(DUG_),
-          [this] (SEG<ObjID>::node_iter_type &upnode) {
+          [this, &dest_to_node] (SEG<ObjID>::node_iter_type &upnode) {
+        auto &node = llvm::cast<DUGNode>(*upnode);
+        dest_to_node.emplace(node.dest(), node.id());
+      });
+
+      std::for_each(std::begin(DUG_), std::end(DUG_),
+          [this, &dest_to_node] (SEG<ObjID>::node_iter_type &upnode) {
         auto pnode = upnode.get();
 
         auto &node = llvm::cast<DUGNode>(*pnode);
 
         // Add an incoming edge from src
-        auto src_node_set = DUG_.getNodesOrNull(node.src());
+        auto src_node_set = dest_to_node.equal_range(node.src());
         std::for_each(src_node_set.first, src_node_set.second,
             [this, &node] (std::pair<const ObjID, SEG<ObjID>::NodeID> &pr) {
-          llvm::dbgs() << "Adding edge: " << pr.second << " -> " << node.id() <<
-              "\n";
-          DUG_.addEdge<DUGEdge>(pr.second, node.id());
+          auto &pr_node = DUG_.getNode<DUGNode>(pr.second);
+          auto dest_id = pr_node.id();
+          // Don't add an edge to yourself!
+          if (dest_id != node.id()) {
+            llvm::dbgs() << "Adding edge: " << pr.second << " -> " <<
+                node.id() << "\n";
+            DUG_.addEdge<DUGEdge>(dest_id, node.id());
+          }
         });
 
         // StoreNode's also need an incoming edge from dest, because dest is the
@@ -334,13 +349,16 @@ class DUG {
         //   store must be recomputed on dest changes
         if (auto pst_node = llvm::dyn_cast<StoreNode>(pnode)) {
           auto dest_id = pst_node->dest();
-          auto dest_nodes = DUG_.getNodesOrNull(dest_id);
+          auto dest_nodes = dest_to_node.equal_range(dest_id);
 
           std::for_each(dest_nodes.first, dest_nodes.second,
               [this, &node] (std::pair<const ObjID, SEG<ObjID>::NodeID> &pr) {
-            llvm::dbgs() << "Adding store edge: " << pr.second << " -> "
-                << node.id() << "\n";
-            DUG_.addEdge<DUGEdge>(pr.second, node.id());
+            // Don't add an edge to yourself!
+            if (pr.second != node.id()) {
+              llvm::dbgs() << "Adding store edge: " << pr.second << " -> "
+                  << node.id() << "\n";
+              DUG_.addEdge<DUGEdge>(pr.second, node.id());
+            }
           });
         }
       });

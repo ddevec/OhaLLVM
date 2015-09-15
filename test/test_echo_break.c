@@ -6,54 +6,6 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-/*
-int main(void) {
-  char *res_ptr = NULL;
-  size_t res_size = 0;
-
-  for (;;) {
-    int c;
-    char buf[50+1];
-    int l1;
-
-    c = getc(stdin);
-
-    if (c == EOF) {
-      break;
-    }
-    
-    if (c == '\n' || c == ' ' || c == '\t') {
-      continue;
-    }
-
-    ungetc (c, stdin);
-
-    fscanf(stdin, "%50s", buf);
-
-    l1 = strlen(buf);
-
-    if (res_size == 0) {
-      res_size = l1 + 1;
-      res_ptr = (char *) malloc(res_size + 1);
-    } else {
-      res_size += l1 + 1;
-      res_ptr = (char *) realloc(res_ptr, res_size + 1);
-    }
-
-    if (res_ptr == NULL) {
-      res_size = 0;
-      break;
-    }
-
-    strcpy(res_ptr + res_size - (l1 + 1), buf);
-  }
-
-  printf("res_ptr is: %s\n", res_ptr);
-
-  return EXIT_SUCCESS;
-}
-*/
-
 const char *charset_aliases = NULL;
 
 #define ISSLASH(X) (X == '/')

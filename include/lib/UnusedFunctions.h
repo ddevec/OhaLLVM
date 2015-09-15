@@ -13,6 +13,7 @@
 #include "llvm/BasicBlock.h"
 #include "llvm/Analysis/BlockFrequencyInfo.h"
 #include "llvm/Analysis/PathProfileInfo.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
 
@@ -31,18 +32,34 @@ class UnusedFunctions : public llvm::ModulePass {
     }
 
     bool isUsed(const llvm::Function *fcn) const {
+      if (allUsed_) {
+        return true;
+      }
+
+      llvm::dbgs() << "Checkign for use: " << fcn->getName() << ": ";
       if (fcn->getName() == "main") {
+        llvm::dbgs() << "true\n";
         return true;
       }
       // We're conservative for external functions, which we don't profile
       if (fcn->hasExternalLinkage()) {
+        llvm::dbgs() << "true\n";
         return true;
       }
-      return visited.find(fcn) != std::end(visited);
+      bool ret =  visited_.find(fcn) != std::end(visited_);
+      if (ret) {
+        llvm::dbgs() << "true\n";
+      } else {
+        llvm::dbgs() << "false\n";
+      }
+
+      return ret;
     }
 
  private:
-    std::set<const llvm::Function *> visited;
+    std::set<const llvm::Function *> visited_;
+
+    bool allUsed_ = false;
 };
 
 #endif  // INCLUDE_LIB_UNUSEDFUNCTIONS_H__

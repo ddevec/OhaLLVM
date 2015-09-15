@@ -27,15 +27,21 @@ bool UnusedFunctions::runOnModule(llvm::Module &m) {
 
     if (PI.pathsRun() == 0) {
       unused_fcns++;
-      // llvm::dbgs() << "Found unused fcn: " << fcn.getName() << "!\n";
+      llvm::dbgs() << "Found unused fcn: " << fcn.getName() << "!\n";
     } else {
       used_fcns++;
-      visited.insert(&fcn);
+      visited_.insert(&fcn);
     }
   }
 
   llvm::dbgs() << "num used_fcns: " << used_fcns << "\n";
   llvm::dbgs() << "num unused_fcns: " << unused_fcns << "\n";
+
+
+  if (used_fcns == 0) {
+    llvm::dbgs() << "Found no used functions, assuming all are used...\n";
+    allUsed_ = true;
+  }
 
   return false;
 }
