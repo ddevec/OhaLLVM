@@ -23,6 +23,10 @@
 // DUG Static variable(s) {{{
 const CFG::CFGid CFG::CFGInit =
   CFG::CFGid(static_cast<int32_t>(CFG::CFGEnum::CFGInit));
+const CFG::CFGid CFG::CFGArgvBegin =
+  CFG::CFGid(static_cast<int32_t>(CFG::CFGEnum::CFGArgvBegin));
+const CFG::CFGid CFG::CFGArgvEnd =
+  CFG::CFGid(static_cast<int32_t>(CFG::CFGEnum::CFGArgvEnd));
 //}}}
 
 // DUG modification functions {{{

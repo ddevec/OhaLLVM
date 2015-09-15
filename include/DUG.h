@@ -338,8 +338,10 @@ class DUG {
           auto dest_id = pr_node.id();
           // Don't add an edge to yourself!
           if (dest_id != node.id()) {
+            /*
             llvm::dbgs() << "Adding edge: " << pr.second << " -> " <<
                 node.id() << "\n";
+            */
             DUG_.addEdge<DUGEdge>(dest_id, node.id());
           }
         });
@@ -347,16 +349,18 @@ class DUG {
         // StoreNode's also need an incoming edge from dest, because dest is the
         //   store address, not an actual top level variable, and therefore the
         //   store must be recomputed on dest changes
-        if (auto pst_node = llvm::dyn_cast<StoreNode>(pnode)) {
-          auto dest_id = pst_node->dest();
+        if (llvm::isa<StoreNode>(pnode) || llvm::isa<GlobalInitNode>(pnode)) {
+          auto dest_id = node.dest();
           auto dest_nodes = dest_to_node.equal_range(dest_id);
 
           std::for_each(dest_nodes.first, dest_nodes.second,
               [this, &node] (std::pair<const ObjID, SEG<ObjID>::NodeID> &pr) {
             // Don't add an edge to yourself!
             if (pr.second != node.id()) {
-              llvm::dbgs() << "Adding store edge: " << pr.second << " -> "
+              /*
+              llvm::dbgs() << "Adding glbl/store edge: " << pr.second << " -> "
                   << node.id() << "\n";
+              */
               DUG_.addEdge<DUGEdge>(pr.second, node.id());
             }
           });
@@ -728,6 +732,7 @@ class DUG {
 
      private:
         ObjectMap::ObjID realDest_;
+        bool first_ = true;
       //}}}
     };
 

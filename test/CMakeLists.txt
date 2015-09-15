@@ -104,7 +104,30 @@ function(create_test TARGET_NAME)
   llvm_compile(${TARGET_NAME} "" ${bc_list})
 endfunction(create_test)
 
-function(create_profile TARGET_NAME)
+function(create_edge_profile TARGET_NAME)
+  set(bc_list "")
+  foreach(arg ${ARGN})
+    set(base_name "")
+    set(bc_name "")
+
+    strip_suffix(base_name ".c" ${arg})
+    append_suffix(bc_name ".bc" ${base_name})
+
+    list(APPEND bc_list ${bc_name})
+  endforeach(arg)
+
+  set(edge_prof_list "")
+
+  create_opt("insert-edge-profiling" "edge" edge_prof_list ${bc_list})
+
+  set(prof_name "")
+  append_suffix(prof_name ".edge" ${TARGET_NAME})
+
+  llvm_compile(${prof_name} "-lprofile_rt" ${edge_prof_list})
+
+endfunction(create_path_profile)
+
+function(create_path_profile TARGET_NAME)
   set(bc_list "")
   foreach(arg ${ARGN})
     set(base_name "")
@@ -125,7 +148,7 @@ function(create_profile TARGET_NAME)
 
   llvm_compile(${prof_name} "-lprofile_rt" ${path_prof_list})
 
-endfunction(create_test)
+endfunction(create_path_profile)
 
 create_test(simple_fcn
     simple_fcn.c

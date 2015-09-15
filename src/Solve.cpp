@@ -294,48 +294,58 @@ void DUG::GlobalInitNode::process(DUG &dug, TopLevelPtsto &pts_top,
     Worklist &work) {
   llvm::dbgs() << "Process GlobalInit\n";
 
-  // bool change = false;
+  bool change = first_;
+  if (first_) {
+    first_ = false;
+    llvm::dbgs() << "Adding " << src() << ", or " <<
+        ValPrint(src()) << " to top " << dest() << ", or " <<
+        ValPrint(dest()) << "\n";
+    llvm::dbgs() << "Thats a node for: " << ValPrint(rep()) <<
+        "\n";
 
-  llvm::dbgs() << "Adding " << src() << ", or " <<
-      ValPrint(src()) << " to top " << dest() << ", or " <<
-      ValPrint(dest()) << "\n";
-  llvm::dbgs() << "Thats a node for: " << ValPrint(rep()) <<
-      "\n";
+    auto &dest_pts = pts_top.at(dest());
+    auto &src_pts = pts_top.at(src());
 
-  auto &dest_pts = pts_top.at(dest());
-  auto &src_pts = pts_top.at(src());
+    llvm::dbgs() << "dest_pts before: " << dest_pts << "\n";
+    llvm::dbgs() << "src_pts is: " << src_pts << "\n";
+    // change |= (dest_pts |= src_pts);
+    // llvm::dbgs() << "dest_pts after: " << dest_pts << "\n";
+    llvm::dbgs() << "in is: " << in() << "\n";
 
-  llvm::dbgs() << "dest_pts before: " << dest_pts << "\n";
-  dest_pts |= src_pts;
-  llvm::dbgs() << "dest_pts after: " << dest_pts << "\n";
+    assert(src_pts.size() == 1);
+    change |= in().assign(*std::begin(dest_pts), src_pts);
 
-  // If we updated the set, wake all of our successors
-  // For each successor partition
-  std::for_each(std::begin(part_succs_), std::end(part_succs_),
-      [this, &work, &dug, &dest_pts]
-      (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
-    auto part_id = part_pr.first;
-    auto dug_id = part_pr.second;
-    auto &nd = dug.getNode(dug_id);
-    bool c = false;
+    // If we updated the set, wake all of our successors
+    // For each successor partition
+    std::for_each(std::begin(part_succs_), std::end(part_succs_),
+        [this, &work, &dug, &dest_pts]
+        (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
+      auto part_id = part_pr.first;
+      auto dug_id = part_pr.second;
+      auto &nd = dug.getNode(dug_id);
+      bool c = false;
 
-    llvm::dbgs() << "nd.in is: " << nd.in() << "\n";
+      llvm::dbgs() << "nd.in is: " << nd.in() << "\n";
 
-    // This is a strong update, right?  We should be able to just set it...
-    c = nd.in().orPart(dest_pts, dug.objToPartMap(), part_id);
+      // This is a strong update, right?  We should be able to just set it...
+      // c = nd.in().orPart(dest_pts, dug.objToPartMap(), part_id);
+      c = nd.in().orPart(in(), dug.objToPartMap(), part_id);
 
-    if (c) {
-      llvm::dbgs() << "  Pushing part nd to work: " << nd.id() << "\n";
+      if (c) {
+        llvm::dbgs() << "  Pushing part nd to work: " << nd.id() << "\n";
+        work.push(&nd);
+      }
+    });
+  }
+
+  if (change) {
+    std::for_each(succ_begin(), succ_end(),
+        [&dug, &work](DUG::EdgeID id) {
+      auto &edge = dug.getEdge(id);
+      auto &nd = dug.getNode(edge.dest());
+      llvm::dbgs() << "  Pushing non-part nd to work: " << nd.id() << "\n";
       work.push(&nd);
-    }
-  });
-
-  std::for_each(succ_begin(), succ_end(),
-      [&dug, &work](DUG::EdgeID id) {
-    auto &edge = dug.getEdge(id);
-    auto &nd = dug.getNode(edge.dest());
-    llvm::dbgs() << "  Pushing non-part nd to work: " << nd.id() << "\n";
-    work.push(&nd);
-  });
+    });
+  }
 }
 

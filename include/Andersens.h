@@ -380,6 +380,10 @@ class Andersens : public llvm::ModulePass,
     UniversalSet = 0,
     NullPtr      = 1,
     NullObject   = 2,
+    ArgvObject   = 3,
+    ArgvValue    = 4,
+    LocaleObject = 5,
+    CTypeObject  = 6,
     NumberSpecialNodes
   };
 

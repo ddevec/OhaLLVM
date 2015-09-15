@@ -49,6 +49,10 @@ class ObjectMap {
       eIntValue,
       eUniversalValue,
       ePthreadSpecificValue,
+      eArgvValue,
+      eArgvObjectValue,
+      eLocaleObject,
+      eCTypeObject,
       eNumDefaultObjs
     } DefaultObjs;
 
@@ -58,6 +62,10 @@ class ObjectMap {
     static const ObjID IntValue;
     static const ObjID UniversalValue;
     static const ObjID PthreadSpecificValue;
+    static const ObjID ArgvValue;
+    static const ObjID ArgvObjectValue;
+    static const ObjID LocaleObject;
+    static const ObjID CTypeObject;
     //}}}
 
     // Internal classes {{{
@@ -269,6 +277,15 @@ class ObjectMap {
 
       return ret;
     }
+
+    ObjID createPhonyObjectID(const llvm::Value *val) {
+      auto ret = phonyIdGen_.next();
+
+      assert(phonyMap_.find(ret) == std::end(phonyMap_));
+      idToObj_.emplace(ret, val);
+
+      return ret;
+    }
     // Top level variable/node
     ObjID addValueFunction(const llvm::Value *val) {
       auto id = __do_add(val, valToID_, idToVal_);
@@ -321,6 +338,14 @@ class ObjectMap {
         o << "(UniversalValue)";
       } else if (id == PthreadSpecificValue) {
         o << "(PthreadSpecificValue)";
+      } else if (id == ArgvObjectValue) {
+        o << "(Argv object)";
+      } else if (id == ArgvValue) {
+        o << "(Argv)";
+      } else if (id == LocaleObject) {
+        o << "(locale)";
+      } else if (id == CTypeObject) {
+        o << "(ctype)";
       } else {
         llvm_unreachable("not special");
       }

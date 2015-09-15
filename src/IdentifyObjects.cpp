@@ -421,6 +421,22 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
     }
   }
 
+  if (F->getName() == "setlocale") {
+    cg.add(ConstraintType::AddressOf,
+        omap.getValue(CS.getInstruction()),
+        ObjectMap::LocaleObject);
+    return true;
+  }
+
+  if (F->getName() == "__ctype_b_loc") {
+    llvm::dbgs() << "Have call to __ctype_b_loc()\n";
+    llvm::dbgs() << "Addding addr of constriaint!!!\n";
+    cg.add(ConstraintType::AddressOf,
+        omap.getValue(CS.getInstruction()),
+        ObjectMap::CTypeObject);
+    return true;
+  }
+
   if (F->getName() == "realpath") {
     const llvm::FunctionType *FTy = F->getFunctionType();
     if (FTy->getNumParams() > 0 &&
@@ -544,7 +560,7 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
       auto glbl_id = omap.createPhonyID();
       // cg.add(ConstraintType::GlobalInit, glbl_id, dest_obj, dest);
       dout << "Adding global init for: " << ValPrint(dest) << "\n";
-      cg.add(ConstraintType::GlobalInit, glbl_id, dest, dest);
+      cg.add(ConstraintType::GlobalInit, glbl_id, dest, omap.getConstValue(C));
       /*
       cg.add(ConstraintType::GlobalInit, glbl_id,
           omap.getConstValue(C), dest);
@@ -760,8 +776,12 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
       auto node_id = omap.createPhonyID();
       auto arg_id = omap.getValue(*ArgI);
 
+      /*
       cg.add(ConstraintType::Copy, node_id, arg_id,
           ObjectMap::UniversalValue);
+      */
+      cg.add(ConstraintType::Copy, node_id, ObjectMap::UniversalValue,
+          arg_id);
       // The arg now aliases the universal value
       // omap.addObjAlias(ObjectMap::UniversalValue, arg_id);
     }
@@ -1198,9 +1218,16 @@ static void idExtractInst(ConstraintGraph &, ObjectMap &,
 //}}}
 
 // Instruction parsing helpers {{{
-static void processBlock(ConstraintGraph &cg, CFG &cfg,
+static void processBlock(const UnusedFunctions &unused_fcns,
+    ConstraintGraph &cg, CFG &cfg,
     std::map<const llvm::BasicBlock *, CFG::CFGid> &seen,
     ObjectMap &omap, const llvm::BasicBlock &BB, CFG::CFGid parent_id) {
+  // If this block is never used, don't process it! -- This includes adding
+  //   edges from/to parents
+  if (!unused_fcns.isUsed(&BB)) {
+    return;
+  }
+
   // Make sure we don't follow the same block twice
   auto seen_it = seen.find(&BB);
 
@@ -1229,6 +1256,8 @@ static void processBlock(ConstraintGraph &cg, CFG &cfg,
 
     // If this is main, we add an edge from glbl_init to it
     if (BB.getParent()->getName() == "main") {
+      // cfg.addEdge(CFG::CFGArgvBegin, CFG::ArgvEnd);
+      cfg.addEdge(CFG::CFGArgvEnd, next_id);
       cfg.addEdge(CFG::CFGInit, next_id);
     }
 
@@ -1314,13 +1343,14 @@ static void processBlock(ConstraintGraph &cg, CFG &cfg,
 
   // Process all of our successor blocks (In DFS order)
   std::for_each(succ_begin(&BB), succ_end(&BB),
-      [&cg, &cfg, &seen, &omap, next_id] (const llvm::BasicBlock *succBB) {
-    processBlock(cg, cfg, seen, omap, *succBB, next_id);
+      [&cg, &cfg, &seen, &omap, next_id, &unused_fcns]
+      (const llvm::BasicBlock *succBB) {
+    processBlock(unused_fcns, cg, cfg, seen, omap, *succBB, next_id);
   });
 }
 
-void scanFcn(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
-    const llvm::Function &fcn) {
+void scanFcn(const UnusedFunctions &unused_fcns, ConstraintGraph &cg, CFG &cfg,
+    ObjectMap &omap, const llvm::Function &fcn) {
   // SFS adds instructions to graph, we've already added them?
   //   So we don't need to worry about it
   // Add instructions to graph
@@ -1335,7 +1365,8 @@ void scanFcn(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
 
   // Now create constraints in depth first order:
   std::map<const llvm::BasicBlock *, CFG::CFGid> seen;
-  processBlock(cg, cfg, seen, omap, fcn.getEntryBlock(), CFG::CFGid::invalid());
+  processBlock(unused_fcns, cg, cfg, seen, omap,
+      fcn.getEntryBlock(), CFG::CFGid::invalid());
 }
 //}}}
 
@@ -1394,13 +1425,16 @@ bool SpecSFS::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
     // Args are also values...
     // Structures here? Yuck!
     std::for_each(fcn.arg_begin(), fcn.arg_end(),
-        [&omap](const llvm::Argument &arg) {
+        [&omap, &fcn](const llvm::Argument &arg) {
       if (llvm::isa<llvm::StructType>(arg.getType())) {
         llvm::dbgs() << "FIXME: Possibly missed ptsto in arg struct???\n";
       }
 
       if (llvm::isa<llvm::PointerType>(arg.getType())) {
         omap.addValue(&arg);
+        if (fcn.getName() == "main") {
+          omap.addObject(&arg);
+        }
       }
     });
 
@@ -1466,6 +1500,16 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
   // Universal value
   cg.add(ConstraintType::AddressOf, ObjectMap::UniversalValue,
       ObjectMap::UniversalValue);
+
+  // Constraints for argv
+  // The argv value always points to the argv object
+  cg.add(ConstraintType::AddressOf, ObjectMap::ArgvValue,
+      ObjectMap::ArgvObjectValue);
+
+  // Constraints for ctype values
+  cg.add(ConstraintType::AddressOf, ObjectMap::CTypeObject,
+      ObjectMap::CTypeObject);
+
 
   // FIXME: The SFS component does not know the predecessors of UniversalValue,
   //   as Andersens does not provide them...  So I (unsoundly) removed it for
@@ -1534,6 +1578,7 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
   // Functions {{{
   // Now that we've dealt with globals, move on to functions
   for (auto &fcn : M) {
+    // NOTE: In the absense of profile info isUsed reports conservatively
     if (unused_fcns.isUsed(fcn)) {
       auto obj_id = omap.getObject(&fcn);
       // graph.associateNode(obj_id, &fcn);
@@ -1549,32 +1594,10 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
 
   // Now we deal with the actual internals of functions
   for (auto &fcn : M) {
+    // NOTE: In the absense of profile info isUsed reports conservatively
     if (unused_fcns.isUsed(fcn)) {
-      /* -- I'm pretty sure this stuff is out-of-date on my new implementation
-      // If we return a pointer
-      if (llvm::isa<llvm::PointerType>(fcn.getFunctionType()->getReturnType())) {
-        // Create a node for this fcn's return
-      }
-      // Set up our vararg node
-      if (fcn.getFunctionType()->isVarArg()) {
-      }
-
-      // Update the value for each arg
-      std::for_each(fcn.arg_begin(), fcn.arg_end(),
-          [&cg, &omap](const llvm::Argument &arg) {
-        if (llvm::isa<llvm::PointerType>(arg.getType())) {
-          getValueUpdate(cg, omap, &arg);
-        }
-      });
-
-      // ddevec - I assume that this function is indirect, so it shouldn't be
-      //   linked to the universal value
-      // If this function isn't used locally
-      if (!fcn.hasLocalLinkage() || analyzeUsesOfFunction(fcn)) {
-        addConstraintsForNonInternalLinkage(graph, omap, fcn);
-      }
-      */
-
+      // If this function may be used externally -- aka I can't track the uses
+      //   of it
       if (!fcn.hasLocalLinkage() || analyzeUsesOfFunction(fcn)) {
         // If it appears that the function is unused, I'm going to add some fake
         // constraints for the arguments, to stop HU from combining them
@@ -1600,7 +1623,36 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
 
       // If this function has a body
       if (!fcn.isDeclaration() && !fcnIsMalloc(&fcn)) {
-        scanFcn(cg, cfg, omap, fcn);
+        // Any arguments for main have their own objects...
+        if (fcn.getName() == "main") {
+          std::for_each(fcn.arg_begin(), fcn.arg_end(),
+              [&cg, &omap, &cfg](const llvm::Argument &arg) {
+            if (llvm::isa<llvm::PointerType>(arg.getType())) {
+              // NOTE: We don't have to add value for type because structures
+              //   cannot be passed into main... I think
+              // NOTE: We also need to add a new phony object which
+              //   argv[i]/envp[i] pts to
+              auto obj_id = omap.getObject(&arg);
+              auto val_id = omap.getValue(&arg);
+              cg.add(ConstraintType::AddressOf, val_id, obj_id);
+
+              // We store the data at argv into our argv** ptr
+              auto st_id = omap.createPhonyID();
+              cg.add(ConstraintType::Store, st_id,
+                ObjectMap::ArgvValue, val_id);
+
+              auto node_id = cfg.nextNode();
+
+              cfg.addEdge(CFG::CFGArgvBegin, node_id);
+
+              addCFGStore(cfg, &node_id, st_id);
+
+              cfg.addEdge(node_id, CFG::CFGArgvEnd);
+            }
+          });
+        }
+
+        scanFcn(unused_fcns, cg, cfg, omap, fcn);
       // There is no body...
       } else {
         // FIXME:
@@ -1622,13 +1674,6 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
             // Must deal with pointers passed into extrernal fcns
             // We add a phony store object?, so we can uniquely refer
             //   to this later
-            /*
-            auto st_id = omap.createPhonyID();
-            llvm::dbgs() << "Creating universal value arg pass to id: " << st_id
-                << "\n";
-            cg.add(ConstraintType::Store, st_id,
-              ObjectMap::UniversalValue, omap.getValue(&arg));
-            */
 
             llvm::dbgs() << "fcn is: " << fcn.getName() << "\n";
             llvm::dbgs() << "arg is: " << arg << "\n";
@@ -1644,10 +1689,6 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
           auto st_id = omap.createPhonyID();
           llvm::dbgs() << "Creating universal value vararg pass to id: " <<
               st_id << "\n";
-          /*
-          cg.add(ConstraintType::Store, st_id,
-              ObjectMap::UniversalValue, omap.getVarArg(&fcn));
-          */
           cg.add(ConstraintType::Copy, omap.getVarArg(&fcn),
               ObjectMap::UniversalValue);
         }

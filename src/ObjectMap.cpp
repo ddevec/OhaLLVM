@@ -28,6 +28,21 @@ const ObjectMap::ObjID ObjectMap::PthreadSpecificValue =
     ObjectMap::ObjID(
         static_cast<int32_t>(ObjectMap::ObjEnum::ePthreadSpecificValue));
 
+const ObjectMap::ObjID ObjectMap::ArgvValue =
+    ObjectMap::ObjID(
+        static_cast<int32_t>(ObjectMap::ObjEnum::eArgvValue));
+
+const ObjectMap::ObjID ObjectMap::ArgvObjectValue =
+    ObjectMap::ObjID(
+        static_cast<int32_t>(ObjectMap::ObjEnum::eArgvObjectValue));
+
+const ObjectMap::ObjID ObjectMap::LocaleObject =
+    ObjectMap::ObjID(
+        static_cast<int32_t>(ObjectMap::ObjEnum::eLocaleObject));
+
+const ObjectMap::ObjID ObjectMap::CTypeObject =
+    ObjectMap::ObjID(
+        static_cast<int32_t>(ObjectMap::ObjEnum::eCTypeObject));
 
 ObjectMap::ObjectMap() {
   for (int32_t i = 0; i < static_cast<int32_t>(ObjEnum::eNumDefaultObjs);

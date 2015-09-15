@@ -84,14 +84,22 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
 
   special_aux.emplace(ObjectMap::NullValue, Andersens::NullPtr);
   special_aux.emplace(ObjectMap::NullObjectValue, Andersens::NullObject);
+  special_aux.emplace(ObjectMap::ArgvValue, Andersens::ArgvValue);
+  special_aux.emplace(ObjectMap::ArgvObjectValue, Andersens::ArgvObject);
   special_aux.emplace(ObjectMap::IntValue, aux.IntNode);
   special_aux.emplace(ObjectMap::UniversalValue, Andersens::UniversalSet);
+  special_aux.emplace(ObjectMap::LocaleObject, Andersens::LocaleObject);
+  special_aux.emplace(ObjectMap::CTypeObject, Andersens::CTypeObject);
   special_aux.emplace(ObjectMap::PthreadSpecificValue, aux.PthreadSpecificNode);
 
   aux_to_obj.emplace(Andersens::NullPtr, ObjectMap::NullValue);
   aux_to_obj.emplace(Andersens::NullObject, ObjectMap::NullObjectValue);
+  aux_to_obj.emplace(Andersens::ArgvValue, ObjectMap::ArgvValue);
+  aux_to_obj.emplace(Andersens::ArgvObject, ObjectMap::ArgvObjectValue);
   aux_to_obj.emplace(aux.IntNode, ObjectMap::IntValue);
   aux_to_obj.emplace(Andersens::UniversalSet, ObjectMap::UniversalValue);
+  aux_to_obj.emplace(Andersens::LocaleObject, ObjectMap::LocaleObject);
+  aux_to_obj.emplace(Andersens::CTypeObject, ObjectMap::CTypeObject);
   aux_to_obj.emplace(aux.PthreadSpecificNode, ObjectMap::PthreadSpecificValue);
 
   std::for_each(std::begin(aux_val_nodes), std::end(aux_val_nodes),
@@ -125,19 +133,20 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
     ObjectMap::ObjID val_id;
     llvm::dbgs() << "Creating part_nodes for obj_id " << pr.first << " : " <<
         ValPrint(pr.first) << "\n";;
-    if (llvm::isa<DUG::StoreNode>(node)) {
-      // val is dest for stores...
+    if (llvm::isa<DUG::StoreNode>(node) ||
+        llvm::isa<DUG::GlobalInitNode>(node)) {
+      // val is dest for stores and global inits...
       val_id = node.dest();
-      llvm::dbgs() << "  Have store node: " << node.rep() << " : " <<
+      llvm::dbgs() << "  Have store/glblinit node: " << node.rep() << " : " <<
         ValPrint(node.rep()) << "\n";;
-      llvm::dbgs() << "    store dest: " << node.dest() << " : " <<
+      llvm::dbgs() << "    dest: " << node.dest() << " : " <<
         ValPrint(node.dest()) << "\n";;
-      llvm::dbgs() << "    store src: " << node.src() << " : " <<
+      llvm::dbgs() << "    src: " << node.src() << " : " <<
         ValPrint(node.src()) << "\n";;
     } else {
       llvm::dbgs() << "node_id is: " << node.id() << "\n";
-      assert(llvm::isa<DUG::LoadNode>(node) ||
-        llvm::isa<DUG::GlobalInitNode>(node));
+      assert(llvm::isa<DUG::LoadNode>(node));
+
       // val is src for gv and loads
       val_id = node.src();
     }
@@ -423,10 +432,13 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
     // Now, calculate ssa form for this graph:
     auto part_ssa = computeSSA(part_graph);
 
+    /* -- ddevec - Dot file debugging... I'm disabling due to the insane number
+     * of files/time it takes
     std::string part_file("part_ssa");
     part_file += std::to_string(part_id.val());
     part_file += ".dot";
     part_ssa.printDotFile(part_file, *g_omap);
+    */
 
     // Here we group the partSSA info, indicating which DUG nodes are affected
     //   by this partition

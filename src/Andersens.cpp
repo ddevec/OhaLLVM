@@ -245,20 +245,37 @@ void Andersens::IdentifyObjects(Module &M) {
   assert(NumObjects == NullObject && "Something changed!");
   ++NumObjects;
 
+  // Object #3 always represents the argv object (the object pointed to by argv
+  // in main)
+  assert(NumObjects == ArgvObject && "Something changed!");
+  ++NumObjects;
+
+  // Object #4 always represents the argv value
+  assert(NumObjects == ArgvValue && "Something changed!");
+  ++NumObjects;
+
+  // Object #4 always represents the argv value
+  assert(NumObjects == LocaleObject && "Something changed!");
+  ++NumObjects;
+
+  // Object #4 always represents the argv value
+  assert(NumObjects == CTypeObject && "Something changed!");
+  ++NumObjects;
+
   // its place may change
-  IntNode = 3;
+  IntNode = 7;
   // Object #3 always represents the int object (all ints)
   assert(NumObjects == IntNode && "Something changed!");
   ++NumObjects;
 
   // its place may change
-  AggregateNode = 4;
+  AggregateNode = 8;
   // Object #4 always represents the aggregate object (all aggregates)
   assert(NumObjects == AggregateNode && "Something changed!");
   ++NumObjects;
 
   // its place may change
-  PthreadSpecificNode = 5;
+  PthreadSpecificNode = 9;
   // Object #4 always represents the pthread_specific object
   assert(NumObjects == PthreadSpecificNode && "Something changed!");
   ++NumObjects;
@@ -290,6 +307,13 @@ void Andersens::IdentifyObjects(Module &M) {
       if (isa<PointerType>(I->getType())) {
         ValueNodes[I] = NumObjects++;
       }
+      // ddevec -- addition
+      if (F->getName() == "main") {
+        if (isa<PointerType>(I->getType())) {
+          ObjectNodes[I] = NumObjects++;
+        }
+      }
+      // ddevec -- end addiiton
     }
     DEBUG(errs() << "Function info: " << F->getName() << " ObjectNode: " <<
       ObjectNodes[F] << " ValueNode: " << ValueNodes[F] << "\n");
@@ -509,6 +533,24 @@ bool Andersens::AddConstraintsForExternalCall(CallSite CS, Function *F) {
     }
   }
 
+  if (F->getName() == "getlocale") {
+    const FunctionType *FTy = F->getFunctionType();
+    if (FTy->getNumParams() > 0 &&
+        isa<PointerType>(FTy->getParamType(1))) {
+      Constraints.push_back(Constraint(Constraint::AddressOf,
+            getNode(CS.getInstruction()),
+            LocaleObject));
+      return true;
+    }
+  }
+
+  if (F->getName() == "__ctype_b_loc") {
+    Constraints.push_back(Constraint(Constraint::AddressOf,
+          getNode(CS.getInstruction()),
+          CTypeObject));
+    return true;
+  }
+
   if (F->getName() == "realpath") {
     const FunctionType *FTy = F->getFunctionType();
     if (FTy->getNumParams() > 0 &&
@@ -654,6 +696,12 @@ void Andersens::CollectConstraints(Module &M) {
   Constraints.push_back(Constraint(Constraint::Store, UniversalSet,
                                    UniversalSet));
 
+  // Setup argv
+  Constraints.push_back(Constraint(Constraint::AddressOf, ArgvValue,
+        ArgvObject));
+  Constraints.push_back(Constraint(Constraint::AddressOf, CTypeObject,
+        CTypeObject));
+
   // Next, the null pointer points to the null object.
   Constraints.push_back(Constraint(Constraint::AddressOf, NullPtr, NullObject));
 
@@ -714,6 +762,20 @@ void Andersens::CollectConstraints(Module &M) {
       // Scan the function body, creating a memory object for each heap/stack
       // allocation in the body of the function and a node to represent all
       // pointer values defined by instructions and used as operands.
+      // ddevec -- addition
+      if (F->getName() == "main") {
+        for (Function::arg_iterator I = F->arg_begin(), E = F->arg_end();
+             I != E; ++I) {
+          if (isa<PointerType>(I->getType())) {
+            Constraints.push_back(Constraint(Constraint::AddressOf, getNode(I),
+                  getObject(I)));
+
+            Constraints.push_back(Constraint(Constraint::Store,
+                  getNode(I), ArgvValue));
+          }
+        }
+      }
+      // ddevec -- addition end
       visit(F);
     } else {
       // External functions that return pointers return the universal set.
@@ -2570,6 +2632,18 @@ void Andersens::PrintNode(const Node *N) const {
     return;
   } else if (N == &GraphNodes[NullObject]) {
     errs() << "<null>";
+    return;
+  } else if (N == &GraphNodes[ArgvObject]) {
+    errs() << "<argv object>";
+    return;
+  } else if (N == &GraphNodes[ArgvValue]) {
+    errs() << "<argv>";
+    return;
+  } else if (N == &GraphNodes[LocaleObject]) {
+    errs() << "<locale>";
+    return;
+  } else if (N == &GraphNodes[CTypeObject]) {
+    errs() << "<ctype>";
     return;
   } else if (N == &GraphNodes[IntNode]) {
     errs() << "<int>";

@@ -24,10 +24,14 @@ class CFG {
     // Constant CFGid values {{{
     enum class CFGEnum : int32_t {
       CFGInit = 0,
+      CFGArgvBegin = 1,
+      CFGArgvEnd = 2,
       eLastEnumValue
     };
 
     static const CFGid CFGInit;
+    static const CFGid CFGArgvBegin;
+    static const CFGid CFGArgvEnd;
     //}}}
 
     // Graph types {{{

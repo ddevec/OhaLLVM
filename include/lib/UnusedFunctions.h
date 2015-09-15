@@ -36,13 +36,13 @@ class UnusedFunctions : public llvm::ModulePass {
         return true;
       }
 
-      llvm::dbgs() << "Checkign for use: " << fcn->getName() << ": ";
+      llvm::dbgs() << "Checking for use: " << fcn->getName() << ": ";
       if (fcn->getName() == "main") {
         llvm::dbgs() << "true\n";
         return true;
       }
       // We're conservative for external functions, which we don't profile
-      if (fcn->hasExternalLinkage()) {
+      if (fcn->isDeclaration()) {
         llvm::dbgs() << "true\n";
         return true;
       }
@@ -56,8 +56,27 @@ class UnusedFunctions : public llvm::ModulePass {
       return ret;
     }
 
+    bool isUsed(const llvm::BasicBlock *bb) const {
+      if (allUsed_) {
+        return true;
+      }
+
+      llvm::dbgs() << "Checking for BB use: " << bb->getName() << ": ";
+
+      bool ret =  visitedBB_.find(bb) != std::end(visitedBB_);
+
+      if (ret) {
+        llvm::dbgs() << "true\n";
+      } else {
+        llvm::dbgs() << "false\n";
+      }
+
+      return ret;
+    }
+
  private:
     std::set<const llvm::Function *> visited_;
+    std::set<const llvm::BasicBlock *>visitedBB_;
 
     bool allUsed_ = false;
 };
