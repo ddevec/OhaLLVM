@@ -19,6 +19,7 @@
 #include "llvm/Function.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Analysis/AliasAnalysis.h"
 
 
 #include "include/Andersens.h"
@@ -72,7 +73,7 @@ void SpecSFS::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
 bool SpecSFS::runOnModule(llvm::Module &M) {
   // Set up our alias analysis
   // -- This is required for the llvm AliasAnalysis interface
-  // InitializeAliasAnalysis(this);
+  InitializeAliasAnalysis(this);
 
   // Clear the def-use graph
   // It should already be cleared, but I'm paranoid
@@ -202,4 +203,21 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   // We do not modify code, ever!
   return false;
 }
+
+llvm::AliasAnalysis::AliasResult SpecSFS::alias(const Location &L1,
+                                            const Location &L2) {
+  auto &pts1 = pts_top_.at(omap_.getValue(L1.Ptr));
+  auto &pts2 = pts_top_.at(omap_.getValue(L2.Ptr));
+
+  // Check to see if the two pointers are known to not alias.  They don't alias
+  // if their points-to sets do not intersect.
+  if (!pts1.insersectsIgnoring(pts2, ObjectMap::NullObjectValue)) {
+    return NoAlias;
+  }
+
+  // ddevec - FIXME: Changed this because we can't call "alisas" from a non
+  //   "alias analysis"
+  return AliasAnalysis::alias(L1, L2);
+}
+
 

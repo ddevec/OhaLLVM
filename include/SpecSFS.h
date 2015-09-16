@@ -31,6 +31,16 @@ class SpecSFS : public llvm::ModulePass,
 
   void getAnalysisUsage(llvm::AnalysisUsage &usage) const;
 
+  virtual void *getAdjustedAnalysisPointer(llvm::AnalysisID PI) {
+    if (PI == &AliasAnalysis::ID) {
+      return reinterpret_cast<llvm::AliasAnalysis *>(this);
+    }
+    return this;
+  }
+
+  AliasAnalysis::AliasResult alias(const AliasAnalysis::Location &L1,
+      const AliasAnalysis::Location &L2);
+
  private:
   // The functions which do the primary (high-level) work of SFS
 

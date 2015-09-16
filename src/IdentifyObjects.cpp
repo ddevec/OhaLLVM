@@ -421,6 +421,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
     }
   }
 
+  // Locale functions
   if (F->getName() == "setlocale") {
     cg.add(ConstraintType::AddressOf,
         omap.getValue(CS.getInstruction()),
@@ -428,6 +429,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
     return true;
   }
 
+  // CType Functions
   if (F->getName() == "__ctype_b_loc") {
     llvm::dbgs() << "Have call to __ctype_b_loc()\n";
     llvm::dbgs() << "Addding addr of constriaint!!!\n";

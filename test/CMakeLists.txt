@@ -125,7 +125,7 @@ function(create_edge_profile TARGET_NAME)
 
   llvm_compile(${prof_name} "-lprofile_rt" ${edge_prof_list})
 
-endfunction(create_path_profile)
+endfunction(create_edge_profile)
 
 function(create_path_profile TARGET_NAME)
   set(bc_list "")

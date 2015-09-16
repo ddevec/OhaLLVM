@@ -120,6 +120,34 @@ class PtstoSet {
       return ret;
     }
 
+    bool insersectsIgnoring(PtstoSet &rhs, ObjectMap::ObjID ignore) {
+      bool ret = false;
+
+      bool lhs_add = ptsto_.test(ignore.val());
+      bool rhs_add = rhs.ptsto_.test(ignore.val());
+
+      if (lhs_add) {
+        ptsto_.reset(ignore.val());
+      }
+
+      if (rhs_add) {
+        rhs.ptsto_.reset(ignore.val());
+      }
+
+      ret = ptsto_.intersects(rhs.ptsto_);
+
+      if (lhs_add) {
+        ptsto_.set(ignore.val());
+      }
+
+      if (rhs_add) {
+        rhs.ptsto_.set(ignore.val());
+      }
+
+
+      return ret;
+    }
+
     size_t size() const {
       return ptsto_.count();
     }

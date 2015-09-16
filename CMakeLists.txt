@@ -18,7 +18,7 @@ function(add_cpplint_headers TARGET_NAME)
   list_prefix(lint_names ${PROJECT_SOURCE_DIR}/include ${ARGN})
 
   add_custom_command(TARGET ${TARGET_NAME} 
-    PRE_BUILD
+    PRE_LINK
     COMMAND "/home/ddevec/prefix/bin/cpplint.py" 
     ARGS    "--counting=detailed"
             "--extensions=cpp,h"
@@ -36,7 +36,7 @@ function(add_cpplint_target TARGET_NAME)
   list_prefix(lint_names ${CMAKE_CURRENT_SOURCE_DIR} ${ARGN})
 
   add_custom_command(TARGET ${TARGET_NAME} 
-    PRE_BUILD
+    PRE_LINK
     COMMAND "/home/ddevec/prefix/bin/cpplint.py" 
     ARGS    "--counting=detailed"
             "--extensions=cpp,h"
