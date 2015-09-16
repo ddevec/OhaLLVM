@@ -182,20 +182,20 @@ class DUG {
         auto src = cons.src();
         auto offs = cons.offs();
 
-        llvm::dbgs() << "Adding node to DUG for obj_id: " << dest << ": " <<
+        dout << "Adding node to DUG for obj_id: " << dest << ": " <<
             ValPrint(dest) << "\n";
 
-        llvm::dbgs() << "  node src_obj_id: " << src << ": " <<
+        dout << "  node src_obj_id: " << src << ": " <<
             ValPrint(src) << "\n";
 
         switch (cons.type()) {
           case ConstraintType::AddressOf:
             {
-              llvm::dbgs() << "  node is AddressOf\n";
+              dout << "  node is AddressOf\n";
               // Add AllocNode
               bool strong = cons.strong();
               auto ret = DUG_.addNode<AllocNode>(dest, src, offs, strong);
-              llvm::dbgs() << "  DUGid is " << ret->second << "\n";
+              dout << "  DUGid is " << ret->second << "\n";
 
               // FIXME: Should store strong information in ptsset for top lvl
               //    variables...
@@ -216,13 +216,13 @@ class DUG {
             // Make a phony dest for this store:
             {
               auto &stcons = llvm::cast<NodeConstraint>(cons);
-              llvm::dbgs() << "  node is Store\n";
+              dout << "  node is Store\n";
               auto st_id = stcons.nodeId();
-              llvm::dbgs() << "  adding for store: (" << st_id << ") "
+              dout << "  adding for store: (" << st_id << ") "
                 << ValPrint(st_id) << "\n";
               auto ret =
                 DUG_.addNode<StoreNode>(st_id, dest, src, offs);
-              llvm::dbgs() << "  DUGid is " << ret->second << "\n";
+              dout << "  DUGid is " << ret->second << "\n";
               auto strong_ret = strongCons.emplace(st_id, cons.strong());
               assert(strong_ret.second);
             }
@@ -230,18 +230,18 @@ class DUG {
           case ConstraintType::Load:
             {
               auto &ldcons = llvm::cast<NodeConstraint>(cons);
-              llvm::dbgs() << "  node is Load\n";
+              dout << "  node is Load\n";
               auto ld_id = ldcons.nodeId();
-              llvm::dbgs() << "  Actual load_id is: (" << ld_id << ") " <<
+              dout << "  Actual load_id is: (" << ld_id << ") " <<
                 ValPrint(ld_id) << "\n";
               auto ret = DUG_.addNode<LoadNode>(ld_id, dest, src, offs);
-              llvm::dbgs() << "  Confirming load node!\n";
+              dout << "  Confirming load node!\n";
               auto &nd = DUG_.getNode<LoadNode>(ret->second);
-              llvm::dbgs() << "    dest is: " << ValPrint(nd.dest())
+              dout << "    dest is: " << ValPrint(nd.dest())
                   << "\n";
-              llvm::dbgs() << "    src is: " << ValPrint(nd.src())
+              dout << "    src is: " << ValPrint(nd.src())
                   << "\n";
-              llvm::dbgs() << "  DUGid is " << ret->second << "\n";
+              dout << "  DUGid is " << ret->second << "\n";
               strongCons.emplace(ld_id, cons.strong());
               // Just trust me on this one...
               // We don't enforce this... assert(strong_ret.second);
@@ -250,18 +250,18 @@ class DUG {
           case ConstraintType::GlobalInit:
             {
               auto &glblcons = llvm::cast<NodeConstraint>(cons);
-              llvm::dbgs() << "  node is GlobalInit\n";
+              dout << "  node is GlobalInit\n";
 
               auto glbl_id = glblcons.nodeId();
-              llvm::dbgs() << "  Actual glbl_id is: (" << glbl_id << ")\n";
+              dout << "  Actual glbl_id is: (" << glbl_id << ")\n";
               auto ret = DUG_.addNode<GlobalInitNode>(glbl_id, dest, src, offs);
-              llvm::dbgs() << "  Confirming GlobalInit node!\n";
+              dout << "  Confirming GlobalInit node!\n";
               auto &nd = DUG_.getNode<GlobalInitNode>(ret->second);
-              llvm::dbgs() << "    dest is: " << ValPrint(nd.dest())
+              dout << "    dest is: " << ValPrint(nd.dest())
                   << "\n";
-              llvm::dbgs() << "    src is: " << ValPrint(nd.src())
+              dout << "    src is: " << ValPrint(nd.src())
                   << "\n";
-              llvm::dbgs() << "  DUGid is " << ret->second << "\n";
+              dout << "  DUGid is " << ret->second << "\n";
               auto strong_ret = strongCons.emplace(glbl_id, cons.strong());
               assert(strong_ret.second);
             }
@@ -269,15 +269,15 @@ class DUG {
           case ConstraintType::Copy:
             {
               if (auto ncons = llvm::dyn_cast<NodeConstraint>(&cons)) {
-                llvm::dbgs() << "  node is Copy\n";
+                dout << "  node is Copy\n";
                 auto ret = DUG_.addNode<CopyNode>(ncons->nodeId(), dest, src,
                     offs);
-                llvm::dbgs() << "  DUGid is " << ret->second << "\n";
+                dout << "  DUGid is " << ret->second << "\n";
                 strongCons.emplace(dest, cons.strong());
               } else {
-                llvm::dbgs() << "  node is Copy\n";
+                dout << "  node is Copy\n";
                 auto ret = DUG_.addNode<CopyNode>(dest, src, offs);
-                llvm::dbgs() << "  DUGid is " << ret->second << "\n";
+                dout << "  DUGid is " << ret->second << "\n";
                 strongCons.emplace(dest, cons.strong());
               }
             }
@@ -339,7 +339,7 @@ class DUG {
           // Don't add an edge to yourself!
           if (dest_id != node.id()) {
             /*
-            llvm::dbgs() << "Adding edge: " << pr.second << " -> " <<
+            dout << "Adding edge: " << pr.second << " -> " <<
                 node.id() << "\n";
             */
             DUG_.addEdge<DUGEdge>(dest_id, node.id());
@@ -358,7 +358,7 @@ class DUG {
             // Don't add an edge to yourself!
             if (pr.second != node.id()) {
               /*
-              llvm::dbgs() << "Adding glbl/store edge: " << pr.second << " -> "
+              dout << "Adding glbl/store edge: " << pr.second << " -> "
                   << node.id() << "\n";
               */
               DUG_.addEdge<DUGEdge>(pr.second, node.id());

@@ -172,12 +172,13 @@ class CFG {
         }
 
         void debug_defs() const {
-          llvm::dbgs() << "  defs.size is: " << defs_.size() << "\n";
-          llvm::dbgs() << "  defs are:";
-          for (auto id : defs_) {
-            llvm::dbgs() << " " << id;
-          }
-          llvm::dbgs() << "\n";
+          if_debug(
+            llvm::dbgs() << "  defs.size is: " << defs_.size() << "\n";
+            llvm::dbgs() << "  defs are:";
+            for (auto id : defs_) {
+              llvm::dbgs() << " " << id;
+            }
+            llvm::dbgs() << "\n");
         }
 
         bool removeUse(ObjectMap::ObjID use_id) {
@@ -219,12 +220,13 @@ class CFG {
         }
 
         void debug_uses() const {
-          llvm::dbgs() << "  Uses.size is: " << uses_.size() << "\n";
-          llvm::dbgs() << "  Uses are:";
-          for (auto id : uses_) {
-            llvm::dbgs() << " " << id;
-          }
-          llvm::dbgs() << "\n";
+          if_debug(
+            llvm::dbgs() << "  Uses.size is: " << uses_.size() << "\n";
+            llvm::dbgs() << "  Uses are:";
+            for (auto id : uses_) {
+              llvm::dbgs() << " " << id;
+            }
+            llvm::dbgs() << "\n");
         }
         //}}}
 

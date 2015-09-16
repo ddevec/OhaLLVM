@@ -15,7 +15,6 @@
 #include <utility>
 #include <vector>
 
-#define SPECSFS_DEBUG
 #include "include/Debug.h"
 
 #include "include/SpecSFS.h"
@@ -419,17 +418,17 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
       (SEG<CFG::CFGid>::node_iter_type &pnode) {
     CFG::Node &cfg_node = llvm::cast<CFG::Node>(*pnode);
 
-    llvm::dbgs() << "node eval: "<< cfg_node.extId() << "\n";
+    dout << "node eval: "<< cfg_node.extId() << "\n";
 
     std::vector<std::pair<ObjectMap::ObjID, ObjectMap::ObjID>> remap;
     std::for_each(cfg_node.uses_begin(), cfg_node.uses_end(),
         [&load_remap, &remap] (const ObjectMap::ObjID &obj_id) {
-      llvm::dbgs() << "obj_id eval\n";
+      dout << "obj_id eval\n";
       auto it = load_remap.find(obj_id);
 
       if (it != std::end(load_remap)) {
         if (obj_id != it->second) {
-          llvm::dbgs() << "  Adding remap: (" << obj_id << ", " << it->second <<
+          dout << "  Adding remap: (" << obj_id << ", " << it->second <<
             ")\n";
           remap.emplace_back(obj_id, it->second);
         }
@@ -441,7 +440,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
       cfg_node.removeUse(pr.first);
       cfg_node.addUse(pr.second);
 
-      llvm::dbgs() << "Erasing obj_id: " << pr.first << ": " <<
+      dout << "Erasing obj_id: " << pr.first << ": " <<
         ValPrint(pr.first) << "\n";
 
       cfg.eraseObjToCFG(pr.first);

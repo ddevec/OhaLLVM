@@ -86,20 +86,20 @@ class ObjectMap {
             bool strong = true;
 
             // If this is an array, strip away the outer typing
-            llvm::dbgs() << "  Have element type!!!\n";
+            // llvm::dbgs() << "  Have element type!!!\n";
             while (auto at = llvm::dyn_cast<llvm::ArrayType>(element_type)) {
               strong = false;
               element_type = at->getContainedType(0);
             }
 
-            llvm::dbgs() << "Adding field to offsets_" << "\n";
+            // llvm::dbgs() << "Adding field to offsets_" << "\n";
             offsets_.emplace_back(field_count);
 
             if (auto struct_type =
                 llvm::dyn_cast<llvm::StructType>(element_type)) {
               auto &struct_info = omap.getStructInfo(struct_type);
 
-              llvm::dbgs() << "Inserting sizes from nested struct!\n";
+              // llvm::dbgs() << "Inserting sizes from nested struct!\n";
               sizes_.insert(std::end(sizes_), struct_info.sizes_begin(),
                 struct_info.sizes_end());
 
@@ -114,18 +114,20 @@ class ObjectMap {
 
               field_count += struct_info.numFields();
             } else {
-              llvm::dbgs() << "Inserting size 1\n";
+              // llvm::dbgs() << "Inserting size 1\n";
               sizes_.emplace_back(1);
               fieldStrong_.push_back(strong);
               field_count++;
             }
 
 
+            /*
             llvm::dbgs() << "end loop iter, have sizes: ";
             for (auto size : sizes_) {
               llvm::dbgs() << " " << size;
             }
             llvm::dbgs() << "\n";
+            */
           });
 
           if (omap.maxStructInfo_ == nullptr ||
@@ -133,7 +135,7 @@ class ObjectMap {
             omap.maxStructInfo_ = this;
           }
 
-          llvm::dbgs() << "End of create: " << *this << "\n";
+          // llvm::dbgs() << "End of create: " << *this << "\n";
         }
 
         StructInfo(StructInfo &&) = default;
@@ -634,7 +636,7 @@ class ObjectMap {
         // Fill out the struct:
         auto &struct_info = getStructInfo(st);
 
-        llvm::dbgs() << "Got StructInfo: " << struct_info << "\n";
+        // llvm::dbgs() << "Got StructInfo: " << struct_info << "\n";
         bool first = true;
         std::for_each(struct_info.sizes_begin(), struct_info.sizes_end(),
             [this, &ret_id, &pm, &mp, &first, &val] (int32_t) {
@@ -649,7 +651,7 @@ class ObjectMap {
             first = false;
           }
 
-          llvm::dbgs() << "Allocating struct id: " << id << "\n";
+          // llvm::dbgs() << "Allocating struct id: " << id << "\n";
 
           assert(pm.find(id) == std::end(pm));
           pm.emplace(id, val);

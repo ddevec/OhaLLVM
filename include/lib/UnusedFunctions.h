@@ -36,21 +36,21 @@ class UnusedFunctions : public llvm::ModulePass {
         return true;
       }
 
-      llvm::dbgs() << "Checking for use: " << fcn->getName() << ": ";
+      // llvm::dbgs() << "Checking for use: " << fcn->getName() << ": ";
       if (fcn->getName() == "main") {
-        llvm::dbgs() << "true\n";
+        // llvm::dbgs() << "true\n";
         return true;
       }
       // We're conservative for external functions, which we don't profile
       if (fcn->isDeclaration()) {
-        llvm::dbgs() << "true\n";
+        // llvm::dbgs() << "true\n";
         return true;
       }
       bool ret =  visited_.find(fcn) != std::end(visited_);
       if (ret) {
-        llvm::dbgs() << "true\n";
+        // llvm::dbgs() << "true\n";
       } else {
-        llvm::dbgs() << "false\n";
+        // llvm::dbgs() << "false\n";
       }
 
       return ret;
@@ -61,14 +61,14 @@ class UnusedFunctions : public llvm::ModulePass {
         return true;
       }
 
-      llvm::dbgs() << "Checking for BB use: " << bb->getName() << ": ";
+      // llvm::dbgs() << "Checking for BB use: " << bb->getName() << ": ";
 
       bool ret =  visitedBB_.find(bb) != std::end(visitedBB_);
 
       if (ret) {
-        llvm::dbgs() << "true\n";
+        // llvm::dbgs() << "true\n";
       } else {
-        llvm::dbgs() << "false\n";
+        // llvm::dbgs() << "false\n";
       }
 
       return ret;

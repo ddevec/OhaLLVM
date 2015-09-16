@@ -1,6 +1,7 @@
 /*
  * Copyright (C) 2015 David Devecsery
  */
+// #define SPECSFS_DEBUG
 
 #include <algorithm>
 #include <set>
@@ -172,7 +173,7 @@ void T5(CFG::ControlFlowGraph &G) {
       auto &node = llvm::cast<CFG::Node>(*pnode);
       // Note any non-up node to be removed post iteration
       if (!node.u() || !node.p()) {
-        llvm::dbgs() << "Adding node to rm list: " << node.id() << "\n";
+        dout << "Adding node to rm list: " << node.id() << "\n";
         remove_list.push_back(node.id());
       }
     }

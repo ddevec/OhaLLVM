@@ -402,11 +402,8 @@ class PtstoGraph {
     explicit PtstoGraph(const std::vector<ObjID> &objs) {
       std::for_each(std::begin(objs), std::end(objs),
           [this] (const ObjID &id) {
-        llvm::dbgs() << "Adding : " << id << " to PtstoGraph data_\n";
         data_.emplace(id, PtstoSet());
       });
-
-      llvm::dbgs() << "PtstoGraph is: " << *this << "\n";
     }
 
     // Allow move assignment {{{

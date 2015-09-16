@@ -13,7 +13,7 @@
 #include <set>
 #include <utility>
 
-#define SPECSFS_DEBUG
+// #define SPECSFS_DEBUG
 #include "include/Debug.h"
 #include "include/ObjectMap.h"
 

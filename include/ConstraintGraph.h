@@ -210,17 +210,19 @@ class ConstraintGraph {
     }
 
     ConsID add(ConstraintType type, ObjID d, ObjID s, int o) {
+      /*
       llvm::dbgs() << "Adding edge: (" << s << ", " << d <<
         ") with type: " << static_cast<int32_t>(type) << "\n";
+        */
       constraints_.emplace_back(new Constraint(s, d, type, o));
-      llvm::dbgs() << "Creating constriant: " << (constraints_.size()-1) << "\n";
+      // llvm::dbgs() << "Creating constriant: " << (constraints_.size()-1) << "\n";
       return ConsID(constraints_.size()-1);
     }
 
     ConsID add(ConstraintType type, ObjID nd, ObjID s, ObjID d) {
       constraints_.emplace_back(new NodeConstraint(type, s, d, nd));
 
-      llvm::dbgs() << "Creating constriant: " << (constraints_.size()-1) << "\n";
+      // llvm::dbgs() << "Creating constriant: " << (constraints_.size()-1) << "\n";
       return ConsID(constraints_.size()-1);
     }
 

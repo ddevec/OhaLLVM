@@ -3,6 +3,7 @@
  *
  * NOTE: Components stolen from Andersens.cpp
  */
+// #define SPECSFS_DEBUG
 
 #include <cassert>
 #include <cstdint>
@@ -14,7 +15,6 @@
 #include <utility>
 #include <vector>
 
-#define SPECSFS_DEBUG
 #include "include/Debug.h"
 
 #include "include/SpecSFS.h"
@@ -83,8 +83,8 @@ static void identifyAUXFcnCallRetInfo(CFG &cfg,
 
     CFG::CFGid call_id = cfg.nextNode();
     CFG::CFGid ret_id = cfg.nextNode();
-    llvm::dbgs() << "call cfg_id: " << call_id << "\n";
-    llvm::dbgs() << "ret cfg_id: " << ret_id << "\n";
+    dout << "call cfg_id: " << call_id << "\n";
+    dout << "ret cfg_id: " << ret_id << "\n";
 
     for (auto anders_int_id : ptsto) {
       // FIXME: Andersen's reports the function as pointing to the universal
@@ -163,7 +163,7 @@ void addCFGStore(CFG &graph, CFG::CFGid *store_id,
   // new node
   if (node->m()) {
     CFG::CFGid next_id = graph.nextNode();
-    llvm::dbgs() << "store cfg_id: " << next_id << "\n";
+    dout << "store cfg_id: " << next_id << "\n";
 
     graph.addEdge(*store_id, next_id);
 
@@ -193,7 +193,7 @@ void addCFGCallsite(CFG &cfg, ObjectMap &omap,
   // Add a new node into the graph
   CFG::CFGid call_id = *pcall_id;
   CFG::CFGid next_id = cfg.nextNode();
-  llvm::dbgs() << "callsite cfg_id: " << next_id << "\n";
+  dout << "callsite cfg_id: " << next_id << "\n";
   *pcall_id = next_id;
 
   if (fcn) {
@@ -431,8 +431,6 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
 
   // CType Functions
   if (F->getName() == "__ctype_b_loc") {
-    llvm::dbgs() << "Have call to __ctype_b_loc()\n";
-    llvm::dbgs() << "Addding addr of constriaint!!!\n";
     cg.add(ConstraintType::AddressOf,
         omap.getValue(CS.getInstruction()),
         ObjectMap::CTypeObject);
@@ -1677,8 +1675,8 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
             // We add a phony store object?, so we can uniquely refer
             //   to this later
 
-            llvm::dbgs() << "fcn is: " << fcn.getName() << "\n";
-            llvm::dbgs() << "arg is: " << arg << "\n";
+            dout << "fcn is: " << fcn.getName() << "\n";
+            dout << "arg is: " << arg << "\n";
 
             auto arg_id = omap.getValue(&arg);
             // must deal w/ memory object passed into external fcns
@@ -1689,7 +1687,7 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
 
         if (fcn.getFunctionType()->isVarArg()) {
           auto st_id = omap.createPhonyID();
-          llvm::dbgs() << "Creating universal value vararg pass to id: " <<
+          dout << "Creating universal value vararg pass to id: " <<
               st_id << "\n";
           cg.add(ConstraintType::Copy, omap.getVarArg(&fcn),
               ObjectMap::UniversalValue);

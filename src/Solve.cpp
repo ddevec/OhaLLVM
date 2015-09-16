@@ -2,6 +2,8 @@
  * Copyright (C) 2015 David Devecsery
  */
 
+// #define SPECSFS_DEBUG
+
 #include <algorithm>
 #include <utility>
 #include <vector>
@@ -9,6 +11,7 @@
 #include "include/SpecSFS.h"
 #include "include/DUG.h"
 #include "include/SolveHelpers.h"
+#include "include/Debug.h"
 
 bool SpecSFS::solve(DUG &dug, ObjectMap &) {
   Worklist work;
@@ -38,7 +41,7 @@ bool SpecSFS::solve(DUG &dug, ObjectMap &) {
 
   // Solve the graph
   while (auto pnd = work.pop()) {
-    llvm::dbgs() << "Processing node: " << pnd->id() << "\n";
+    dout << "Processing node: " << pnd->id() << "\n";
     pnd->process(dug, pts_top, work);
   }
 
@@ -51,13 +54,13 @@ bool SpecSFS::solve(DUG &dug, ObjectMap &) {
 }
 
 void DUG::AllocNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
-  llvm::dbgs() << "Process alloc start\n";
+  dout << "Process alloc start\n";
   // Update the top level variables for this alloc
   PtstoSet &dest_pts = pts_top.at(dest(), offset());
 
   bool change = dest_pts.set(ObjectMap::getOffsID(src(), offset()));
 
-  llvm::dbgs() << "  pts_top[" << dest() << "] + " << offset() << " is now: "
+  dout << "  pts_top[" << dest() << "] + " << offset() << " is now: "
       << dest_pts << "\n";
 
   // Add all top level variables updated to worklist
@@ -66,14 +69,14 @@ void DUG::AllocNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
         [&dug, &work](DUG::EdgeID id) {
       auto &edge = dug.getEdge(id);
       auto &nd = dug.getNode(edge.dest());
-      llvm::dbgs() << "  Pushing nd to work: " << nd.id() << "\n";
+      dout << "  Pushing nd to work: " << nd.id() << "\n";
       work.push(&nd);
     });
   }
 }
 
 void DUG::CopyNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
-  llvm::dbgs() << "Process copy start\n";
+  dout << "Process copy start\n";
 
   // Update the top level variables for this copy
   PtstoSet &dest_pts = pts_top.at(dest());
@@ -81,13 +84,13 @@ void DUG::CopyNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   // Get this offset for top level variables
   PtstoSet &src_pts = pts_top.at(src());
 
-  llvm::dbgs() << "  src_top[" << src() << "] + " << offset() << " is: " <<
+  dout << "  src_top[" << src() << "] + " << offset() << " is: " <<
       src_pts << "\n";
 
   // bool change = (dest_pts |= src_pts);
   bool change = dest_pts.orOffs(src_pts, offset());
 
-  llvm::dbgs() << "  pts_top[" << dest() << "] is now: " << dest_pts << "\n";
+  dout << "  pts_top[" << dest() << "] is now: " << dest_pts << "\n";
 
   // Add all updated successors to worklist
   if (change) {
@@ -95,14 +98,14 @@ void DUG::CopyNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
         [&dug, &work](DUG::EdgeID id) {
       auto &edge = dug.getEdge(id);
       auto &nd = dug.getNode(edge.dest());
-      llvm::dbgs() << "  Pushing nd to work: " << nd.id() << "\n";
+      dout << "  Pushing nd to work: " << nd.id() << "\n";
       work.push(&nd);
     });
   }
 }
 
 void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
-  llvm::dbgs() << "Process load start\n";
+  dout << "Process load start\n";
   // add a ptsto from src to the values contained in our partition set from the
   //    top level varaible dest
   // Add all successors to worklist
@@ -114,41 +117,41 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   // If we added any edges:
   //   Add all successors to work
   PtstoSet &src_pts = pts_top.at(src());
-  llvm::dbgs() << "value at src() (" << src() << ") is: " <<
+  dout << "value at src() (" << src() << ") is: " <<
     ValPrint(src()) << "\n";
-  llvm::dbgs() << "value at dest() (" << dest() << ") is: " <<
+  dout << "value at dest() (" << dest() << ") is: " <<
     ValPrint(dest()) << "\n";
   PtstoSet &dest_pts = pts_top.at(dest());
-  llvm::dbgs() << "Load is " << rep() << ": " <<
+  dout << "Load is " << rep() << ": " <<
     ValPrint(rep()) << "\n";
 
   bool changed = false;
   std::for_each(std::begin(src_pts), std::end(src_pts),
       [this, &dug, &work, &changed, &dest_pts](DUG::ObjID id) {
-    llvm::dbgs() << "  id is: " << id << ": " << ValPrint(id) << "\n";
-    llvm::dbgs() << "  in is: " << in_ << "\n";
+    dout << "  id is: " << id << ": " << ValPrint(id) << "\n";
+    dout << "  in is: " << in_ << "\n";
 
     PtstoSet &pts = in_.at(id);
 
-    llvm::dbgs() << "  pts is: " << pts << "\n";
+    dout << "  pts is: " << pts << "\n";
 
     changed |= (dest_pts |= pts);
   });
 
-  llvm::dbgs() << "  pts_top[" << dest() << "] is now: ";
+  dout << "  pts_top[" << dest() << "] is now: ";
   std::for_each(std::begin(dest_pts), std::end(dest_pts),
       [this](DUG::ObjID obj_id) {
-    llvm::dbgs() << " " << obj_id;
+    dout << " " << obj_id;
   });
-  llvm::dbgs() << "\n";
+  dout << "\n";
 
   // Also propigate address taken info?
   // Okay... if our in-set has changed since last time we were visited (I assume
   //    it has...)
   // We need to update the ptsto of all of our part_successors
   // FIXME: Only do this for changed info?
-  llvm::dbgs() << "  Load dest is: " << ValPrint(dest()) << "\n";
-  llvm::dbgs() << "  Load src is: " << ValPrint(src()) << "\n";
+  dout << "  Load dest is: " << ValPrint(dest()) << "\n";
+  dout << "  Load src is: " << ValPrint(src()) << "\n";
   std::for_each(std::begin(part_succs_), std::end(part_succs_),
       [this, &dug, &work]
       (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
@@ -157,11 +160,11 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
 
     auto &nd = dug.getNode(dug_id);
     /*
-    llvm::dbgs() << "    succ is: " << ValPrint(pr.second) << "\n";
-    llvm::dbgs() << "    part_to_obj contains: " << "\n";
+    dout << "    succ is: " << ValPrint(pr.second) << "\n";
+    dout << "    part_to_obj contains: " << "\n";
     std::for_each(std::begin(part_to_obj), std::end(part_to_obj),
       [](std::pair<DUG::DUGid, DUG::ObjID> &pr) {
-      llvm::dbgs() << "      " << ValPrint(pr.second) << "\n";
+      dout << "      " << ValPrint(pr.second) << "\n";
     });
     */
     bool ch = nd.in().orPart(in_, dug.objToPartMap(), part_id);
@@ -176,15 +179,15 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
         [&dug, &work](DUG::EdgeID id) {
       auto &edge = dug.getEdge(id);
       auto &nd = dug.getNode(edge.dest());
-      llvm::dbgs() << "  Pushing nd to work: " << nd.id() << "\n";
+      dout << "  Pushing nd to work: " << nd.id() << "\n";
       work.push(&nd);
     });
   }
 }
 
 void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
-  llvm::dbgs() << "Process store start\n";
-  llvm::dbgs() << "Store is: " << rep() << ": " << ValPrint(rep()) << "\n";
+  dout << "Process store start\n";
+  dout << "Store is: " << rep() << ": " << ValPrint(rep()) << "\n";
   // if strong && concrete
   //   clear all outgoing edges from pts_top(src) from out
   //
@@ -195,31 +198,31 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   //     add OUT(v) to their succ.IN(v)
   //     if (succ.IN.changed)
   //       Add succ to worklist
-  llvm::dbgs() << "  Source is: " << src() << " : " << ValPrint(src()) << "\n";
-  llvm::dbgs() << "  Dest is: " << dest() << " : " << ValPrint(dest()) << "\n";
+  dout << "  Source is: " << src() << " : " << ValPrint(src()) << "\n";
+  dout << "  Dest is: " << dest() << " : " << ValPrint(dest()) << "\n";
   PtstoSet &src_pts = pts_top.at(src());
   PtstoSet &dest_pts = pts_top.at(dest());
   bool change = false;
 
-  llvm::dbgs() << "  Initial src_pts: " << src_pts << "\n";
-  llvm::dbgs() << "  Initial dest_pts: " << dest_pts << "\n";
+  dout << "  Initial src_pts: " << src_pts << "\n";
+  dout << "  Initial dest_pts: " << dest_pts << "\n";
 
   // If this is a strong update, remove all outgoing edges from dest
   // NOTE: This is a strong update if we are updating a single concrete location
   if (strong() && dest_pts.size() == 1) {
     // Clear all outgoing edges from pts_top(src) from out
-    llvm::dbgs() << "DOING STRONG UPDATE!!!\n";
-    llvm::dbgs() << "dest is: " << dest() << "\n";
-    llvm::dbgs() << "in is: " << in() << "\n";
+    dout << "DOING STRONG UPDATE!!!\n";
+    dout << "dest is: " << dest() << "\n";
+    dout << "in is: " << in() << "\n";
 
     change |= out_.orExcept(in(), *std::begin(dest_pts));
 
     // Add edges to out with in
     change |= out_.assign(*std::begin(dest_pts), src_pts);
   } else {
-    llvm::dbgs() << "  Weak store:\n";
-    llvm::dbgs() << "    Initial out: " << out_ << "\n";
-    llvm::dbgs() << "    Initial in: " << in() << "\n";
+    dout << "  Weak store:\n";
+    dout << "    Initial out: " << out_ << "\n";
+    dout << "    Initial in: " << in() << "\n";
     // Combine out with in
     change |= (out_ |= in());
 
@@ -229,13 +232,13 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
       change |= out_.orElement(elm, src_pts);
     });
 
-    llvm::dbgs() << "    Final out: " << out_ << "\n";
-    llvm::dbgs() << "    Final in: " << in() << "\n";
+    dout << "    Final out: " << out_ << "\n";
+    dout << "    Final in: " << in() << "\n";
   }
 
   // If something changed, update all successors
   if (change) {
-    llvm::dbgs() << "  Have change on node with src: " <<
+    dout << "  Have change on node with src: " <<
       ValPrint(src()) << ", dest: " <<
       ValPrint(dest()) << "\n";
     // FIXME: Only do this for changed info?
@@ -247,19 +250,19 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
       auto dug_id = part_pr.second;
       auto &nd = dug.getNode(dug_id);
 
-      llvm::dbgs() << "  Checking node: " << dug_id << " or: " <<
+      dout << "  Checking node: " << dug_id << " or: " <<
           ValPrint(nd.extId()) << "\n";
 
 
-      llvm::dbgs() << "  before in for nd is: " << nd.in() << "\n";
+      dout << "  before in for nd is: " << nd.in() << "\n";
 
       // Update the input set of the successor node
       bool c = nd.in().orPart(out_, dug.objToPartMap(), part_id);
 
-      llvm::dbgs() << "  after in for nd is: " << nd.in() << "\n";
+      dout << "  after in for nd is: " << nd.in() << "\n";
 
       if (c) {
-        llvm::dbgs() << "    Pushing nd to work: " << nd.id() << "\n";
+        dout << "    Pushing nd to work: " << nd.id() << "\n";
         // Propigate info?
         work.push(&nd);
       }
@@ -268,7 +271,7 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
 }
 
 void DUG::PhiNode::process(DUG &dug, TopLevelPtsto &, Worklist &work) {
-  llvm::dbgs() << "Process PHI start\n";
+  dout << "Process PHI start\n";
   // For all successors:
   //   succ.IN |= IN
   // if succ.IN.changed():
@@ -284,7 +287,7 @@ void DUG::PhiNode::process(DUG &dug, TopLevelPtsto &, Worklist &work) {
     // FIXME?? Does this need to be a part_or?
     change = (nd.in() |= in());
     if (change) {
-      llvm::dbgs() << "  Pushing nd to work: " << nd.id() << "\n";
+      dout << "  Pushing nd to work: " << nd.id() << "\n";
       work.push(&nd);
     }
   });
@@ -292,25 +295,25 @@ void DUG::PhiNode::process(DUG &dug, TopLevelPtsto &, Worklist &work) {
 
 void DUG::GlobalInitNode::process(DUG &dug, TopLevelPtsto &pts_top,
     Worklist &work) {
-  llvm::dbgs() << "Process GlobalInit\n";
+  dout << "Process GlobalInit\n";
 
   bool change = first_;
   if (first_) {
     first_ = false;
-    llvm::dbgs() << "Adding " << src() << ", or " <<
+    dout << "Adding " << src() << ", or " <<
         ValPrint(src()) << " to top " << dest() << ", or " <<
         ValPrint(dest()) << "\n";
-    llvm::dbgs() << "Thats a node for: " << ValPrint(rep()) <<
+    dout << "Thats a node for: " << ValPrint(rep()) <<
         "\n";
 
     auto &dest_pts = pts_top.at(dest());
     auto &src_pts = pts_top.at(src());
 
-    llvm::dbgs() << "dest_pts before: " << dest_pts << "\n";
-    llvm::dbgs() << "src_pts is: " << src_pts << "\n";
+    dout << "dest_pts before: " << dest_pts << "\n";
+    dout << "src_pts is: " << src_pts << "\n";
     // change |= (dest_pts |= src_pts);
-    // llvm::dbgs() << "dest_pts after: " << dest_pts << "\n";
-    llvm::dbgs() << "in is: " << in() << "\n";
+    // dout << "dest_pts after: " << dest_pts << "\n";
+    dout << "in is: " << in() << "\n";
 
     assert(src_pts.size() == 1);
     change |= in().assign(*std::begin(dest_pts), src_pts);
@@ -325,14 +328,14 @@ void DUG::GlobalInitNode::process(DUG &dug, TopLevelPtsto &pts_top,
       auto &nd = dug.getNode(dug_id);
       bool c = false;
 
-      llvm::dbgs() << "nd.in is: " << nd.in() << "\n";
+      dout << "nd.in is: " << nd.in() << "\n";
 
       // This is a strong update, right?  We should be able to just set it...
       // c = nd.in().orPart(dest_pts, dug.objToPartMap(), part_id);
       c = nd.in().orPart(in(), dug.objToPartMap(), part_id);
 
       if (c) {
-        llvm::dbgs() << "  Pushing part nd to work: " << nd.id() << "\n";
+        dout << "  Pushing part nd to work: " << nd.id() << "\n";
         work.push(&nd);
       }
     });
@@ -343,7 +346,7 @@ void DUG::GlobalInitNode::process(DUG &dug, TopLevelPtsto &pts_top,
         [&dug, &work](DUG::EdgeID id) {
       auto &edge = dug.getEdge(id);
       auto &nd = dug.getNode(edge.dest());
-      llvm::dbgs() << "  Pushing non-part nd to work: " << nd.id() << "\n";
+      dout << "  Pushing non-part nd to work: " << nd.id() << "\n";
       work.push(&nd);
     });
   }

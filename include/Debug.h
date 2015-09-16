@@ -8,6 +8,9 @@
 
 #include <cstdint>
 
+#include <string>
+
+#include "llvm/Module.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Debug.h"
 
@@ -38,6 +41,20 @@ class null_ostream : public llvm::raw_ostream {
 
     // Singleton instance
     static null_ostream &nullstream();
+
+    friend null_ostream &operator<<(null_ostream &o, int) {
+      return o;
+    }
+
+    friend null_ostream &operator<<(null_ostream &o,
+        const llvm::Value *) {
+      return o;
+    }
+
+    friend null_ostream &operator<<(null_ostream &o,
+        std::string &) {
+      return o;
+    }
 
  private:
     static null_ostream nullstream_;
@@ -79,8 +96,8 @@ __attribute__((pure, unused))
 static bool operator&&(int, const llvm::raw_ostream &) {
   return false;
 }
-//  #define dout null_ostream::nullstream()
-#define dout 0 && llvm::dbgs()
+#define dout null_ostream::nullstream()
+//  #define dout 0 && llvm::dbgs()
 #endif
 
 #endif  // INCLUDE_DEBUG_H_

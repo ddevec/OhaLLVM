@@ -67,6 +67,7 @@ X("SpecSFS", "Speculative Sparse Flow-sensitive Analysis", false, false);
 void SpecSFS::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   usage.setPreservesAll();
   usage.addRequired<UnusedFunctions>();
+  usage.addRequired<AliasAnalysis>();
 }
 
 // runOnModule, the primary pass
