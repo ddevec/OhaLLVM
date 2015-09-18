@@ -130,15 +130,15 @@ struct HUEdge : public SEGEdge<ConstraintGraph::ObjID> {
           // Add its own indirect ptsto
           dest_node.setIndirect();
           if_debug(
-            dout << "Adding edge: " << src << " -> " <<
-              dest << "\n";
-            dout << "Adding pred to: " << src_node.id() << "\n");
+            dout("Adding edge: " << src << " -> " <<
+              dest << "\n");
+            dout("Adding pred to: " << src_node.id() << "\n"));
           break;
         case ConstraintType::AddressOf:
           if_debug(
-            dout << "Setting: " << dest << " to indirect\n";
-            dout << "Adding ptsto: " << dest <<
-                " to ptsto of: " << src << "\n");
+            dout("Setting: " << dest << " to indirect\n");
+            dout("Adding ptsto: " << dest <<
+                " to ptsto of: " << src << "\n"));
 
           dest_node.setIndirect();
           src_node.addPtsTo(dest);
@@ -147,8 +147,8 @@ struct HUEdge : public SEGEdge<ConstraintGraph::ObjID> {
         case ConstraintType::Copy:
         case ConstraintType::GlobalInit:
           if_debug(
-            dout << "Adding edge: " << src << " -> " << dest << "\n";
-            dout << "Adding pred (copy) to: " << src_node.id() << "\n");
+            dout("Adding edge: " << src << " -> " << dest << "\n");
+            dout("Adding pred (copy) to: " << src_node.id() << "\n"));
           break;
         default:
           llvm_unreachable("Should never get here!\n");
@@ -208,32 +208,32 @@ typedef SEG<ConstraintGraph::ObjID> HUSeg;
 // Acutal HU visit impl {{{
 static void visitHU(HUSeg &seg, HUNode &node, const ObjectMap &if_debug(omap)) {
   if_debug(
-    dout << "Visiting: (" << node.id() << ") ";
-    node.print_label(dout, omap);
-    dout << "\n");
+    dout("Visiting: (" << node.id() << ") ");
+    // node.print_label(dout, omap);
+    dout("\n"));
 
   // Union our past ptsto sets
   for (auto edge_id : node.preds()) {
     auto &edge = seg.getEdge(edge_id);
     auto node_id = edge.src();
-    dout << "Have node_id: " << node_id << "\n";
+    dout("Have node_id: " << node_id << "\n");
     HUNode &pred = seg.getNode<HUNode>(node_id);
     if_debug(
-      dout << "\tOn pred: (" << pred.id() << ") ";
-      pred.print_label(dout, omap);
-      dout << "\n");
+      dout("\tOn pred: (" << pred.id() << ") ");
+      // pred.print_label(dout, omap);
+      dout("\n"));
 
     if_debug(
-      dout << "Unioning src ptsto: ";
+      dout("Unioning src ptsto: ");
       for (auto int_id : node.ptsto()) {
-        dout << " " << ConstraintGraph::ObjID(int_id);
+        dout(" " << ConstraintGraph::ObjID(int_id));
       }
-      dout << "\n";
-      dout << "with pred ptsto: ";
+      dout("\n");
+      dout("with pred ptsto: ");
       for (auto int_id : pred.ptsto()) {
-        dout << " " << ConstraintGraph::ObjID(int_id);
+        dout(" " << ConstraintGraph::ObjID(int_id));
       }
-      dout << "\n");
+      dout("\n"));
 
     node.ptsto() |= pred.ptsto();
   }
@@ -304,12 +304,12 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
   if_debug(  //{{{
     for (auto &pnode : huSeg) {
       HUNode &node = llvm::cast<HUNode>(*pnode);
-      dout << "initial ptsto for node " << node.id() <<
-        " is:";
+      dout("initial ptsto for node " << node.id() <<
+        " is:");
       for (auto int_id : node.ptsto()) {
-        dout << " " << ConstraintGraph::ObjID(int_id);
+        dout(" " << ConstraintGraph::ObjID(int_id));
       }
-      dout << "\n";
+      dout("\n");
     });  //}}}
 
   if_debug(huSeg.printDotFile("HuStart.dot", *g_omap));
@@ -325,18 +325,18 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
   if_debug(  //{{{
     for (auto &pnode : huSeg) {
       HUNode &node = llvm::cast<HUNode>(*pnode);
-      dout << "ptsto after HU for (";
+      dout("ptsto after HU for (");
       if (node.indirect()) {
-        dout << "indirect";
+        dout("indirect");
       } else {
-        dout << "  direct";
+        dout("  direct");
       }
-      dout << ") node " << node.id() <<
-        " is:";
+      dout(") node " << node.id() <<
+        " is:");
       for (auto int_id : node.ptsto()) {
-        dout << " " << ConstraintGraph::ObjID(int_id);
+        dout(" " << ConstraintGraph::ObjID(int_id));
       }
-      dout << "\n";
+      dout("\n");
     });  //}}}
 
   if_debug(huSeg.printDotFile("HuOpt.dot", *g_omap));
@@ -351,10 +351,10 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
     auto it = pts_to_pe.find(node.ptsto());
 
     if (node.indirect()) {
-      dout << "Obj for indirect node: " << node.id() << "\n";
+      dout("Obj for indirect node: " << node.id() << "\n");
     } else if (it == std::end(pts_to_pe)) {
       pts_to_pe.emplace(node.ptsto(), node.id());
-      dout << "pe for ptsto: " << node.id() << "\n";
+      dout("pe for ptsto: " << node.id() << "\n");
     } else {
       // These nodes are pe equivalent
       // Unite the HU nodes, then iterate through the constraints and adjust ids
@@ -387,13 +387,13 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
 
     if (dest_rep_id != pcons->dest()) {
       // If this is a load cons, its dest shouldn't have changed
-      dout << "new value: " << ValPrint(dest_rep_id) << "\n";
-      dout << "old value: " << ValPrint(pcons->dest()) << "\n";
+      dout("new value: " << ValPrint(dest_rep_id) << "\n");
+      dout("old value: " << ValPrint(pcons->dest()) << "\n");
 
       load_remap.emplace(pcons->dest(), dest_rep_id);
 
-      dout << "retarget: (" << pcons->offsSrc() << ", " << pcons->dest() <<
-        ") -> ("<< src_rep_id << ", " << dest_rep_id << ")\n";
+      dout("retarget: (" << pcons->offsSrc() << ", " << pcons->dest() <<
+        ") -> ("<< src_rep_id << ", " << dest_rep_id << ")\n");
 
       pcons->retarget(src_rep_id, dest_rep_id);
 
@@ -418,18 +418,18 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
       (SEG<CFG::CFGid>::node_iter_type &pnode) {
     CFG::Node &cfg_node = llvm::cast<CFG::Node>(*pnode);
 
-    dout << "node eval: "<< cfg_node.extId() << "\n";
+    dout("node eval: "<< cfg_node.extId() << "\n");
 
     std::vector<std::pair<ObjectMap::ObjID, ObjectMap::ObjID>> remap;
     std::for_each(cfg_node.uses_begin(), cfg_node.uses_end(),
         [&load_remap, &remap] (const ObjectMap::ObjID &obj_id) {
-      dout << "obj_id eval\n";
+      dout("obj_id eval\n");
       auto it = load_remap.find(obj_id);
 
       if (it != std::end(load_remap)) {
         if (obj_id != it->second) {
-          dout << "  Adding remap: (" << obj_id << ", " << it->second <<
-            ")\n";
+          dout("  Adding remap: (" << obj_id << ", " << it->second <<
+            ")\n");
           remap.emplace_back(obj_id, it->second);
         }
       }
@@ -440,8 +440,8 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
       cfg_node.removeUse(pr.first);
       cfg_node.addUse(pr.second);
 
-      dout << "Erasing obj_id: " << pr.first << ": " <<
-        ValPrint(pr.first) << "\n";
+      dout("Erasing obj_id: " << pr.first << ": " <<
+        ValPrint(pr.first) << "\n");
 
       cfg.eraseObjToCFG(pr.first);
     });

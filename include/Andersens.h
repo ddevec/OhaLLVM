@@ -384,6 +384,7 @@ class Andersens : public llvm::ModulePass,
     ArgvValue    = 4,
     LocaleObject = 5,
     CTypeObject  = 6,
+    ErrnoObject  = 7,
     NumberSpecialNodes
   };
 
@@ -408,7 +409,7 @@ class Andersens : public llvm::ModulePass,
     }
 
     llvm::Function *Callee = CI->getCalledFunction();
-    if (Callee == 0 || !Callee->isDeclaration()) {
+    if (Callee == 0) {
       return false;
     }
 
@@ -418,6 +419,11 @@ class Andersens : public llvm::ModulePass,
         Callee->getName() != "realloc" &&
         Callee->getName() != "memalign" &&
         Callee->getName() != "fopen" &&
+        // From coreutils src
+        Callee->getName() != "xrealloc" &&
+        Callee->getName() != "xmalloc" &&
+        Callee->getName() != "xnmalloc" &&
+        // End coreutils src
         Callee->getName() != "_Znwj" &&  // operator new(unsigned int)
         Callee->getName() != "_Znwm" &&  // operator new(unsigned long)
         Callee->getName() != "_Znaj" &&  // operator new[](unsigned int)
@@ -425,7 +431,6 @@ class Andersens : public llvm::ModulePass,
       return false;
     }
 
-    // ddevec (not really)  - TODO: check prototype
     return true;
   }
 

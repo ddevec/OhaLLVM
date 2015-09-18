@@ -20,12 +20,20 @@ class Constraint {
     typedef typename ObjectMap::ObjID ObjID;
     // Constructors {{{
     Constraint(ObjID s, ObjID d, ConstraintType t) :
-        Constraint(ConstraintKind::Basic, s, d, t, 0) { }
+        Constraint(ConstraintKind::Basic, s, d, t, 0) {
+      assert(!(t == ConstraintType::Copy &&
+          s == ObjectMap::UniversalValue &&
+          d == ObjectMap::NullValue));
+    }
+
     Constraint(ObjID s, ObjID d,
           ConstraintType t, int32_t o) :
         Constraint(ConstraintKind::Basic, s, d, t, o) {
       assert(t != ConstraintType::Load && t != ConstraintType::Store &&
           t != ConstraintType::GlobalInit);
+      assert(!(t == ConstraintType::Copy &&
+          s == ObjectMap::UniversalValue &&
+          d == ObjectMap::NullValue));
     }
 
     // No copys, yes moves {{{
@@ -129,8 +137,13 @@ class Constraint {
     Constraint(ConstraintKind kind, ObjID s, ObjID d, ConstraintType t) :
       Constraint(kind, s, d, t, 0) { }
     Constraint(ConstraintKind kind, ObjID s, ObjID d,
-        ConstraintType t, int32_t o) :
-      src_(s), dest_(d), type_(t), kind_(kind), offs_(o) { }
+          ConstraintType t, int32_t o) :
+        src_(s), dest_(d), type_(t), kind_(kind), offs_(o) {
+      // We should never copy universal value into null value!
+      assert(!(t == ConstraintType::Copy &&
+          s == ObjectMap::UniversalValue &&
+          d == ObjectMap::NullValue));
+    }
 
  private:
     // Private Data {{{
@@ -214,6 +227,9 @@ class ConstraintGraph {
       llvm::dbgs() << "Adding edge: (" << s << ", " << d <<
         ") with type: " << static_cast<int32_t>(type) << "\n";
         */
+      assert(!(type == ConstraintType::Copy &&
+          s == ObjectMap::UniversalValue &&
+          d == ObjectMap::NullValue));
       constraints_.emplace_back(new Constraint(s, d, type, o));
       // llvm::dbgs() << "Creating constriant: " << (constraints_.size()-1) << "\n";
       return ConsID(constraints_.size()-1);

@@ -21,7 +21,7 @@
 // Combine all SCCs in Xp in G
 void T4(CFG::ControlFlowGraph &G, const CFG::ControlFlowGraph &Xp) {
   // For each SCC in Xp combine the nodes in G
-  dout << "Running T4\n";
+  dout("Running T4\n");
   std::for_each(std::begin(Xp), std::end(Xp),
       [&G](const CFG::ControlFlowGraph::node_iter_type &pnode) {
     // Get the rep node in G
@@ -42,14 +42,14 @@ void T4(CFG::ControlFlowGraph &G, const CFG::ControlFlowGraph &Xp) {
       }
     });
   });
-  dout << "Finished T4\n";
+  dout("Finished T4\n");
 }
 
 // Now, for each P-node in G1 (output from T4) with precise 1 predecessor,
 //   we combine that node with its predecessor
 void T2(CFG::ControlFlowGraph &G, CFG::ControlFlowGraph &Xp) {
   // Visit Xp in topological order
-  dout << "Running T2\n";
+  dout("Running T2\n");
   std::for_each(Xp.topo_begin(), Xp.topo_end(),
       [&G, &Xp](CFG::NodeID xp_id) {
     // llvm::dbgs() << "visiting node: " << xp_id << "\n";
@@ -71,11 +71,11 @@ void T2(CFG::ControlFlowGraph &G, CFG::ControlFlowGraph &Xp) {
     }
   });
 
-  dout << "Finished T2\n";
+  dout("Finished T2\n");
 }
 
 void T7(CFG::ControlFlowGraph &G) {
-  dout << "Running T7\n";
+  dout("Running T7\n");
   std::for_each(std::begin(G), std::end(G),
       [&G](CFG::ControlFlowGraph::node_iter_type &pnode) {
       if (pnode != nullptr) {
@@ -94,7 +94,7 @@ void T7(CFG::ControlFlowGraph &G) {
         }
       }
   });
-  dout << "Finished T7\n";
+  dout("Finished T7\n");
 }
 
 // Okay, now remove any u-nodes (nodes that we don't directly care about) which
@@ -104,7 +104,7 @@ void T7(CFG::ControlFlowGraph &G) {
 void T6(CFG::ControlFlowGraph &G) {
   std::set<CFG::NodeID> visited;
   // For each R node
-  dout << "Running T6\n";
+  dout("Running T6\n");
   std::for_each(std::begin(G), std::end(G),
       [&G, &visited](CFG::ControlFlowGraph::node_iter_type &pnode) {
     auto &node = llvm::cast<CFG::Node>(*pnode);
@@ -151,12 +151,12 @@ void T6(CFG::ControlFlowGraph &G) {
     // llvm::dbgs() << "Removing node: " << rm_id << "\n";
     G.removeNode(rm_id);
   });
-  dout << "Finished T6\n";
+  dout("Finished T6\n");
 }
 
 // merge all up-nodes with exactly one successor with their successor
 void T5(CFG::ControlFlowGraph &G) {
-  dout << "Running T5\n";
+  dout("Running T5\n");
 
   // Get a topological ordering of all up-nodes
   // For each up-node in said ordering
@@ -173,7 +173,7 @@ void T5(CFG::ControlFlowGraph &G) {
       auto &node = llvm::cast<CFG::Node>(*pnode);
       // Note any non-up node to be removed post iteration
       if (!node.u() || !node.p()) {
-        dout << "Adding node to rm list: " << node.id() << "\n";
+        dout("Adding node to rm list: " << node.id() << "\n");
         remove_list.push_back(node.id());
       }
     }
@@ -228,18 +228,18 @@ void T5(CFG::ControlFlowGraph &G) {
 
     succ_node.unite(G, unite_node);
   });
-  dout << "Finished T5\n";
+  dout("Finished T5\n");
 }
 //}}}
 
 void Ramalingam(CFG::ControlFlowGraph &G, const ObjectMap &omap) {
   // Start by restricting G to only p-nodes, this gives is "Gp"
   // Make Gp a copy of G
-  G.printDotFile("G.dot", omap);
+  if_debug(G.printDotFile("G.dot", omap));
 
   CFG::ControlFlowGraph Gp = G.clone<CFG::Node, CFG::Edge>();
 
-  Gp.printDotFile("Gp_orig.dot", omap);
+  if_debug(Gp.printDotFile("Gp_orig.dot", omap));
 
   std::vector<CFG::NodeID> remove_list;
   std::for_each(std::begin(Gp), std::end(Gp),
@@ -258,25 +258,25 @@ void Ramalingam(CFG::ControlFlowGraph &G, const ObjectMap &omap) {
     Gp.removeNode(id);
   });
 
-  Gp.printDotFile("Gp.dot", omap);
+  if_debug(Gp.printDotFile("Gp.dot", omap));
 
   // Now get the SCC version of Gp
   // NOTE: This will merge the nodes for me
   Gp.createSCC();
 
-  Gp.printDotFile("Xp.dot", omap);
+  if_debug(Gp.printDotFile("Xp.dot", omap));
 
   // T4 -- This transform collapses a set of strongly connected p (preserving)
   // nodes into a single node.
   T4(G, Gp);
 
-  G.printDotFile("G4.dot", omap);
+  if_debug(G.printDotFile("G4.dot", omap));
 
   // T2 -- If a node is a p-node and has precisely one predecessor, it may be
   // merged with that predecessor
   T2(G, Gp);
 
-  G.printDotFile("G2.dot", omap);
+  if_debug(G.printDotFile("G2.dot", omap));
 
   // For the remainder of the transformations we are concerned with calculating
   // a "Partially Equivalent Flow Graph" or a graph for which the data-flow
@@ -292,7 +292,7 @@ void Ramalingam(CFG::ControlFlowGraph &G, const ObjectMap &omap) {
   // delete the edges from the graph.
   T7(G);
 
-  G.printDotFile("G7.dot", omap);
+  if_debug(G.printDotFile("G7.dot", omap));
 
   // T6 -- applys to any set of u-nodes without a successor (aka, the set of
   // nodes has no edge from a node to a node outside of the set).  We remove
@@ -300,12 +300,12 @@ void Ramalingam(CFG::ControlFlowGraph &G, const ObjectMap &omap) {
   // theory means the edge is connected to a vertex, either in or out).
   T6(G);
 
-  G.printDotFile("G6.dot", omap);
+  if_debug(G.printDotFile("G6.dot", omap));
 
   // T5 -- merges any up-node with exactly one predecessor with its predecessor
   T5(G);
 
-  G.printDotFile("G5.dot", omap);
+  if_debug(G.printDotFile("G5.dot", omap));
 }
 //}}}
 

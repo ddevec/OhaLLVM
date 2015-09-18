@@ -460,7 +460,7 @@ class CFG {
 
     // Def/use/global tracking {{{
     // Setters {{{
-    void addUse(CFGid cfg_id, ObjectMap::ObjID load_dest_id) {
+    bool addUse(CFGid cfg_id, ObjectMap::ObjID load_dest_id) {
       auto node_pr = CFG_.getNodes(cfg_id);
       assert(std::distance(node_pr.first, node_pr.second) == 1);
       auto node_id = node_pr.first->second;
@@ -470,9 +470,10 @@ class CFG {
 
       auto ret = objToCFG_.emplace(load_dest_id, cfg_id);
       assert(ret.second);
+      return ret.second;
     }
 
-    void addDef(CFGid cfg_id, ObjectMap::ObjID store_id) {
+    bool addDef(CFGid cfg_id, ObjectMap::ObjID store_id) {
       auto node_pr = CFG_.getNodes(cfg_id);
       assert(std::distance(node_pr.first, node_pr.second) == 1);
       auto node_id = node_pr.first->second;
@@ -482,6 +483,7 @@ class CFG {
 
       auto ret = objToCFG_.emplace(store_id, cfg_id);
       assert(ret.second);
+      return ret.second;
     }
 
     bool eraseObjToCFG(ObjectMap::ObjID obj_id) {
@@ -490,10 +492,11 @@ class CFG {
       return ret == 1;
     }
 
-    void addGlobalInit(ObjectMap::ObjID glbl_id) {
+    bool addGlobalInit(ObjectMap::ObjID glbl_id) {
       globalInits_.push_back(glbl_id);
       auto ret = objToCFG_.emplace(glbl_id, CFGInit);
       assert(ret.second);
+      return ret.second;
     }
     //}}}
 

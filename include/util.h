@@ -25,7 +25,7 @@ class UniqueIdentifier {
       return val == invalid();
     }
 
-    bool check(const T &val) {
+    void check(const T &val) {
       assert(val < val_);
     }
 
@@ -124,7 +124,7 @@ class IDGenerator {
       return val == invalid();
     }
 
-    bool check(const id_type &val) {
+    void check(const id_type &val) {
       assert(val < val_);
     }
 

@@ -44,6 +44,10 @@ const ObjectMap::ObjID ObjectMap::CTypeObject =
     ObjectMap::ObjID(
         static_cast<int32_t>(ObjectMap::ObjEnum::eCTypeObject));
 
+const ObjectMap::ObjID ObjectMap::ErrnoObject =
+    ObjectMap::ObjID(
+        static_cast<int32_t>(ObjectMap::ObjEnum::eErrnoObject));
+
 ObjectMap::ObjectMap() {
   for (int32_t i = 0; i < static_cast<int32_t>(ObjEnum::eNumDefaultObjs);
       i++) {

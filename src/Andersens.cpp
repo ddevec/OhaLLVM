@@ -262,20 +262,24 @@ void Andersens::IdentifyObjects(Module &M) {
   assert(NumObjects == CTypeObject && "Something changed!");
   ++NumObjects;
 
+  // Object #4 always represents the argv value
+  assert(NumObjects == ErrnoObject && "Something changed!");
+  ++NumObjects;
+
   // its place may change
-  IntNode = 7;
+  IntNode = 8;
   // Object #3 always represents the int object (all ints)
   assert(NumObjects == IntNode && "Something changed!");
   ++NumObjects;
 
   // its place may change
-  AggregateNode = 8;
+  AggregateNode = 9;
   // Object #4 always represents the aggregate object (all aggregates)
   assert(NumObjects == AggregateNode && "Something changed!");
   ++NumObjects;
 
   // its place may change
-  PthreadSpecificNode = 9;
+  PthreadSpecificNode = 10;
   // Object #4 always represents the pthread_specific object
   assert(NumObjects == PthreadSpecificNode && "Something changed!");
   ++NumObjects;
@@ -533,15 +537,28 @@ bool Andersens::AddConstraintsForExternalCall(CallSite CS, Function *F) {
     }
   }
 
-  if (F->getName() == "getlocale") {
-    const FunctionType *FTy = F->getFunctionType();
-    if (FTy->getNumParams() > 0 &&
-        isa<PointerType>(FTy->getParamType(1))) {
-      Constraints.push_back(Constraint(Constraint::AddressOf,
-            getNode(CS.getInstruction()),
-            LocaleObject));
-      return true;
-    }
+  if (F->getName() == "getlocale" ||
+      F->getName() == "setlocale" ||
+      F->getName() == "nl_langinfo") {
+    Constraints.push_back(Constraint(Constraint::AddressOf,
+          getNode(CS.getInstruction()),
+          LocaleObject));
+    return true;
+  }
+
+  // getenv -- This is currently linked to argv...
+  if (F->getName() == "getenv") {
+    Constraints.push_back(Constraint(Constraint::AddressOf,
+          getNode(CS.getInstruction()),
+          ArgvObject));
+    return true;
+  }
+
+  if (F->getName() == "__errno_location") {
+    Constraints.push_back(Constraint(Constraint::AddressOf,
+          getNode(CS.getInstruction()),
+          ErrnoObject));
+    return true;
   }
 
   if (F->getName() == "__ctype_b_loc") {
@@ -558,6 +575,17 @@ bool Andersens::AddConstraintsForExternalCall(CallSite CS, Function *F) {
       Constraints.push_back(Constraint(Constraint::Copy,
                                        getNode(CS.getInstruction()),
                                        getNode(CS.getArgument(1))));
+      return true;
+    }
+  }
+
+  if (F->getName() == "gettext") {
+    const llvm::FunctionType *FTy = F->getFunctionType();
+    if (FTy->getNumParams() > 0 &&
+        llvm::isa<llvm::PointerType>(FTy->getParamType(0))) {
+      Constraints.push_back(Constraint(Constraint::Copy,
+                                       getNode(CS.getInstruction()),
+                                       getNode(CS.getArgument(0))));
       return true;
     }
   }
@@ -2644,6 +2672,9 @@ void Andersens::PrintNode(const Node *N) const {
     return;
   } else if (N == &GraphNodes[CTypeObject]) {
     errs() << "<ctype>";
+    return;
+  } else if (N == &GraphNodes[ErrnoObject]) {
+    errs() << "<errno>";
     return;
   } else if (N == &GraphNodes[IntNode]) {
     errs() << "<int>";

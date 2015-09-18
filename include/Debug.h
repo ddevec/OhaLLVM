@@ -73,7 +73,7 @@ class null_ostream : public llvm::raw_ostream {
 
 // NOTE: DEBUG is defined at the top of each c file when needed!
 // debug on/off statements
-#ifdef SPECSFS_DEBUG
+#if defined(SPECSFS_DEBUG) && !defined(SPECSFS_NODEBUG)
 #define if_debug(...) __VA_ARGS__
 #define if_not_debug(...)
 #define if_else_debug(X, Y) X
@@ -88,15 +88,12 @@ class null_ostream : public llvm::raw_ostream {
 #endif
 
 // printing
-#ifdef SPECSFS_DEBUG
-#define dout llvm::dbgs()
+#if defined(SPECSFS_DEBUG) && !defined(SPECSFS_NODEBUG)
+#define dout(X) (llvm::dbgs() << X)
 #else
 // This can/should be super-duper optimized
-__attribute__((pure, unused))
-static bool operator&&(int, const llvm::raw_ostream &) {
-  return false;
-}
-#define dout null_ostream::nullstream()
+// #define dout null_ostream::nullstream()
+#define dout(X)
 //  #define dout 0 && llvm::dbgs()
 #endif
 

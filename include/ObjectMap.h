@@ -53,6 +53,7 @@ class ObjectMap {
       eArgvObjectValue,
       eLocaleObject,
       eCTypeObject,
+      eErrnoObject,
       eNumDefaultObjs
     } DefaultObjs;
 
@@ -66,6 +67,7 @@ class ObjectMap {
     static const ObjID ArgvObjectValue;
     static const ObjID LocaleObject;
     static const ObjID CTypeObject;
+    static const ObjID ErrnoObject;
     //}}}
 
     // Internal classes {{{
@@ -75,10 +77,6 @@ class ObjectMap {
         StructInfo(ObjectMap &omap, const llvm::StructType *type) :
             type_(type) {
           int32_t field_count = 0;
-          /*
-          llvm::dbgs() << "Creating struct info for: " << type->getName() <<
-            "\n";
-          */
           std::for_each(type->element_begin(), type->element_end(),
               [this, &omap, &field_count]
               (const llvm::Type *element_type) {
@@ -86,20 +84,16 @@ class ObjectMap {
             bool strong = true;
 
             // If this is an array, strip away the outer typing
-            // llvm::dbgs() << "  Have element type!!!\n";
             while (auto at = llvm::dyn_cast<llvm::ArrayType>(element_type)) {
               strong = false;
               element_type = at->getContainedType(0);
             }
 
-            // llvm::dbgs() << "Adding field to offsets_" << "\n";
             offsets_.emplace_back(field_count);
 
             if (auto struct_type =
                 llvm::dyn_cast<llvm::StructType>(element_type)) {
               auto &struct_info = omap.getStructInfo(struct_type);
-
-              // llvm::dbgs() << "Inserting sizes from nested struct!\n";
               sizes_.insert(std::end(sizes_), struct_info.sizes_begin(),
                 struct_info.sizes_end());
 
@@ -114,32 +108,16 @@ class ObjectMap {
 
               field_count += struct_info.numFields();
             } else {
-              // llvm::dbgs() << "Inserting size 1\n";
               sizes_.emplace_back(1);
               fieldStrong_.push_back(strong);
               field_count++;
             }
-
-
-            /*
-            llvm::dbgs() << "end loop iter, have sizes: ";
-            for (auto size : sizes_) {
-              llvm::dbgs() << " " << size;
-            }
-            llvm::dbgs() << "\n";
-            */
           });
-
-          if (omap.maxStructInfo_ == nullptr ||
-              size() > omap.maxStructInfo_->size()) {
-            omap.maxStructInfo_ = this;
-          }
-
-          // llvm::dbgs() << "End of create: " << *this << "\n";
         }
 
         StructInfo(StructInfo &&) = default;
         StructInfo &operator=(StructInfo &&) = default;
+
         StructInfo(const StructInfo &) = delete;
         StructInfo &operator=(const StructInfo &) = delete;
 
@@ -201,8 +179,8 @@ class ObjectMap {
           return std::end(sizes_);
         }
 
-        typedef std::vector<bool>::iterator strong_iterator;
-        typedef std::vector<bool>::const_iterator const_strong_iterator;
+        typedef std::vector<int8_t>::iterator strong_iterator;
+        typedef std::vector<int8_t>::const_iterator const_strong_iterator;
 
         strong_iterator strong_begin() {
           return std::begin(fieldStrong_);
@@ -235,6 +213,7 @@ class ObjectMap {
             const StructInfo &si) {
           // FIXME(ddevec): Cannot do getName on "literal" structs
           // os << "StructInfo( " << si.type()->getName() << ", [";
+          os << "StructInfo( [";
           std::for_each(si.sizes_begin(), si.sizes_end(),
               [&os] (int32_t size) {
             os << " " << size;
@@ -248,7 +227,7 @@ class ObjectMap {
         // Private Variables {{{
         std::vector<int32_t> offsets_;
         std::vector<int32_t> sizes_;
-        std::vector<bool> fieldStrong_;
+        std::vector<int8_t> fieldStrong_;
         const llvm::StructType *type_;
         //}}}
       //}}}
@@ -348,6 +327,8 @@ class ObjectMap {
         o << "(locale)";
       } else if (id == CTypeObject) {
         o << "(ctype)";
+      } else if (id == ErrnoObject) {
+        o << "(ctype)";
       } else {
         llvm_unreachable("not special");
       }
@@ -442,14 +423,23 @@ class ObjectMap {
     bool addStructInfo(const llvm::StructType *type) {
       bool ret = true;
       auto it = structInfo_.find(type);
+      // llvm::dbgs() << "Adding struct info for: " << type << "\n";
 
       if (it == std::end(structInfo_)) {
-        auto emp_ret = structInfo_.emplace(type, StructInfo(*this, type));
+        auto emp_ret = structInfo_.emplace(type,
+            StructInfo(*this, type));
         assert(emp_ret.second);
 
         it = emp_ret.first;
         ret = emp_ret.second;
+
+        auto &info = it->second;
+        if (maxStructInfo_ == nullptr ||
+            info.size() > maxStructInfo_->size()) {
+          maxStructInfo_ = &info;
+        }
       }
+
 
       return ret;
     }
@@ -461,15 +451,16 @@ class ObjectMap {
 
       // Its not in our struct list, create a new one
       if (struct_info_it == std::end(structInfo_)) {
-        auto emp_ret = structInfo_.emplace(st_type, StructInfo(*this, st_type));
-        assert(emp_ret.second);
-        struct_info_it = emp_ret.first;
+        addStructInfo(type);
+
+        struct_info_it = structInfo_.find(st_type);
       }
 
       return struct_info_it->second;
     }
 
     const StructInfo &getMaxStructInfo() const {
+      assert(maxStructInfo_ != nullptr);
       return *maxStructInfo_;
     }
 

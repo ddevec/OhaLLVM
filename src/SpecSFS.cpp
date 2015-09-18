@@ -4,7 +4,7 @@
 
 
 // Enable debugging prints for this file
-// #define SPECSFS_DEBUG
+#define SPECSFS_DEBUG
 
 #include "include/SpecSFS.h"
 
@@ -99,8 +99,6 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
     error("CreateConstraints failure!");
   }
 
-  // cg.getSEG().printDotFile("top.dot", omap);
-
   // Initial optimization pass
   // Runs HU on the graph as it stands, w/ only top level info filled in
   // Removes any nodes deemed to be non-ptr (definitely null), and merges nodes
@@ -111,17 +109,16 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   }
   */
 
-  // cg.getSEG().printDotFile("top_HU.dot", omap);
-
-  cfg.getSEG().printDotFile("CFG.dot", omap);
+  if_debug(cfg.getSEG().printDotFile("CFG.dot", omap));
 
   // Get AUX info, in this instance we choose Andersens
-  dout << "Running Andersens\n";
+  dout("Running Andersens\n");
   Andersens aux;
-  bool ret = aux.runOnModule(M);
-  dout << "Andersens done\n";
-  // Andersens had better not change M!
-  assert(ret == false);
+  if (aux.runOnModule(M)) {
+    // Andersens had better not change M!
+    error("Andersens changes M???");
+  }
+  dout("Andersens done\n");
 
   // Now, fill in the indirect function calls
   if (addIndirectCalls(cg, cfg, aux, omap)) {
@@ -133,15 +130,14 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   cg.unique();
 
   // The PE graph was updated by addIndirectCalls
-  // cg.getSEG().printDotFile("top_indir.dot", omap);
 
-  cfg.getSEG().printDotFile("CFG_indir.dot", omap);
+  if_debug(cfg.getSEG().printDotFile("CFG_indir.dot", omap));
 
   // Now, compute the SSA form for the top-level variables
   // We translate any PHI nodes into copy nodes... b/c the paper says so
   CFG::ControlFlowGraph ssa = computeSSA(cfg.getSEG());
 
-  ssa.printDotFile("CFG_ssa.dot", omap);
+  if_debug(ssa.printDotFile("CFG_ssa.dot", omap));
 
   cfg.setSEG(std::move(ssa));
 
@@ -164,9 +160,20 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
     error("Solve failure!");
   }
 
+#ifndef SPECSFS_NODEBUG
+  // STATS!
+  int64_t total_variables = 0;
+  int64_t total_ptstos = 0;
+
+  int32_t num_objects[10] = {};
+
+  size_t max_objects = 0;
+  int32_t num_max = 0;
+
   llvm::dbgs() << "Printing final ptsto set for top level variables:\n";
   std::for_each(pts_top_.cbegin(), pts_top_.cend(),
-      [&omap]
+      [&omap, &total_variables, &total_ptstos, &max_objects, &num_objects,
+        &num_max]
       (const std::pair<const ObjectMap::ObjID, std::vector<PtstoSet>> &pr) {
     auto top_val = omap.valueAtID(pr.first);
 
@@ -184,7 +191,29 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
 
     for (uint32_t i = 0; i < pr.second.size(); i++) {
       llvm::dbgs() << "  Offset: " << i << "\n";
-      std::for_each(pr.second[i].cbegin(), pr.second[i].cend(),
+
+      // Statistics
+      auto &ptsto = pr.second[i];
+      size_t ptsto_size = ptsto.size();
+
+      total_variables++;
+      total_ptstos += ptsto_size;
+
+      if (ptsto_size < 10) {
+        num_objects[ptsto_size]++;
+      }
+
+      if (ptsto_size > max_objects) {
+        max_objects = ptsto_size;
+        num_max = 0;
+      }
+
+      if (ptsto_size == max_objects) {
+        num_max++;
+      }
+
+      // Printing
+      std::for_each(ptsto.cbegin(), ptsto.cend(),
           [&omap] (const ObjectMap::ObjID obj_id) {
         auto loc_val = omap.valueAtID(obj_id);
 
@@ -200,6 +229,18 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
       });
     }
   });
+
+  llvm::dbgs() << "Number tracked values: " << total_variables << "\n";
+  llvm::dbgs() << "Number tracked ptstos: " << total_ptstos << "\n";
+
+  llvm::dbgs() << "Max ptsto is: " << max_objects << ", with num_max: " <<
+    num_max << "\n";
+
+  llvm::dbgs() << "lowest ptsto counts:\n";
+  for (int i = 0; i < 10; i++) {
+    llvm::dbgs() << "  [" << i << "]:  " << num_objects[i] << "\n";
+  }
+#endif
 
   // We do not modify code, ever!
   return false;
