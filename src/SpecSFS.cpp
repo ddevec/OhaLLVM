@@ -4,7 +4,8 @@
 
 
 // Enable debugging prints for this file
-#define SPECSFS_DEBUG
+// #define SPECSFS_DEBUG
+#define SPECSFS_LOGDEBUG
 
 #include "include/SpecSFS.h"
 
@@ -85,9 +86,12 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   const UnusedFunctions &unused_fcns =
       getAnalysis<UnusedFunctions>();
 
-  // Identify all of the objects in the source
-  if (identifyObjects(omap, M)) {
-    error("Identify objects failure!");
+  {
+    PerfTimerPrinter id_timer(llvm::dbgs(), "Identify Objects");
+    // Identify all of the objects in the source
+    if (identifyObjects(omap, M)) {
+      error("Identify objects failure!");
+    }
   }
 
   // Get the initial (top-level) constraints set
@@ -95,8 +99,11 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   // NOTE: This function will create a graph of all top-level variables,
   //   and a def/use mapping, but it will not fill in address-taken edges.
   //   Those will be populated later, once we have AUX info available.
-  if (createConstraints(cg, cfg, omap, M, unused_fcns)) {
-    error("CreateConstraints failure!");
+  {
+    PerfTimerPrinter create_timer(llvm::dbgs(), "CreateConstraints");
+    if (createConstraints(cg, cfg, omap, M, unused_fcns)) {
+      error("CreateConstraints failure!");
+    }
   }
 
   // Initial optimization pass
@@ -111,23 +118,73 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
 
   if_debug(cfg.getSEG().printDotFile("CFG.dot", omap));
 
-  // Get AUX info, in this instance we choose Andersens
-  dout("Running Andersens\n");
   Andersens aux;
-  if (aux.runOnModule(M)) {
-    // Andersens had better not change M!
-    error("Andersens changes M???");
+  // Get AUX info, in this instance we choose Andersens
+  {
+    PerfTimerPrinter andersens_timer(llvm::dbgs(), "Andersens");
+    if (aux.runOnModule(M)) {
+      // Andersens had better not change M!
+      error("Andersens changes M???");
+    }
   }
-  dout("Andersens done\n");
 
+  {
+    // Converting from aux_id to obj_ids
+    // For each pointer value we care about:
+    dout("Filling aux_to_obj:\n");
+    auto &aux_val_nodes = aux.getObjectMap();
+
+    special_aux_.emplace(ObjectMap::NullValue, Andersens::NullPtr);
+    special_aux_.emplace(ObjectMap::NullObjectValue, Andersens::NullObject);
+    special_aux_.emplace(ObjectMap::ArgvValue, Andersens::ArgvValue);
+    special_aux_.emplace(ObjectMap::ArgvObjectValue, Andersens::ArgvObject);
+    special_aux_.emplace(ObjectMap::IntValue, aux.IntNode);
+    special_aux_.emplace(ObjectMap::UniversalValue, Andersens::UniversalSet);
+    special_aux_.emplace(ObjectMap::LocaleObject, Andersens::LocaleObject);
+    special_aux_.emplace(ObjectMap::CTypeObject, Andersens::CTypeObject);
+    special_aux_.emplace(ObjectMap::ErrnoObject, Andersens::ErrnoObject);
+    special_aux_.emplace(ObjectMap::PthreadSpecificValue,
+        aux.PthreadSpecificNode);
+
+    aux_to_obj_.emplace(Andersens::NullPtr, ObjectMap::NullValue);
+    aux_to_obj_.emplace(Andersens::NullObject, ObjectMap::NullObjectValue);
+    aux_to_obj_.emplace(Andersens::ArgvValue, ObjectMap::ArgvValue);
+    aux_to_obj_.emplace(Andersens::ArgvObject, ObjectMap::ArgvObjectValue);
+    aux_to_obj_.emplace(aux.IntNode, ObjectMap::IntValue);
+    aux_to_obj_.emplace(Andersens::UniversalSet, ObjectMap::UniversalValue);
+    aux_to_obj_.emplace(Andersens::LocaleObject, ObjectMap::LocaleObject);
+    aux_to_obj_.emplace(Andersens::CTypeObject, ObjectMap::CTypeObject);
+    aux_to_obj_.emplace(Andersens::ErrnoObject, ObjectMap::ErrnoObject);
+    aux_to_obj_.emplace(aux.PthreadSpecificNode,
+        ObjectMap::PthreadSpecificValue);
+
+    std::for_each(std::begin(aux_val_nodes), std::end(aux_val_nodes),
+        [this, &aux, &omap]
+        (const std::pair<const llvm::Value *, uint32_t> &pr) {
+      auto obj_id = omap.getObject(pr.first);
+      // auto obj_id = omap.getValue(pr.first);
+      auto aux_val_id = pr.second;
+
+      dout("  " << aux_val_id << "->" << obj_id <<
+        "\n");
+      assert(aux_to_obj_.find(aux_val_id) == std::end(aux_to_obj_));
+      aux_to_obj_.emplace(aux_val_id, obj_id);
+    });
+  }
   // Now, fill in the indirect function calls
-  if (addIndirectCalls(cg, cfg, aux, omap)) {
-    error("AddIndirectCalls failure!");
+  {
+    PerfTimerPrinter indir_timer(llvm::dbgs(), "addIndirectCalls");
+    if (addIndirectCalls(cg, cfg, aux, omap)) {
+      error("AddIndirectCalls failure!");
+    }
   }
 
   // Now that we've resolve our indir edges, we can remove duplicate constraints
   // (possibly created by optimizeConstraints())
-  cg.unique();
+  {
+    PerfTimerPrinter unique_timer(llvm::dbgs(), "cg.unique()");
+    cg.unique();
+  }
 
   // The PE graph was updated by addIndirectCalls
 
@@ -135,29 +192,48 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
 
   // Now, compute the SSA form for the top-level variables
   // We translate any PHI nodes into copy nodes... b/c the paper says so
-  CFG::ControlFlowGraph ssa = computeSSA(cfg.getSEG());
+  CFG::ControlFlowGraph ssa;
+  {
+    PerfTimerPrinter ssa_timer(llvm::dbgs(), "computeSSA");
+    ssa = std::move(computeSSA(cfg.getSEG()));
+  }
 
   if_debug(ssa.printDotFile("CFG_ssa.dot", omap));
 
-  cfg.setSEG(std::move(ssa));
+  {
+    PerfTimerPrinter seg_timer(llvm::dbgs(), "setSEG");
+    cfg.setSEG(std::move(ssa));
+  }
 
   // Compute partitions, based on address equivalence
   DUG graph;
 
-  graph.fillTopLevel(cg, omap);
+  {
+    PerfTimerPrinter fill_timer(llvm::dbgs(), "fillTopLevel");
+    graph.fillTopLevel(cg, omap);
+  }
 
-  if (computePartitions(graph, cfg, aux, omap)) {
-    error("ComputePartitions failure!");
+  {
+    PerfTimerPrinter partition_timer(llvm::dbgs(), "computePartitions");
+    if (computePartitions(graph, cfg, aux, omap)) {
+      error("ComputePartitions failure!");
+    }
   }
 
   // Compute SSA for each partition
-  if (addPartitionsToDUG(graph, cfg, omap)) {
-    error("ComputePartSSA failure!");
+  {
+    PerfTimerPrinter part_dug_timer(llvm::dbgs(), "addPartitionsToDUG");
+    if (addPartitionsToDUG(graph, cfg, omap)) {
+      error("ComputePartSSA failure!");
+    }
   }
 
   // Finally, solve the graph
-  if (solve(graph, omap)) {
-    error("Solve failure!");
+  {
+    PerfTimerPrinter solve_timer(llvm::dbgs(), "solve");
+    if (solve(graph, omap)) {
+      error("Solve failure!");
+    }
   }
 
 #ifndef SPECSFS_NODEBUG

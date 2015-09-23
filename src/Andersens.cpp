@@ -526,7 +526,12 @@ bool Andersens::AddConstraintsForExternalCall(CallSite CS, Function *F) {
       F->getName() == "strrchr" || F->getName() == "strstr" ||
       F->getName() == "strtok"  || F->getName() == "stpcpy" ||
       F->getName() == "getcwd"  || F->getName() == "strcat" ||
-      F->getName() == "strcpy") {
+      F->getName() == "strcpy"  || F->getName() == "strncat"  ||
+      F->getName() == "strpbrk"  || F->getName() == "localtime"  ||
+      // FIXME: I don't fully understand the man page, so I'm not 100% sure
+      //   bindtextdomain goes here
+      F->getName() == "textdomain"  ||
+      F->getName() == "bindtextdomain") {
     const FunctionType *FTy = F->getFunctionType();
     if (FTy->getNumParams() > 0 &&
         isa<PointerType>(FTy->getParamType(0))) {

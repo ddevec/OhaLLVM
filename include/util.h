@@ -5,9 +5,115 @@
 #ifndef INCLUDE_UTIL_H_
 #define INCLUDE_UTIL_H_
 
+#include <atomic>
+#include <chrono>
 #include <limits>
+#include <string>
 
 #include "llvm/Support/raw_ostream.h"
+
+#ifdef SPECSFS_NOTIMERS
+#define if_timers(X)
+#define if_timers_else(X, Y) Y
+#else
+#define if_timers(X) X
+#define if_timers_else(X, Y) X
+#endif
+
+// Performance junks
+class PerfTimer {
+ public:
+    typedef std::chrono::high_resolution_clock Clock;
+    typedef Clock::time_point TimePoint;
+    typedef std::chrono::duration<double> Duration;
+    PerfTimer() = default;
+
+    PerfTimer(const PerfTimer &) = delete;
+    PerfTimer &operator=(const PerfTimer &) = delete;
+
+    PerfTimer(PerfTimer &&) = default;
+    PerfTimer &operator=(PerfTimer &&) = default;
+
+    void start() {
+      if_timers(
+        running_ = true;
+        lastTime_ = Clock::now());
+    }
+
+    void stop() {
+      if_timers(
+        // Hacky, to avoid optimizations
+        assert(running_);
+        running_ = false;
+        auto cur_time = Clock::now();
+
+        auto elapsed =
+          std::chrono::duration_cast<Duration>(cur_time - lastTime_);
+        totalTime_ += elapsed;
+        numTimes_++);
+    }
+
+    void tick() {
+      if_timers(
+        if (running_) {
+          auto prev_time = lastTime_;
+          lastTime_ = Clock::now();
+          totalTime_ +=
+            std::chrono::duration_cast<Duration>(lastTime_ - prev_time);
+          numTimes_++;
+        } else {
+          running_ = true;
+          lastTime_ = Clock::now();
+        })
+    }
+
+    void reset() {
+      if_timers(
+        running_ = false;
+        numTimes_ = 0;
+        totalTime_ = Duration::zero());
+    }
+
+    Duration totalElapsed() const {
+      if_timers_else(
+        return totalTime_,
+        return Duration::zero());
+    }
+
+    Duration averageElapsed() const {
+      if_timers_else(
+          return totalTime_ / numTimes_,
+          return Duration::zero());
+    }
+
+ private:
+    TimePoint lastTime_;
+    Duration totalTime_ = Duration::zero();
+    int64_t numTimes_ = 0;
+    bool running_ = false;
+};
+
+class PerfTimerPrinter {
+ public:
+    explicit PerfTimerPrinter(llvm::raw_ostream &o, std::string name) :
+        o_(o), name_(std::move(name)) {
+      if_timers(
+      timer_.start();
+      o << name_ << ": timer start\n");
+    }
+
+    ~PerfTimerPrinter() {
+      if_timers(
+        timer_.stop();
+        o_ << name_ << ": timer duration: " << timer_.totalElapsed().count()
+            <<  "\n");
+    }
+
+ private:
+    llvm::raw_ostream &o_;
+    PerfTimer timer_;
+    std::string name_;
+};
 
 template<class T = uint64_t, T initial_value = T(0),
   T invalid_value = std::numeric_limits<T>::max()>

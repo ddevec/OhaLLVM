@@ -445,7 +445,12 @@ class CFG {
       return cfgCallSuccessors_.at(call_id);
     }
 
-    const std::vector<ConstraintGraph::ObjID> &getIndirFcns(ConstraintGraph::ObjID call_id) const {
+    bool haveIndirFcn(ConstraintGraph::ObjID call_id) const {
+      return indirFcns_.find(call_id) != std::end(indirFcns_);
+    }
+
+    const std::vector<ConstraintGraph::ObjID>
+        &getIndirFcns(ConstraintGraph::ObjID call_id) const {
       return indirFcns_.at(call_id);
     }
 

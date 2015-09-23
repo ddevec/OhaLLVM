@@ -48,6 +48,7 @@ class ObjectMap {
       eNullObjectValue,
       eIntValue,
       eUniversalValue,
+      eAggregateValue,
       ePthreadSpecificValue,
       eArgvValue,
       eArgvObjectValue,
@@ -61,6 +62,7 @@ class ObjectMap {
     static const ObjID NullValue;
     static const ObjID NullObjectValue;
     static const ObjID IntValue;
+    static const ObjID AggregateValue;
     static const ObjID UniversalValue;
     static const ObjID PthreadSpecificValue;
     static const ObjID ArgvValue;
@@ -234,7 +236,6 @@ class ObjectMap {
     };
     //}}}
 
-
     // Constructor/Copiers {{{
     ObjectMap();
     ObjectMap(const ObjectMap &) = delete;
@@ -275,7 +276,7 @@ class ObjectMap {
     }
 
     void addValues(const llvm::Type *type, const llvm::Value *val) {
-      __do_add_struct(type, val, valToID_, idToVal_);
+      __do_add_struct(type, val, valToID_, idToVal_, nullptr);
     }
 
     void addValue(const llvm::Value *val) {
@@ -283,7 +284,12 @@ class ObjectMap {
     }
 
     void addObjects(const llvm::Type *type, const llvm::Value *val) {
-      __do_add_struct(type, val, objToID_, idToObj_);
+      __do_add_struct(type, val, objToID_, idToObj_, nullptr);
+    }
+
+    void addObjectsAlias(const llvm::Type *type, const llvm::Value *val,
+        const std::vector<ObjID> &alias) {
+      __do_add_struct(type, val, objToID_, idToObj_, &alias);
     }
 
     // Allocation site
@@ -315,6 +321,8 @@ class ObjectMap {
         o << "(NullObjectValue)";
       } else if (id == IntValue) {
         o << "(IntValue)";
+      } else if (id == AggregateValue) {
+        o << "(AggregateValue)";
       } else if (id == UniversalValue) {
         o << "(UniversalValue)";
       } else if (id == PthreadSpecificValue) {
@@ -328,7 +336,7 @@ class ObjectMap {
       } else if (id == CTypeObject) {
         o << "(ctype)";
       } else if (id == ErrnoObject) {
-        o << "(ctype)";
+        o << "(errno)";
       } else {
         llvm_unreachable("not special");
       }
@@ -610,11 +618,10 @@ class ObjectMap {
 
       return nullptr;
     }
-
     ObjID __do_add_struct(const llvm::Type *type,
         const llvm::Value *val,
         std::unordered_map<const llvm::Value *, ObjID> &mp,
-        idToValMap &pm) {
+        idToValMap &pm, const std::vector<ObjID> *alias) {
       ObjID ret_id;
 
       // Strip away array references:
@@ -630,7 +637,7 @@ class ObjectMap {
         // llvm::dbgs() << "Got StructInfo: " << struct_info << "\n";
         bool first = true;
         std::for_each(struct_info.sizes_begin(), struct_info.sizes_end(),
-            [this, &ret_id, &pm, &mp, &first, &val] (int32_t) {
+            [this, &ret_id, &alias, &pm, &mp, &first, &val] (int32_t) {
           // This is logically reserving an ObjID for this index within the
           //   struct
           ObjID id = createMapping(val);
@@ -648,7 +655,13 @@ class ObjectMap {
           pm.emplace(id, val);
 
           // Denote which objects this structure field occupies
-          objToAliases_[ret_id].emplace_back(id);
+          if (alias == nullptr) {
+            objToAliases_[ret_id].emplace_back(id);
+          } else {
+            for (auto &obj_id : *alias) {
+              objToAliases_[obj_id].emplace_back(id);
+            }
+          }
         });
 
         assert(ret_id != ObjID::invalid());
@@ -821,6 +834,8 @@ class ValPrint {
 
     friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
         const ValPrint &pr) {
+      // If its not in the map, its probably been added later as an indirect
+      // object...
       auto val = g_omap->valueAtID(pr.id_);
 
       if (val != nullptr) {

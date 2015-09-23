@@ -44,14 +44,6 @@ class SpecSFS : public llvm::ModulePass,
  private:
   // The functions which do the primary (high-level) work of SFS
 
-  // Identifies all objects in the module, adds them to graph
-  bool identifyObjects(ObjectMap &omap, const llvm::Module &M);
-
-  // Creates constraints for each top-lvel operatioon in the module
-  // Also populates Def/Use info for later address-taken constraints
-  bool createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
-      const llvm::Module &M, const UnusedFunctions &unused);
-
   // Optimizes the top-level constraints in the DUG
   // This requires the omap, so it knows which ids are objects, and doesn't
   //   group them
@@ -60,10 +52,6 @@ class SpecSFS : public llvm::ModulePass,
   bool optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
       const ObjectMap &omap);
 
-  // Adds additional indirect call info, given an AUX analysis
-  //   (in this case, Andersens analysis)
-  bool addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
-      const Andersens &aux, ObjectMap &omap);
 
   // Computes SSA form of the DUG, given its current edge set
   //   Used to compute SSA for top lvl
@@ -83,9 +71,27 @@ class SpecSFS : public llvm::ModulePass,
   // points-to analysis
   bool solve(DUG &, ObjectMap &omap);
 
+ protected:
+  // Identifies all objects in the module, adds them to graph
+  bool identifyObjects(ObjectMap &omap, const llvm::Module &M);
+
+  // Creates constraints for each top-lvel operatioon in the module
+  // Also populates Def/Use info for later address-taken constraints
+  bool createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
+      const llvm::Module &M, const UnusedFunctions &unused);
+
+  // Adds additional indirect call info, given an AUX analysis
+  //   (in this case, Andersens analysis)
+  bool addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
+      const Andersens &aux, ObjectMap &omap);
+
   // Private data {{{
   ObjectMap omap_;
   TopLevelPtsto pts_top_;
+
+  // FIXME: Should put in another entity? oh well...
+  std::map<int, ObjectMap::ObjID> aux_to_obj_;
+  std::map<ObjectMap::ObjID, int> special_aux_;
   //}}}
 };
 

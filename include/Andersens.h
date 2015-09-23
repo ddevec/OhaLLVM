@@ -402,17 +402,7 @@ class Andersens : public llvm::ModulePass,
     return this;
   }
 
-  static bool isMallocCall(const llvm::Value *V) {
-    const llvm::CallInst *CI = llvm::dyn_cast<llvm::CallInst>(V);
-    if (!CI) {
-      return false;
-    }
-
-    llvm::Function *Callee = CI->getCalledFunction();
-    if (Callee == 0) {
-      return false;
-    }
-
+  static bool fcnIsMalloc(const llvm::Function *Callee) {
     if (Callee->getName() != "malloc" &&
         Callee->getName() != "calloc" &&
         Callee->getName() != "valloc" &&
@@ -424,6 +414,9 @@ class Andersens : public llvm::ModulePass,
         Callee->getName() != "xmalloc" &&
         Callee->getName() != "xnmalloc" &&
         // End coreutils src
+        // From zlib src
+        Callee->getName() != "zcalloc" &&
+        // End zlib src
         Callee->getName() != "_Znwj" &&  // operator new(unsigned int)
         Callee->getName() != "_Znwm" &&  // operator new(unsigned long)
         Callee->getName() != "_Znaj" &&  // operator new[](unsigned int)
@@ -432,6 +425,21 @@ class Andersens : public llvm::ModulePass,
     }
 
     return true;
+  }
+
+  static bool isMallocCall(const llvm::Value *V) {
+    const llvm::CallInst *CI = llvm::dyn_cast<llvm::CallInst>(V);
+    if (!CI) {
+      return false;
+    }
+
+    llvm::Function *Callee = CI->getCalledFunction();
+    if (Callee == 0) {
+      return false;
+    }
+
+
+    return fcnIsMalloc(Callee);
   }
 
   bool runOnModule(llvm::Module &M) {

@@ -241,19 +241,19 @@ class SEGNode {
       return kind_;
     }
 
-    std::set<EdgeID> &preds() {
+    std::vector<EdgeID> &preds() {
       return preds_;
     }
 
-    const std::set<EdgeID> &preds() const {
+    const std::vector<EdgeID> &preds() const {
       return preds_;
     }
 
-    std::set<EdgeID> &succs() {
+    std::vector<EdgeID> &succs() {
       return succs_;
     }
 
-    const std::set<EdgeID> &succs() const {
+    const std::vector<EdgeID> &succs() const {
       return succs_;
     }
 
@@ -291,13 +291,21 @@ class SEGNode {
       }
 
       if (!found) {
-        succs().insert(id);
+        succs().push_back(id);
       } else {
         // If we couldn't add the edge, delete it?
         seg.tryRemoveEdge(id);
       }
 
       return !found;
+    }
+
+    void addSuccSafe(EdgeID id) {
+      succs().push_back(id);
+    }
+
+    void addPredSafe(EdgeID id) {
+      preds().push_back(id);
     }
 
     void removeDuplicatePreds(SEG<id_type> &seg) {
@@ -349,7 +357,7 @@ class SEGNode {
       }
 
       if (!found) {
-        preds().insert(id);
+        preds().push_back(id);
       } else {
         // If we couldn't add the edge, delete it?
         seg.tryRemoveEdge(id);
@@ -359,35 +367,82 @@ class SEGNode {
     }
 
     void tryRemoveSucc(EdgeID id) {
+      /*
       auto src_it = succs().find(id);
       if (src_it != std::end(succs())) {
         succs().erase(src_it);
       }
+      */
+      auto found = std::end(succs());
+      for (auto it = std::begin(succs()), en = std::end(succs());
+          it != en; ++it) {
+        if (*it == id) {
+          found = it;
+          break;
+        }
+      }
+
+      if (found != std::end(succs())) {
+        std::swap(*found, succs()[succs().size()-1]);
+        succs().pop_back();
+      }
     }
 
     void tryRemovePred(EdgeID id) {
+      /*
       auto src_it = preds().find(id);
       if (src_it != std::end(preds())) {
         preds().erase(src_it);
       }
+      */
+      auto found = std::end(preds());
+      for (auto it = std::begin(preds()), en = std::end(preds());
+          it != en; ++it) {
+        if (*it == id) {
+          found = it;
+          break;
+        }
+      }
+      if (found != std::end(preds())) {
+        std::swap(*found, preds()[preds().size()-1]);
+        preds().pop_back();
+      }
     }
 
     void removeSucc(EdgeID id) {
-      auto src_it = succs().find(id);
-      assert(src_it != std::end(succs()));
-      succs().erase(src_it);
+      auto found = std::end(succs());
+      for (auto it = std::begin(succs()), en = std::end(succs());
+          it != en; ++it) {
+        if (*it == id) {
+          found = it;
+          break;
+        }
+      }
+
+      assert(found != std::end(succs()));
+      std::swap(*found, succs()[succs().size()-1]);
+      succs().pop_back();
     }
 
     void removePred(EdgeID id) {
-      auto src_it = preds().find(id);
-      assert(src_it != std::end(preds()));
-      preds().erase(src_it);
+      auto found = std::end(preds());
+      for (auto it = std::begin(preds()), en = std::end(preds());
+          it != en; ++it) {
+        if (*it == id) {
+          found = it;
+          break;
+        }
+      }
+
+      assert(found != std::end(preds()));
+      std::swap(*found, preds()[preds().size()-1]);
+      preds().pop_back();
     }
     //}}}
 
     // Iterators {{{
-    typedef typename std::set<EdgeID>::iterator iterator;
-    typedef typename std::set<EdgeID>::const_iterator const_iterator;
+    typedef typename std::vector<EdgeID>::iterator iterator;
+    typedef typename std::vector<EdgeID>::const_iterator const_iterator;
 
     iterator succ_begin() {
       return std::begin(succs_);
@@ -434,8 +489,8 @@ class SEGNode {
  protected:
     // Protected data {{{
     // We hold references to our pred and successor nodes
-    std::set<EdgeID> preds_;
-    std::set<EdgeID> succs_;
+    std::vector<EdgeID> preds_;
+    std::vector<EdgeID> succs_;
     //}}}
   //}}}
 };
@@ -1576,7 +1631,7 @@ class SEG {
 
     // Edge Manipulation {{{
     template <typename edge_type>
-    EdgeID addEdge(const edge_type &edge) {
+    EdgeID addEdgeSafe(const edge_type &edge) {
       // Ensure that a node exists for each edge point..
       edges_.emplace_back(new edge_type(edge));
 
@@ -1584,10 +1639,12 @@ class SEG {
 
       // FIXME: ddevec -- Don't think I actually need this, because the edge ids
       //   will be duplicated by the copy constructor of the nodes
+      /*
       assert(getNode(edge.src()).succs().find(edge_id) !=
           std::end(getNode(edge.src()).succs()));
       assert(getNode(edge.dest()).preds().find(edge_id) !=
           std::end(getNode(edge.dest()).preds()));
+      */
       /*
       auto &src_node = getNode(edge.src());
       auto &dest_node = getNode(edge.dest());
@@ -1613,17 +1670,34 @@ class SEG {
       // Add succ/pred info for src/dest
       bool ret = src_node.addSucc(*this, edge_id);
       if (!ret) {
-        // llvm::dbgs() << "addSucc failed :(\n";
+        llvm::dbgs() << "addSucc failed :(\n";
         edges_.pop_back();
         return EdgeID::invalid();
       }
       ret = dest_node.addPred(*this, edge_id);
       if (!ret) {
-        // llvm::dbgs() << "addPred failed :(\n";
+        llvm::dbgs() << "addPred failed :(\n";
         src_node.removeSucc(edge_id);
         edges_.pop_back();
         return EdgeID::invalid();
       }
+
+      return edge_id;
+    }
+
+    // Adds edge of edge_type between two nodes
+    template <typename edge_type, typename... va_args>
+    EdgeID addEdgeSafe(NodeID src, NodeID dest, va_args&... args) {
+      // Ensure that a node exists for each edge point..
+      auto &src_node = getNode(src);
+      auto &dest_node = getNode(dest);
+      edges_.emplace_back(new edge_type(src, dest, args...));
+
+      EdgeID edge_id(edges_.size() - 1);
+
+      // Add succ/pred info for src/dest
+      src_node.addSuccSafe(edge_id);
+      dest_node.addPredSafe(edge_id);
 
       return edge_id;
     }
@@ -2000,8 +2074,8 @@ class SEG {
       //}}}
     };
 
-    bool checkEdge(EdgeID edge_id) const {
-      auto &edge = getEdge(edge_id);
+    bool checkEdge(EdgeID) const {
+      // auto &edge = getEdge(edge_id);
 
       // llvm::dbgs() << "getting edge: " << edge_id << "\n";
 
@@ -2010,8 +2084,10 @@ class SEG {
         << edge.dest() << "\n";
         */
 
+      /*
       auto &src_node = getNode(edge.src());
       auto &dest_node = getNode(edge.dest());
+      */
 
       /*
       llvm::dbgs() << "  src.succs:";
@@ -2029,10 +2105,6 @@ class SEG {
       llvm::dbgs() << "\n";
       */
 
-      assert(src_node.succs().find(edge_id) !=
-          std::end(getNode(edge.src()).succs()));
-      assert(dest_node.preds().find(edge_id) !=
-          std::end(getNode(edge.dest()).preds()));
       return true;
     }
 
@@ -2074,7 +2146,8 @@ SEG<id_type> SEG<id_type>::clone() const {
       auto &my_edge = llvm::cast<edge_type>(*pedge);
 
       assert(checkEdge(EdgeID(i)));
-      ret.addEdge(my_edge);
+      // Don't need checks, this edge is guaranteed not to exist
+      ret.addEdgeSafe(my_edge);
     } else {
       // llvm::dbgs() << "nullptr!\n";
       // Add in a nullptr, to keep the edges in sync

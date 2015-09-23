@@ -232,14 +232,14 @@ void T5(CFG::ControlFlowGraph &G) {
 }
 //}}}
 
-void Ramalingam(CFG::ControlFlowGraph &G, const ObjectMap &omap) {
+void Ramalingam(CFG::ControlFlowGraph &G) {
   // Start by restricting G to only p-nodes, this gives is "Gp"
   // Make Gp a copy of G
-  if_debug(G.printDotFile("G.dot", omap));
+  if_debug(G.printDotFile("G.dot", g_omap));
 
   CFG::ControlFlowGraph Gp = G.clone<CFG::Node, CFG::Edge>();
 
-  if_debug(Gp.printDotFile("Gp_orig.dot", omap));
+  if_debug(Gp.printDotFile("Gp_orig.dot", g_omap));
 
   std::vector<CFG::NodeID> remove_list;
   std::for_each(std::begin(Gp), std::end(Gp),
@@ -258,25 +258,25 @@ void Ramalingam(CFG::ControlFlowGraph &G, const ObjectMap &omap) {
     Gp.removeNode(id);
   });
 
-  if_debug(Gp.printDotFile("Gp.dot", omap));
+  if_debug(Gp.printDotFile("Gp.dot", g_omap));
 
   // Now get the SCC version of Gp
   // NOTE: This will merge the nodes for me
   Gp.createSCC();
 
-  if_debug(Gp.printDotFile("Xp.dot", omap));
+  if_debug(Gp.printDotFile("Xp.dot", g_omap));
 
   // T4 -- This transform collapses a set of strongly connected p (preserving)
   // nodes into a single node.
   T4(G, Gp);
 
-  if_debug(G.printDotFile("G4.dot", omap));
+  if_debug(G.printDotFile("G4.dot", g_omap));
 
   // T2 -- If a node is a p-node and has precisely one predecessor, it may be
   // merged with that predecessor
   T2(G, Gp);
 
-  if_debug(G.printDotFile("G2.dot", omap));
+  if_debug(G.printDotFile("G2.dot", g_omap));
 
   // For the remainder of the transformations we are concerned with calculating
   // a "Partially Equivalent Flow Graph" or a graph for which the data-flow
@@ -292,7 +292,7 @@ void Ramalingam(CFG::ControlFlowGraph &G, const ObjectMap &omap) {
   // delete the edges from the graph.
   T7(G);
 
-  if_debug(G.printDotFile("G7.dot", omap));
+  if_debug(G.printDotFile("G7.dot", g_omap));
 
   // T6 -- applys to any set of u-nodes without a successor (aka, the set of
   // nodes has no edge from a node to a node outside of the set).  We remove
@@ -300,12 +300,12 @@ void Ramalingam(CFG::ControlFlowGraph &G, const ObjectMap &omap) {
   // theory means the edge is connected to a vertex, either in or out).
   T6(G);
 
-  if_debug(G.printDotFile("G6.dot", omap));
+  if_debug(G.printDotFile("G6.dot", g_omap));
 
   // T5 -- merges any up-node with exactly one predecessor with its predecessor
   T5(G);
 
-  if_debug(G.printDotFile("G5.dot", omap));
+  if_debug(G.printDotFile("G5.dot", g_omap));
 }
 //}}}
 
@@ -319,7 +319,6 @@ void Ramalingam(CFG::ControlFlowGraph &G, const ObjectMap &omap) {
 CFG::ControlFlowGraph
 SpecSFS::computeSSA(const CFG::ControlFlowGraph &cfg) {
   // This essentially copies the CFG
-  ObjectMap omap;
   CFG::ControlFlowGraph ret = cfg.clone<CFG::Node, CFG::Edge>();
 
   /*
@@ -340,7 +339,7 @@ SpecSFS::computeSSA(const CFG::ControlFlowGraph &cfg) {
   });
   */
 
-  Ramalingam(ret, omap);
+  Ramalingam(ret);
 
   /*
   llvm::dbgs() << "post-Ramalingam: ret contains cfg ids:";

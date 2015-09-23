@@ -10,6 +10,7 @@
 #include <string>
 #include <tuple>
 #include <utility>
+#include <list>
 #include <vector>
 
 #include "include/SpecSFS.h"
@@ -76,48 +77,6 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
   //   algorithm
   dout("Running computePartitions\n");
 
-  // Converting from aux_id to obj_ids
-  std::map<int, ObjectMap::ObjID> aux_to_obj;
-  std::map<ObjectMap::ObjID, int> special_aux;
-  // For each pointer value we care about:
-  dout("Filling aux_to_obj:\n");
-  auto &aux_val_nodes = aux.getObjectMap();
-
-  special_aux.emplace(ObjectMap::NullValue, Andersens::NullPtr);
-  special_aux.emplace(ObjectMap::NullObjectValue, Andersens::NullObject);
-  special_aux.emplace(ObjectMap::ArgvValue, Andersens::ArgvValue);
-  special_aux.emplace(ObjectMap::ArgvObjectValue, Andersens::ArgvObject);
-  special_aux.emplace(ObjectMap::IntValue, aux.IntNode);
-  special_aux.emplace(ObjectMap::UniversalValue, Andersens::UniversalSet);
-  special_aux.emplace(ObjectMap::LocaleObject, Andersens::LocaleObject);
-  special_aux.emplace(ObjectMap::CTypeObject, Andersens::CTypeObject);
-  special_aux.emplace(ObjectMap::ErrnoObject, Andersens::ErrnoObject);
-  special_aux.emplace(ObjectMap::PthreadSpecificValue, aux.PthreadSpecificNode);
-
-  aux_to_obj.emplace(Andersens::NullPtr, ObjectMap::NullValue);
-  aux_to_obj.emplace(Andersens::NullObject, ObjectMap::NullObjectValue);
-  aux_to_obj.emplace(Andersens::ArgvValue, ObjectMap::ArgvValue);
-  aux_to_obj.emplace(Andersens::ArgvObject, ObjectMap::ArgvObjectValue);
-  aux_to_obj.emplace(aux.IntNode, ObjectMap::IntValue);
-  aux_to_obj.emplace(Andersens::UniversalSet, ObjectMap::UniversalValue);
-  aux_to_obj.emplace(Andersens::LocaleObject, ObjectMap::LocaleObject);
-  aux_to_obj.emplace(Andersens::CTypeObject, ObjectMap::CTypeObject);
-  aux_to_obj.emplace(Andersens::ErrnoObject, ObjectMap::ErrnoObject);
-  aux_to_obj.emplace(aux.PthreadSpecificNode, ObjectMap::PthreadSpecificValue);
-
-  std::for_each(std::begin(aux_val_nodes), std::end(aux_val_nodes),
-      [&aux, &aux_to_obj, &omap, &dug]
-      (const std::pair<const llvm::Value *, uint32_t> &pr) {
-    auto obj_id = omap.getObject(pr.first);
-    // auto obj_id = omap.getValue(pr.first);
-    auto aux_val_id = pr.second;
-
-    dout("  " << aux_val_id << "->" << obj_id <<
-      "\n");
-    assert(aux_to_obj.find(aux_val_id) == std::end(aux_to_obj));
-    aux_to_obj.emplace(aux_val_id, obj_id);
-  });
-
 
   dout("Doing AE creation loop\n");
 
@@ -168,18 +127,18 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
 
   // Now, create a grouping of each relevant obj_id for a given DUGid
   std::for_each(part_nodes.cbegin(), part_nodes.cend(),
-      [&AE, &omap, &dug, &aux_to_obj, &aux, &special_aux]
+      [this, &AE, &omap, &dug, &aux]
       (const std::pair<const ObjectMap::ObjID, std::vector<DUG::DUGid>> &pr) {
     auto obj_id = pr.first;
 
     const llvm::SparseBitVector<> *paux_ptsto;
     // Specially handle our special object ids...
     if (omap.isSpecial(obj_id)) {
-      auto aux_obj = special_aux.at(obj_id);
+      auto aux_obj = special_aux_.at(obj_id);
       paux_ptsto = &aux.getPointsTo(aux_obj);
       dout("Got Special ptsto: " << obj_id << "\n");
     } else {
-      // Actually, should be: for each pts_id in aux(omap[obj_id])... ugh
+      // If not special, just get the pointsto
       auto val = omap.valueAtID(obj_id);
       if (val == nullptr) {
         auto &nd = dug.getNode(obj_id);
@@ -200,12 +159,12 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
       dout("\n"));
 
     std::for_each(std::begin(aux_ptsto), std::end(aux_ptsto),
-        [&AE, &obj_id, &aux_to_obj] (uint32_t ptsto_id) {
-      auto aux_it = aux_to_obj.find(ptsto_id);
+        [this, &AE, &obj_id] (uint32_t ptsto_id) {
+      auto aux_it = aux_to_obj_.find(ptsto_id);
       dout("  Checking aux_to_obj[" << ptsto_id << "]\n");
       // If I have a value in aux, but not in my object set, ignore it, its an
       //   aux internal node which I've already accounted for
-      if (aux_it != std::end(aux_to_obj)) {
+      if (aux_it != std::end(aux_to_obj_)) {
         dout("  aux_to_obj[" << ptsto_id << "] is: " <<
             aux_it->second << "\n");
         auto aux_obj_id = aux_it->second;
@@ -274,9 +233,9 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
           part_map[id] = pr.first;
         });
       // Otherwise, just add the obj
-      } else {
-        part_map[obj_id] = pr.first;
       }
+
+      part_map[obj_id] = pr.first;
     });
   });
 
@@ -343,11 +302,19 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
     dout("Getting rel_map for: " << obj_id << "\n");
     auto &rel_bitmap = rel_map[obj_id];
 
+    int num_loads = 0;
+    // NOTE: Counting globals as stores
+    int num_stores = 0;
+
+    std::list<DUG::DUGid> part_load;
+    std::list<DUG::DUGid> part_store;
+
     // We iterate over each object which may be accessed by this partition,
     //   using our rel_vec
     std::for_each(std::begin(rel_bitmap), std::end(rel_bitmap),
-        [&ssa, &graph, &part_id, &omap,
-            &part_graph, &node_to_partition]
+        [&ssa, &graph, &part_id, &omap, &part_load, &num_loads,
+            &part_store, &num_stores, &part_graph,
+            &node_to_partition]
         (uint32_t obj_id_val) {
       ObjectMap::ObjID obj_id = ObjectMap::ObjID(obj_id_val);
 
@@ -383,6 +350,9 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
 
           // Denote that this DUG node is part of this partition
           node_to_partition[dug_id].push_back(part_id);
+
+          part_load.push_back(dug_id);
+          num_loads++;
         // If its a store:
         } else if (llvm::isa<DUG::StoreNode>(node)) {
           // Get the cfg_id of this node
@@ -411,6 +381,9 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
           node.addDef(ObjectMap::ObjID(dug_id.val()));
 
           node_to_partition[dug_id].push_back(part_id);
+
+          part_store.push_back(dug_id);
+          num_stores++;
         } else if (llvm::isa<DUG::GlobalInitNode>(node)) {
           // Assuming global init
           // For this we need a global init node in the CFG
@@ -429,206 +402,243 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
           //   when I have time
           cfg_node.addGlobalInit(ObjectMap::ObjID(dug_id.val()));
           node_to_partition[dug_id].push_back(part_id);
+
+          // Global inits count as stores
+          part_store.push_back(dug_id);
+          num_stores++;
         } else {
           llvm_unreachable("Unrecognized node type!");
         }
       }
     });
 
-    // Now, calculate ssa form for this graph:
-    auto part_ssa = computeSSA(part_graph);
+    // If this is a simple graph, I can manually add dependencies
+    //   (no need to run ramalingams/compute SSA)
+    if (num_loads <= 1 || num_stores <= 1) {
+      dout("Have simple CFG, skipping SSA calc\n");
+      // This graph has only one store:
+      if (num_stores == 1 && num_loads > 0) {
+        dout("Have 1 load, adding edges that way\n");
+        // If this isn't a global store
+        auto st_id = part_store.front();
 
-    /* -- ddevec - Dot file debugging... I'm disabling due to the insane number
-     * of files/time it takes
-    std::string part_file("part_ssa");
-    part_file += std::to_string(part_id.val());
-    part_file += ".dot";
-    part_ssa.printDotFile(part_file, *g_omap);
-    */
+        std::for_each(std::begin(part_load), std::end(part_load),
+            [&graph, &part_id, &st_id] (DUG::DUGid load_id) {
+          graph.addEdge(st_id, load_id, part_id);
+        });
+      // This graph has only 1 load
+      } else if (num_stores >= 0 && num_loads == 1) {
+        dout("Have 1 load, adding edges that way\n");
+        auto load_id = part_load.front();
 
-    // Here we group the partSSA info, indicating which DUG nodes are affected
-    //   by this partition
-    // We add the computed partiton info into the part for each node
-    // NOTE: We'll need to add some PHI nodes
-    std::vector<std::tuple<CFG::NodeID, DUG::DUGid, DUG::PartID>> delayed_edges;
-    std::for_each(part_ssa.topo_begin(), part_ssa.topo_end(),
-        [&graph, &part_ssa, &cfg_node_rep,
-            &delayed_edges, &part_id]
-        (const CFG::NodeID node_id) {
-      auto &ssa_node = part_ssa.getNode<CFG::Node>(node_id);
-
-      auto cfg_id = ssa_node.extId();
-      dout("Visiting cfg_id of: " << cfg_id << "\n");
-
-      // The DUG rep of this id
-      auto dug_id = DUG::DUGid();
-
-      // If this node has a use, it is a ld node
-      auto ld_it = ssa_node.uses_begin();
-      // There is only one if its a store (def)
-      auto st_it = ssa_node.defs_begin();
-
-      auto glbl_it = ssa_node.glbl_inits_begin();
-
-      bool have_ld = ld_it != ssa_node.uses_end();
-      bool have_st = st_it != ssa_node.defs_end();
-      bool have_glbl = glbl_it != ssa_node.glbl_inits_end();
-
-      // Elect a "leader" id for each basic block
-      if (have_st) {
-        // it should be impossible to have a global and a store
-        assert(!have_glbl);
-
-        dug_id = DUG::DUGid(st_it->val());
-        dout("  Got st of: " << dug_id << "\n");
-        assert(llvm::isa<DUG::StoreNode>(graph.getNode(dug_id)));
-      } else if (have_glbl) {
-        auto glbl_dug_id = DUG::DUGid(glbl_it->val());
-        graph.getNode(glbl_dug_id);
-
-        // We shouldn't have both a store and a global on the same CFG node
-        assert(!have_st);
-
-        // Add this node to the DUG, and add the src of this copy
-        dug_id = glbl_dug_id;
-      } else if (have_ld) {
-        dug_id = DUG::DUGid(ld_it->val());
-        dout("  Got ld of: " << dug_id << "\n");
-        dout("  ld size is: " <<
-          std::distance(ssa_node.uses_begin(), ssa_node.uses_end())
-          << "\n");
-        assert(llvm::isa<DUG::LoadNode>(graph.getNode(dug_id)));
-      // There may also be none (in this case its an phi node)
-      } else {
-        dug_id = graph.addPhi();
-        dout("  Got phi of: " << dug_id << "\n");
-        assert(llvm::isa<DUG::PhiNode>(graph.getNode(dug_id)));
-      }
-
-      // Update our cfg_node_rep map, so we can fill in preds later
-      dout("  Setting cfg_node_rep for " << cfg_id << " to: "
-          << dug_id << "\n");
-      assert(cfg_node_rep.find(cfg_id) == std::end(cfg_node_rep));
-      cfg_node_rep.emplace(cfg_id, dug_id);
-
-      // Put an edge from the basic block's "leader" to its members
-      if (have_st) {
-        // It should be impossible to have a store and a global
-        assert(!have_glbl);
-        bool first = true;
-
-        std::for_each(ssa_node.defs_begin(), ssa_node.defs_end(),
-            [&graph, &dug_id, &part_id, &first]
-            (ObjectMap::ObjID obj_id) {
-          // FIXME: This is a really hacky thing...
-          DUG::DUGid st_id = DUG::DUGid(obj_id.val());
-
-          if (first) {
-            first = false;
-            return;
-          }
-
-          dout("  --Adding rep-st edge {" << dug_id << " -(" <<
-              part_id << ")-> " << st_id << "}\n");
-          graph.addEdge(dug_id, st_id, part_id);
+        std::for_each(std::begin(part_store), std::end(part_store),
+            [&graph, &part_id, &load_id] (DUG::DUGid st_id) {
+          graph.addEdge(st_id, load_id, part_id);
         });
       }
+      // NOTE: It's possible that we fell through here (if we have 0 loads or 0
+      //   stores).  In that case, I don't need to add any edges...
 
-      if (have_ld) {
-        bool first = true;
-        bool skip_first = !have_st && !have_glbl;
+    // This isn't a simple graph, I need to calculate full SSA
+    } else {
+      // Now, calculate ssa form for this graph:
+      auto part_ssa = computeSSA(part_graph);
 
-        std::for_each(ssa_node.uses_begin(), ssa_node.uses_end(),
-            [&graph, &dug_id, &part_id, &first, &skip_first]
-            (ObjectMap::ObjID obj_id) {
-          // FIXME: This is a really hacky thing...
-          DUG::DUGid ld_id = DUG::DUGid(obj_id.val());
-          // Skip the first entry if we have already accounted for it (our rep
-          //    is a load)
-          if (first && skip_first) {
-            first = false;
-            return;
-          }
-
-          dout("  --Adding rep-ld edge {" << dug_id << " -(" <<
-              part_id << ")-> " << ld_id << "}\n");
-          graph.addEdge(dug_id, ld_id, part_id);
-        });
-      }
-
-      /*
-      auto node_set = part_ssa.getNodes(cfg_cfg_id);
-      assert(std::distance(node_set.first, node_set.second) == 1);
+      /* -- ddevec - Dot file debugging... I'm disabling due to the insane number
+       * of files/time it takes
+      std::string part_file("part_ssa");
+      part_file += std::to_string(part_id.val());
+      part_file += ".dot";
+      part_ssa.printDotFile(part_file, *g_omap);
       */
-      auto &node = part_ssa.getNode<CFG::Node>(node_id);
-      const auto &preds = node.preds();
 
-      // Assert says if this node is a phi node, it must have at least one pred
-      assert(
-          // Is not a phi
-          !(!have_ld && !have_st && !have_glbl) ||
-          // If it is a phi, it must have at least one pred
-          !preds.empty());
+      // Here we group the partSSA info, indicating which DUG nodes are affected
+      //   by this partition
+      // We add the computed partiton info into the part for each node
+      // NOTE: We'll need to add some PHI nodes
+      std::vector<std::tuple<CFG::NodeID, DUG::DUGid, DUG::PartID>>
+        delayed_edges;
+      std::for_each(part_ssa.topo_begin(), part_ssa.topo_end(),
+          [&graph, &part_ssa, &cfg_node_rep,
+              &delayed_edges, &part_id]
+          (const CFG::NodeID node_id) {
+        auto &ssa_node = part_ssa.getNode<CFG::Node>(node_id);
 
-      // Put an edge from each pred in G to the part leader
-      std::for_each(std::begin(preds), std::end(preds),
-          [&graph, &delayed_edges, &cfg_node_rep, &dug_id, &part_id, &part_ssa]
-          (const CFG::EdgeID pred_edge_id) {
-        auto pred_node_id = part_ssa.getEdge(pred_edge_id).src();
+        auto cfg_id = ssa_node.extId();
+        dout("Visiting cfg_id of: " << cfg_id << "\n");
 
-        auto pred_cfg_id = part_ssa.getNode<CFG::Node>(pred_node_id).extId();
-        dout("    have pred_node_id of: " << pred_node_id << "\n");
+        // The DUG rep of this id
+        auto dug_id = DUG::DUGid();
 
-        // NOTE: if we were not doing a topo order we may have to evaluate the
-        //   pred here
-        // dout("Finding cfg_node_rep at: " << pred_cfg_id << "\n");
-        auto pred_rep_it = cfg_node_rep.find(pred_cfg_id);
-        if (pred_rep_it == std::end(cfg_node_rep)) {
-          // Delay our rep resolving until after we've visited all nodes
-          dout("    ||Delaying cfg edge (pred id: " << pred_cfg_id
-              << ") {" << "??" << " -(" << part_id << ")-> " << dug_id <<
-              "}\n");
-          delayed_edges.emplace_back(pred_node_id, dug_id, part_id);
+        // If this node has a use, it is a ld node
+        auto ld_it = ssa_node.uses_begin();
+        // There is only one if its a store (def)
+        auto st_it = ssa_node.defs_begin();
+
+        auto glbl_it = ssa_node.glbl_inits_begin();
+
+        bool have_ld = ld_it != ssa_node.uses_end();
+        bool have_st = st_it != ssa_node.defs_end();
+        bool have_glbl = glbl_it != ssa_node.glbl_inits_end();
+
+        // Elect a "leader" id for each basic block
+        if (have_st) {
+          // it should be impossible to have a global and a store
+          assert(!have_glbl);
+
+          dug_id = DUG::DUGid(st_it->val());
+          dout("  Got st of: " << dug_id << "\n");
+          assert(llvm::isa<DUG::StoreNode>(graph.getNode(dug_id)));
+        } else if (have_glbl) {
+          auto glbl_dug_id = DUG::DUGid(glbl_it->val());
+          graph.getNode(glbl_dug_id);
+
+          // We shouldn't have both a store and a global on the same CFG node
+          assert(!have_st);
+
+          // Add this node to the DUG, and add the src of this copy
+          dug_id = glbl_dug_id;
+        } else if (have_ld) {
+          dug_id = DUG::DUGid(ld_it->val());
+          dout("  Got ld of: " << dug_id << "\n");
+          dout("  ld size is: " <<
+            std::distance(ssa_node.uses_begin(), ssa_node.uses_end())
+            << "\n");
+          assert(llvm::isa<DUG::LoadNode>(graph.getNode(dug_id)));
+        // There may also be none (in this case its an phi node)
         } else {
-          DUG::DUGid &pred_rep_id = pred_rep_it->second;
-
-          dout("    --Adding cfg edge {" << pred_rep_id << " -(" <<
-            part_id << ")-> " << dug_id << "}\n");
-          graph.addEdge(pred_rep_id, dug_id, part_id);
+          dug_id = graph.addPhi();
+          dout("  Got phi of: " << dug_id << "\n");
+          assert(llvm::isa<DUG::PhiNode>(graph.getNode(dug_id)));
         }
+
+        // Update our cfg_node_rep map, so we can fill in preds later
+        dout("  Setting cfg_node_rep for " << cfg_id << " to: "
+            << dug_id << "\n");
+        assert(cfg_node_rep.find(cfg_id) == std::end(cfg_node_rep));
+        cfg_node_rep.emplace(cfg_id, dug_id);
+
+        // Put an edge from the basic block's "leader" to its members
+        if (have_st) {
+          // It should be impossible to have a store and a global
+          assert(!have_glbl);
+          bool first = true;
+
+          std::for_each(ssa_node.defs_begin(), ssa_node.defs_end(),
+              [&graph, &dug_id, &part_id, &first]
+              (ObjectMap::ObjID obj_id) {
+            // FIXME: This is a really hacky thing...
+            DUG::DUGid st_id = DUG::DUGid(obj_id.val());
+
+            if (first) {
+              first = false;
+              return;
+            }
+
+            dout("  --Adding rep-st edge {" << dug_id << " -(" <<
+                part_id << ")-> " << st_id << "}\n");
+            graph.addEdge(dug_id, st_id, part_id);
+          });
+        }
+
+        if (have_ld) {
+          bool first = true;
+          bool skip_first = !have_st && !have_glbl;
+
+          std::for_each(ssa_node.uses_begin(), ssa_node.uses_end(),
+              [&graph, &dug_id, &part_id, &first, &skip_first]
+              (ObjectMap::ObjID obj_id) {
+            // FIXME: This is a really hacky thing...
+            DUG::DUGid ld_id = DUG::DUGid(obj_id.val());
+            // Skip the first entry if we have already accounted for it (our rep
+            //    is a load)
+            if (first && skip_first) {
+              first = false;
+              return;
+            }
+
+            dout("  --Adding rep-ld edge {" << dug_id << " -(" <<
+                part_id << ")-> " << ld_id << "}\n");
+            graph.addEdge(dug_id, ld_id, part_id);
+          });
+        }
+
+        /*
+        auto node_set = part_ssa.getNodes(cfg_cfg_id);
+        assert(std::distance(node_set.first, node_set.second) == 1);
+        */
+        auto &node = part_ssa.getNode<CFG::Node>(node_id);
+        const auto &preds = node.preds();
+
+        // Assert says if this node is a phi node, it must have at least
+        //   one pred
+        assert(
+            // Is not a phi
+            !(!have_ld && !have_st && !have_glbl) ||
+            // If it is a phi, it must have at least one pred
+            !preds.empty());
+
+        // Put an edge from each pred in G to the part leader
+        std::for_each(std::begin(preds), std::end(preds),
+            [&graph, &delayed_edges, &cfg_node_rep, &dug_id,
+              &part_id, &part_ssa]
+            (const CFG::EdgeID pred_edge_id) {
+          auto pred_node_id = part_ssa.getEdge(pred_edge_id).src();
+
+          auto pred_cfg_id = part_ssa.getNode<CFG::Node>(pred_node_id).extId();
+          dout("    have pred_node_id of: " << pred_node_id << "\n");
+
+          // NOTE: if we were not doing a topo order we may have to evaluate the
+          //   pred here
+          // dout("Finding cfg_node_rep at: " << pred_cfg_id << "\n");
+          auto pred_rep_it = cfg_node_rep.find(pred_cfg_id);
+          if (pred_rep_it == std::end(cfg_node_rep)) {
+            // Delay our rep resolving until after we've visited all nodes
+            dout("    ||Delaying cfg edge (pred id: " << pred_cfg_id
+                << ") {" << "??" << " -(" << part_id << ")-> " << dug_id <<
+                "}\n");
+            delayed_edges.emplace_back(pred_node_id, dug_id, part_id);
+          } else {
+            DUG::DUGid &pred_rep_id = pred_rep_it->second;
+
+            dout("    --Adding cfg edge {" << pred_rep_id << " -(" <<
+              part_id << ")-> " << dug_id << "}\n");
+            graph.addEdge(pred_rep_id, dug_id, part_id);
+          }
+        });
       });
-    });
 
-    std::vector<std::tuple<CFG::CFGid, DUG::DUGid, DUG::PartID>>
-      delayed_dedup_edges;
+      std::vector<std::tuple<CFG::CFGid, DUG::DUGid, DUG::PartID>>
+        delayed_dedup_edges;
 
-    std::for_each(std::begin(delayed_edges), std::end(delayed_edges),
-        [&graph, &part_ssa, &cfg_node_rep, &delayed_dedup_edges]
-        (std::tuple<CFG::NodeID, DUG::DUGid, DUG::PartID> &tup) {
-      auto pred_cfg_id = part_ssa.getNode(std::get<0>(tup)).extId();
-      delayed_dedup_edges.emplace_back(pred_cfg_id, std::get<1>(tup),
-        std::get<2>(tup));
-    });
+      std::for_each(std::begin(delayed_edges), std::end(delayed_edges),
+          [&graph, &part_ssa, &cfg_node_rep, &delayed_dedup_edges]
+          (std::tuple<CFG::NodeID, DUG::DUGid, DUG::PartID> &tup) {
+        auto pred_cfg_id = part_ssa.getNode(std::get<0>(tup)).extId();
+        delayed_dedup_edges.emplace_back(pred_cfg_id, std::get<1>(tup),
+          std::get<2>(tup));
+      });
 
-    std::sort(std::begin(delayed_dedup_edges), std::end(delayed_dedup_edges));
-    auto dedup_it = std::unique(std::begin(delayed_dedup_edges),
-        std::end(delayed_dedup_edges));
-    delayed_dedup_edges.erase(dedup_it, std::end(delayed_dedup_edges));
+      std::sort(std::begin(delayed_dedup_edges), std::end(delayed_dedup_edges));
+      auto dedup_it = std::unique(std::begin(delayed_dedup_edges),
+          std::end(delayed_dedup_edges));
+      delayed_dedup_edges.erase(dedup_it, std::end(delayed_dedup_edges));
 
-    std::for_each(std::begin(delayed_dedup_edges),
-        std::end(delayed_dedup_edges),
-          [&graph, &cfg_node_rep]
-          (std::tuple<CFG::CFGid, DUG::DUGid, DUG::PartID> &tup) {
-        auto pred_cfg_id = std::get<0>(tup);
-        auto pred_rep_it = cfg_node_rep.find(pred_cfg_id);
-        assert(pred_rep_it != std::end(cfg_node_rep));
+      std::for_each(std::begin(delayed_dedup_edges),
+          std::end(delayed_dedup_edges),
+            [&graph, &cfg_node_rep]
+            (std::tuple<CFG::CFGid, DUG::DUGid, DUG::PartID> &tup) {
+          auto pred_cfg_id = std::get<0>(tup);
+          auto pred_rep_it = cfg_node_rep.find(pred_cfg_id);
+          assert(pred_rep_it != std::end(cfg_node_rep));
 
-        auto pred_rep_id = pred_rep_it->second;
+          auto pred_rep_id = pred_rep_it->second;
 
-        dout("  --Adding delayed-cfg edge {" << pred_rep_id <<
-            " -(" << std::get<2>(tup) << ")-> " << std::get<1>(tup) << "}\n");
-        graph.addEdge(pred_rep_id, std::get<1>(tup), std::get<2>(tup));
-    });
+          dout("  --Adding delayed-cfg edge {" << pred_rep_id <<
+              " -(" << std::get<2>(tup) << ")-> " << std::get<1>(tup) << "}\n");
+          graph.addEdge(pred_rep_id, std::get<1>(tup), std::get<2>(tup));
+      });
+    }
   });
 
   // We need to alert each load/store node which objects they may possibly
@@ -664,9 +674,9 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
           auto &field_vec = field_pr.second;
           vars.insert(std::end(vars), std::begin(field_vec),
             std::end(field_vec));
-        } else {
-          vars.emplace_back(obj_id);
         }
+
+        vars.emplace_back(obj_id);
       });
     });
 

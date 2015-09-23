@@ -171,144 +171,171 @@ class DUG {
 
       // O(n*log(n)) ?
       int32_t consid = 0;
-      std::for_each(std::begin(cg), std::end(cg),
-          [this, &consid, &omap, &strongCons]
-          (const ConstraintGraph::iter_type &pcons) {
-        // Ignore nullptrs, they've been deleted
-        if (pcons == nullptr) {
-          consid++;
-          return;
-        }
+      {
+        PerfTimerPrinter fill_timer(llvm::dbgs(), "fill loop");
+        std::for_each(std::begin(cg), std::end(cg),
+            [this, &consid, &omap, &strongCons]
+            (const ConstraintGraph::iter_type &pcons) {
+          // Ignore nullptrs, they've been deleted
+          if (pcons == nullptr) {
+            consid++;
+            return;
+          }
 
-        // O(1)
-        auto &cons = llvm::cast<Constraint>(*pcons);
-        // Insert the node into the seg
-        auto dest = cons.dest();
-        auto src = cons.src();
-        auto offs = cons.offs();
+          // O(1)
+          auto &cons = llvm::cast<Constraint>(*pcons);
+          // Insert the node into the seg
+          auto dest = cons.dest();
+          auto src = cons.src();
+          auto offs = cons.offs();
 
-        dout("Adding node to DUG for obj_id: " << dest << ": " <<
-            ValPrint(dest) << "\n");
+          dout("Adding node to DUG for obj_id: " << dest << ": " <<
+              ValPrint(dest) << "\n");
 
-        dout("  node src_obj_id: " << src << ": " <<
-            ValPrint(src) << "\n");
+          dout("  node src_obj_id: " << src << ": " <<
+              ValPrint(src) << "\n");
 
-        switch (cons.type()) {
-          case ConstraintType::AddressOf:
-            {
-              dout("  node is AddressOf\n");
-              // Add AllocNode
-              bool strong = cons.strong();
-              // O(log(n))
-              if_debug(auto ret =) DUG_.addNode<AllocNode>(dest, src, offs,
-                  strong);
-              dout("  DUGid is " << ret->second << "\n");
-
-              // FIXME: Should store strong information in ptsset for top lvl
-              //    variables...
-              // O(log(n))
-              auto it = strongCons.find(dest);
-              if (it == std::end(strongCons)) {
-                strongCons.emplace(dest, strong);
-              } else {
-                it->second &= strong;
-              }
-            }
-            break;
-          case ConstraintType::Store:
-            // NOTE: we don't actually have a dest for stores, so we don't add
-            //   any mappings associated with them
-            // WRONG: We want the stores to be associated with the node that the
-            //   CFG would have given them (typically shared with an addressof
-            //     operator)
-            // Make a phony dest for this store:
-            {
-              auto &stcons = llvm::cast<NodeConstraint>(cons);
-              dout("  node is Store\n");
-              auto st_id = stcons.nodeId();
-              dout("  adding for store: (" << st_id << ") "
-                << ValPrint(st_id) << "\n");
-              if_debug(auto ret =)
-                DUG_.addNode<StoreNode>(st_id, dest, src, offs);
-              dout("  DUGid is " << ret->second << "\n");
-              assert(strongCons.find(st_id) == std::end(strongCons));
-              strongCons.emplace(st_id, cons.strong());
-            }
-            break;
-          case ConstraintType::Load:
-            {
-              auto &ldcons = llvm::cast<NodeConstraint>(cons);
-              dout("  node is Load\n");
-              auto ld_id = ldcons.nodeId();
-              dout("  Actual load_id is: (" << ld_id << ") " <<
-                ValPrint(ld_id) << "\n");
-              auto ret = DUG_.addNode<LoadNode>(ld_id, dest, src, offs);
-              dout("  Confirming load node!\n");
-              if_debug(auto &nd =) DUG_.getNode<LoadNode>(ret->second);
-              dout("    dest is: " << ValPrint(nd.dest())
-                  << "\n");
-              dout("    src is: " << ValPrint(nd.src())
-                  << "\n");
-              dout("  DUGid is " << ret->second << "\n");
-              strongCons.emplace(ld_id, cons.strong());
-              // Just trust me on this one...
-              // We don't enforce this... assert(strong_ret.second);
-            }
-            break;
-          case ConstraintType::GlobalInit:
-            {
-              auto &glblcons = llvm::cast<NodeConstraint>(cons);
-              dout("  node is GlobalInit\n");
-
-              auto glbl_id = glblcons.nodeId();
-              dout("  Actual glbl_id is: (" << glbl_id << ")\n");
-              auto ret = DUG_.addNode<GlobalInitNode>(glbl_id, dest, src, offs);
-              dout("  Confirming GlobalInit node!\n");
-              if_debug(auto &nd =) DUG_.getNode<GlobalInitNode>(ret->second);
-              dout("    dest is: " << ValPrint(nd.dest())
-                  << "\n");
-              dout("    src is: " << ValPrint(nd.src())
-                  << "\n");
-              dout("  DUGid is " << ret->second << "\n");
-              assert(strongCons.find(glbl_id) == std::end(strongCons));
-              strongCons.emplace(glbl_id, cons.strong());
-            }
-            break;
-          case ConstraintType::Copy:
-            {
-              if (auto ncons = llvm::dyn_cast<NodeConstraint>(&cons)) {
-                dout("  node is Copy\n");
-                if_debug(auto ret =) DUG_.addNode<CopyNode>(ncons->nodeId(),
-                    dest, src, offs);
+          switch (cons.type()) {
+            case ConstraintType::AddressOf:
+              {
+                dout("  node is AddressOf\n");
+                // Add AllocNode
+                bool strong = cons.strong();
+                // O(log(n))
+                if_debug(auto ret =)
+                  DUG_.addNode<AllocNode>(dest, src, offs, strong);
                 dout("  DUGid is " << ret->second << "\n");
-                strongCons.emplace(dest, cons.strong());
-              } else {
-                dout("  node is Copy\n");
-                if_debug(auto ret =) DUG_.addNode<CopyNode>(dest, src, offs);
-                dout("  DUGid is " << ret->second << " : consid is: " << consid
-                    <<  "\n");
-                strongCons.emplace(dest, cons.strong());
+                // logout("n " << ret->second << "\n");
+
+                // FIXME: Should store strong information in ptsset for top lvl
+                //    variables...
+                // O(log(n))
+                auto it = strongCons.find(dest);
+                if (it == std::end(strongCons)) {
+                  strongCons.emplace(dest, strong);
+                } else {
+                  it->second &= strong;
+                }
+                // logout("t " << 0 << "\n");
               }
-            }
-            break;
-          default:
-            llvm_unreachable("Unrecognized constraint type");
-        }
-        consid++;
-      });
+              break;
+            case ConstraintType::Store:
+              // NOTE: we don't actually have a dest for stores, so we don't add
+              //   any mappings associated with them
+              // WRONG: We want the stores to be associated with the node
+              //   that the CFG would have given them (typically shared
+              //   with an addressof operator)
+              // Make a phony dest for this store:
+              {
+                auto &stcons = llvm::cast<NodeConstraint>(cons);
+                dout("  node is Store\n");
+                auto st_id = stcons.nodeId();
+                dout("  adding for store: (" << st_id << ") "
+                  << ValPrint(st_id) << "\n");
+                if_debug(auto ret =)
+                  DUG_.addNode<StoreNode>(st_id, dest, src, offs);
+                dout("  DUGid is " << ret->second << "\n");
+                // logout("n " << ret->second << "\n");
+                assert(strongCons.find(st_id) == std::end(strongCons));
+                strongCons.emplace(st_id, cons.strong());
+                // logout("t " << 1 << "\n");
+              }
+              break;
+            case ConstraintType::Load:
+              {
+                auto &ldcons = llvm::cast<NodeConstraint>(cons);
+                dout("  node is Load\n");
+                auto ld_id = ldcons.nodeId();
+                dout("  Actual load_id is: (" << ld_id << ") " <<
+                  ValPrint(ld_id) << "\n");
+                auto ret = DUG_.addNode<LoadNode>(ld_id, dest, src, offs);
+                // logout("n " << ret->second << "\n");
+                dout("  Confirming load node!\n");
+                if_debug(auto &nd =) DUG_.getNode<LoadNode>(ret->second);
+                dout("    dest is: " << ValPrint(nd.dest())
+                    << "\n");
+                dout("    src is: " << ValPrint(nd.src())
+                    << "\n");
+                dout("  DUGid is " << ret->second << "\n");
+                strongCons.emplace(ld_id, cons.strong());
+                // Just trust me on this one...
+                // We don't enforce this... assert(strong_ret.second);
+                // logout("t " << 2 << "\n");
+              }
+              break;
+            case ConstraintType::GlobalInit:
+              {
+                auto &glblcons = llvm::cast<NodeConstraint>(cons);
+                dout("  node is GlobalInit\n");
+
+                auto glbl_id = glblcons.nodeId();
+                dout("  Actual glbl_id is: (" << glbl_id << ")\n");
+                auto ret =
+                  DUG_.addNode<GlobalInitNode>(glbl_id, dest, src, offs);
+                // logout("n " << ret->second << "\n");
+                dout("  Confirming GlobalInit node!\n");
+                if_debug(auto &nd =) DUG_.getNode<GlobalInitNode>(ret->second);
+                dout("    dest is: " << ValPrint(nd.dest())
+                    << "\n");
+                dout("    src is: " << ValPrint(nd.src())
+                    << "\n");
+                dout("  DUGid is " << ret->second << "\n");
+                assert(strongCons.find(glbl_id) == std::end(strongCons));
+                strongCons.emplace(glbl_id, cons.strong());
+                // logout("t " << 3 << "\n");
+              }
+              break;
+            case ConstraintType::Copy:
+              {
+                if (auto ncons = llvm::dyn_cast<NodeConstraint>(&cons)) {
+                  dout("  node is Copy\n");
+                  if_debug(auto ret =)
+                    DUG_.addNode<CopyNode>(ncons->nodeId(), dest, src, offs);
+                  // logout("n " << ret->second << "\n");
+                  dout("  DUGid is " << ret->second << "\n");
+                  strongCons.emplace(dest, cons.strong());
+                } else {
+                  dout("  node is Copy\n");
+                  if_debug(auto ret =)
+                    DUG_.addNode<CopyNode>(dest, src, offs);
+                  // logout("n " << ret->second << "\n");
+                  dout("  DUGid is " << ret->second << " : consid is: "
+                      << consid <<  "\n");
+                  strongCons.emplace(dest, cons.strong());
+                }
+                // logout("t " << 4 << "\n");
+              }
+              break;
+            default:
+              llvm_unreachable("Unrecognized constraint type");
+          }
+
+          dout("Adding node to DUG for obj_id: " << dest << ": " <<
+              ValPrint(dest) << "\n");
+          // logout("s " << src << "\n");
+          // logout("d " << dest << "\n");
+
+          dout("  node src_obj_id: " << src << ": " <<
+              ValPrint(src) << "\n");
+          consid++;
+        });
+      }
 
       // Update strength for each store node
       // O(n*log(n))
-      std::for_each(std::begin(DUG_), std::end(DUG_),
-          [this, &strongCons] (SEG<ObjID>::node_iter_type &upnode) {
-        auto pnode = upnode.get();
+      {
+        PerfTimerPrinter strong_timer(llvm::dbgs(), "strong loop");
+        std::for_each(std::begin(DUG_), std::end(DUG_),
+            [this, &strongCons] (SEG<ObjID>::node_iter_type &upnode) {
+          auto pnode = upnode.get();
 
-        if (auto pst = llvm::dyn_cast<DUG::StoreNode>(pnode)) {
-          if (strongCons[pst->src()]) {
-            pst->setStrong();
+          if (auto pst = llvm::dyn_cast<DUG::StoreNode>(pnode)) {
+            if (strongCons[pst->src()]) {
+              pst->setStrong();
+            }
           }
-        }
-      });
+        });
+      }
 
       // for each node in DUG:
       //   Create an edge from my dest to all src's matching it
@@ -318,63 +345,66 @@ class DUG {
       // First, map all ids to sources
       // O(n*log(n))
       std::multimap<ObjID, DUGid> dest_to_node;
-      std::for_each(std::begin(DUG_), std::end(DUG_),
-          [this, &dest_to_node] (SEG<ObjID>::node_iter_type &upnode) {
-        auto &node = llvm::cast<DUGNode>(*upnode);
-        dest_to_node.emplace(node.dest(), node.id());
-      });
+      {
+        PerfTimerPrinter edge_discovery_timer(llvm::dbgs(), "Edge Discovery");
+        std::for_each(std::begin(DUG_), std::end(DUG_),
+            [this, &dest_to_node] (SEG<ObjID>::node_iter_type &upnode) {
+          auto &node = llvm::cast<DUGNode>(*upnode);
+          dest_to_node.emplace(node.dest(), node.id());
+        });
+      }
 
       // We add unnamed edges for top-level transitions
       // For each node, add an edge from its src() (if it exists) to it
       // O(n*E*log(E))
-      std::for_each(std::begin(DUG_), std::end(DUG_),
-          [this, &dest_to_node] (SEG<ObjID>::node_iter_type &upnode) {
-        auto pnode = upnode.get();
+      {
+        PerfTimerPrinter edge_addition(llvm::dbgs(), "Edge creation");
+        std::for_each(std::begin(DUG_), std::end(DUG_),
+            [this, &dest_to_node] (SEG<ObjID>::node_iter_type &upnode) {
+          auto pnode = upnode.get();
 
-        auto &node = llvm::cast<DUGNode>(*pnode);
+          auto &node = llvm::cast<DUGNode>(*pnode);
 
-        // Add an incoming edge from src
-        // O(log(n))
-        auto src_node_set = dest_to_node.equal_range(node.src());
-        // O(E)
-        std::for_each(src_node_set.first, src_node_set.second,
-            [this, &node] (std::pair<const ObjID, SEG<ObjID>::NodeID> &pr) {
-          auto &pr_node = DUG_.getNode<DUGNode>(pr.second);
-          auto dest_id = pr_node.id();
-          // Don't add an edge to yourself!
-          if (dest_id != node.id()) {
-            /*
-            dout("Adding edge: " << pr.second << " -> " <<
-                node.id() << "\n");
-            */
-            // O(log(E))
-            DUG_.addEdge<DUGEdge>(dest_id, node.id());
-          }
-        });
-
-        // StoreNode's also need an incoming edge from dest, because dest is the
-        //   store address, not an actual top level variable, and therefore the
-        //   store must be recomputed on dest changes
-        if (llvm::isa<StoreNode>(pnode) || llvm::isa<GlobalInitNode>(pnode)) {
-          auto dest_id = node.dest();
-
+          // Add an incoming edge from src
           // O(log(n))
-          auto dest_nodes = dest_to_node.equal_range(dest_id);
+          auto src_node_set = dest_to_node.equal_range(node.src());
           // O(E)
-          std::for_each(dest_nodes.first, dest_nodes.second,
+          std::for_each(src_node_set.first, src_node_set.second,
               [this, &node] (std::pair<const ObjID, SEG<ObjID>::NodeID> &pr) {
+            auto &pr_node = DUG_.getNode<DUGNode>(pr.second);
+            auto dest_id = pr_node.id();
             // Don't add an edge to yourself!
-            if (pr.second != node.id()) {
+            if (dest_id != node.id()) {
               /*
-              dout("Adding glbl/store edge: " << pr.second << " -> "
-                  << node.id() << "\n");
+              dout("Adding edge: " << pr.second << " -> " <<
+                  node.id() << "\n");
               */
-              // O(log(E))
-              DUG_.addEdge<DUGEdge>(pr.second, node.id());
+              // O(log(n))
+              DUG_.addEdgeSafe<DUGEdge>(dest_id, node.id());
             }
           });
-        }
-      });
+
+          // StoreNode's also need an incoming edge from dest, because dest
+          //   is the store address, not an actual top level variable, and
+          //   therefore the store must be recomputed on dest changes
+          if (llvm::isa<StoreNode>(pnode) ||
+              llvm::isa<GlobalInitNode>(pnode)) {
+            auto dest_id = node.dest();
+
+            // O(log(n))
+            auto dest_nodes = dest_to_node.equal_range(dest_id);
+            // O(E)
+            std::for_each(dest_nodes.first, dest_nodes.second,
+                [this, &node] (std::pair<const ObjID, SEG<ObjID>::NodeID> &pr) {
+              // Don't add an edge to yourself!
+              if (pr.second != node.id()) {
+                // O(log(n))
+                DUG_.addEdgeSafe<DUGEdge>(pr.second, node.id());
+              }
+            });
+          }
+        });
+      }
     }
     //}}}
 

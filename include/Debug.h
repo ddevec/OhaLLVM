@@ -71,6 +71,22 @@ class null_ostream : public llvm::raw_ostream {
 #define TODO(x) DO_PRAGMA(message ("TODO - " x))
 #define FIXME(x) DO_PRAGMA(message ("FIXME - " x))
 
+#if (defined(SPECSFS_LOGDEBUG) || defined(SPECSFS_DEBUG)) \
+  && !defined(SPECSFS_NODEBUG)
+#define if_print_debug(X) X
+#else
+#define if_print_debug(X)
+#endif
+
+#if defined(SPECSFS_LOGDEBUG) && !defined(SPECSFS_NODEBUG)
+#  if defined(SPECSFS_DEBUG)
+#    error "SPECSFS_LOGDEBUG and SPECSFS_DEBUG should not be defined together"
+#  endif
+#define logout(X) (llvm::dbgs() << X)
+#else
+#define logout(X)
+#endif
+
 // NOTE: DEBUG is defined at the top of each c file when needed!
 // debug on/off statements
 #if defined(SPECSFS_DEBUG) && !defined(SPECSFS_NODEBUG)

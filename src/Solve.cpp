@@ -2,7 +2,8 @@
  * Copyright (C) 2015 David Devecsery
  */
 
-#define SPECSFS_DEBUG
+// #define SPECSFS_DEBUG
+#define SPECSFS_LOGDEBUG
 
 #include <algorithm>
 #include <utility>
@@ -18,6 +19,8 @@ bool SpecSFS::solve(DUG &dug, ObjectMap &) {
   // Add allocs to worklist -- The ptstoset for the alloc will be updated on
   //   solve evaluation
   std::vector<ObjectMap::ObjID> dests;
+
+  logout("SOLVE\n");
 
   std::for_each(dug.nodes_begin(), dug.nodes_end(),
       [this, &work, &dests]
@@ -58,10 +61,19 @@ void DUG::AllocNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   // Update the top level variables for this alloc
   PtstoSet &dest_pts = pts_top.at(dest(), offset());
 
+  logout("n " << id() << "\n");
+  logout("t " << 0 << "\n");
+
+  logout("r " << rep() << "\n");
+  logout("s " << src() << "\n");
+  logout("d " << dest() << " " << dest_pts << "\n");
+  logout("f " << offset() << "\n");
+
   bool change = dest_pts.set(ObjectMap::getOffsID(src(), offset()));
 
   dout("  pts_top[" << dest() << "] + " << offset() << " is now: "
       << dest_pts << "\n");
+  logout("D " << dest() << " " << dest_pts << "\n");
 
   // Add all top level variables updated to worklist
   if (change) {
@@ -87,9 +99,18 @@ void DUG::CopyNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   dout("  src_top[" << src() << "] + " << offset() << " is: " <<
       src_pts << "\n");
 
+  logout("n " << id() << "\n");
+  logout("t " << 4 << "\n");
+
+  logout("r " << rep() << "\n");
+  logout("s " << src() << " " << src_pts << "\n");
+  logout("d " << dest() << " " << dest_pts << "\n");
+  logout("f " << offset() << "\n");
+
   // bool change = (dest_pts |= src_pts);
   bool change = dest_pts.orOffs(src_pts, offset());
 
+  logout("D " << dest() << " " << dest_pts << "\n");
   dout("  pts_top[" << dest() << "] is now: " << dest_pts << "\n");
 
   // Add all updated successors to worklist
@@ -117,18 +138,24 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   // If we added any edges:
   //   Add all successors to work
   PtstoSet &src_pts = pts_top.at(src());
-  dout("value at src() (" << src() << ") is: " <<
-    ValPrint(src()) << "\n");
-  dout("value at dest() (" << dest() << ") is: " <<
-    ValPrint(dest()) << "\n");
+  dout("value at src() (" << src() << ")\n");
+  dout("value at dest() (" << dest() << ")\n");
   PtstoSet &dest_pts = pts_top.at(dest());
-  dout("Load is " << rep() << ": " <<
-    ValPrint(rep()) << "\n");
+  dout("Load is " << rep() << "\n");
+
+  logout("n " << id() << "\n");
+  logout("t " << 2 << "\n");
+
+  logout("r " << rep() << "\n");
+  logout("s " << src() << " " << src_pts << "\n");
+  logout("d " << dest() << " " << dest_pts << "\n");
+
+  logout("i " << in() << "\n");
 
   bool changed = false;
   std::for_each(std::begin(src_pts), std::end(src_pts),
       [this, &dug, &work, &changed, &dest_pts](DUG::ObjID id) {
-    dout("  id is: " << id << ": " << ValPrint(id) << "\n");
+    dout("  id is: " << id << "\n");
     dout("  in is: " << in_ << "\n");
 
     PtstoSet &pts = in_.at(id);
@@ -137,6 +164,8 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
 
     changed |= (dest_pts |= pts);
   });
+
+  logout("D " << dest() << " " << dest_pts << "\n");
 
   if_debug(
     dout("  pts_top[" << dest() << "] is now: ");
@@ -151,8 +180,8 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   //    it has...)
   // We need to update the ptsto of all of our part_successors
   // FIXME: Only do this for changed info?
-  dout("  Load dest is: " << ValPrint(dest()) << "\n");
-  dout("  Load src is: " << ValPrint(src()) << "\n");
+  dout("  Load dest is: " << dest() << "\n");
+  dout("  Load src is: " << src() << "\n");
   std::for_each(std::begin(part_succs_), std::end(part_succs_),
       [this, &dug, &work]
       (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
@@ -188,7 +217,7 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
 
 void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   dout("Process store start\n");
-  dout("Store is: " << rep() << ": " << ValPrint(rep()) << "\n");
+  dout("Store is: " << rep() << "\n");
   // if strong && concrete
   //   clear all outgoing edges from pts_top(src) from out
   //
@@ -199,14 +228,24 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   //     add OUT(v) to their succ.IN(v)
   //     if (succ.IN.changed)
   //       Add succ to worklist
-  dout("  Source is: " << src() << " : " << ValPrint(src()) << "\n");
-  dout("  Dest is: " << dest() << " : " << ValPrint(dest()) << "\n");
+  dout("  Source is: " << src() << "\n");
+  dout("  Dest is: " << dest() << "\n");
   PtstoSet &src_pts = pts_top.at(src());
   PtstoSet &dest_pts = pts_top.at(dest());
   bool change = false;
 
   dout("  Initial src_pts: " << src_pts << "\n");
   dout("  Initial dest_pts: " << dest_pts << "\n");
+
+  logout("n " << id() << "\n");
+  logout("t " << 1 << "\n");
+
+  logout("r " << rep() << "\n");
+  logout("s " << src() << " " << src_pts << "\n");
+  logout("d " << dest() << " " << dest_pts << "\n");
+
+  logout("i " << in() << "\n");
+  logout("o " << out_ << "\n");
 
   // If this is a strong update, remove all outgoing edges from dest
   // NOTE: This is a strong update if we are updating a single concrete location
@@ -237,11 +276,14 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
     dout("    Final in: " << in() << "\n");
   }
 
+  logout("I " << in() << "\n");
+  logout("O " << out_ << "\n");
+
   // If something changed, update all successors
   if (change) {
     dout("  Have change on node with src: " <<
-      ValPrint(src()) << ", dest: " <<
-      ValPrint(dest()) << "\n");
+      src() << ", dest: " <<
+      dest() << "\n");
     // FIXME: Only do this for changed info?
     // For each successor partition of this store
     std::for_each(std::begin(part_succs_), std::end(part_succs_),
@@ -252,15 +294,15 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
       auto &nd = dug.getNode(dug_id);
 
       dout("  Checking node: " << dug_id << " or: " <<
-          ValPrint(nd.extId()) << "\n");
+          nd.extId() << "\n");
 
 
-      dout("  before in for nd is: " << nd.in() << "\n");
+      // dout("  before in for nd is: " << nd.in() << "\n");
 
       // Update the input set of the successor node
       bool c = nd.in().orPart(out_, dug.objToPartMap(), part_id);
 
-      dout("  after in for nd is: " << nd.in() << "\n");
+      // dout("  after in for nd is: " << nd.in() << "\n");
 
       if (c) {
         dout("    Pushing nd to work: " << nd.id() << "\n");
@@ -277,6 +319,12 @@ void DUG::PhiNode::process(DUG &dug, TopLevelPtsto &, Worklist &work) {
   //   succ.IN |= IN
   // if succ.IN.changed():
   //   worklist.add(succ.IN)
+
+  logout("n " << id() << "\n");
+  logout("t " << 5 << "\n");
+
+  logout("r " << rep() << "\n");
+  logout("i " << in() << "\n");
   std::for_each(std::begin(part_succs_), std::end(part_succs_),
       [this, &work, &dug]
       (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
@@ -301,11 +349,8 @@ void DUG::GlobalInitNode::process(DUG &dug, TopLevelPtsto &pts_top,
   bool change = first_;
   if (first_) {
     first_ = false;
-    dout("Adding " << src() << ", or " <<
-        ValPrint(src()) << " to top " << dest() << ", or " <<
-        ValPrint(dest()) << "\n");
-    dout("Thats a node for: " << ValPrint(rep()) <<
-        "\n");
+    dout("Adding " << src() << " to top " << dest() << "\n");
+    dout("Thats a node for: " << rep() << "\n");
 
     auto &dest_pts = pts_top.at(dest());
     auto &src_pts = pts_top.at(src());
@@ -316,8 +361,19 @@ void DUG::GlobalInitNode::process(DUG &dug, TopLevelPtsto &pts_top,
     // dout("dest_pts after: " << dest_pts << "\n");
     dout("in is: " << in() << "\n");
 
+    logout("n " << id() << "\n");
+    logout("t " << 3 << "\n");
+
+    logout("r " << rep() << "\n");
+    logout("s " << src() << " " << src_pts << "\n");
+    logout("d " << dest() << " " << dest_pts << "\n");
+
+    logout("i " << in() << "\n");
+
     assert(dest_pts.size() == 1);
     change |= in().assign(*std::begin(dest_pts), src_pts);
+
+    logout("I " << in() << "\n");
 
     // If we updated the set, wake all of our successors
     // For each successor partition
