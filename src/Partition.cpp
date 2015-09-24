@@ -274,7 +274,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
 
     // Create a clone of the ControlFlowGraph for this partition's ssa
     CFG::ControlFlowGraph part_graph =
-      ssa.getSEG().clone<CFG::Node, CFG::Edge>();
+      ssa.getSEG().clone<CFG::Node>();
 
     // Okay, now clear out any r, p, or c info for the nodes in that graph
     std::for_each(std::begin(part_graph), std::end(part_graph),
@@ -331,12 +331,10 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
         // Okay, now that we have the CFGid, update its info:
         // If this is a load:
         if (llvm::isa<DUG::LoadNode>(node)) {
-          auto cfg_id = ssa.getCFGid(node.extId());
+          auto cfg_id = ssa.getCFGid(node.rep());
 
-          auto node_set = part_graph.getNodes(cfg_id);
-          assert(std::distance(node_set.first, node_set.second) == 1);
           // Ooops, I aliased a variable... shame on me
-          auto &node = part_graph.getNode<CFG::Node>(node_set.first->second);
+          auto &node = part_graph.getNode<CFG::Node>(cfg_id);
 
           // Set R
           node.setR();
@@ -356,13 +354,10 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
         // If its a store:
         } else if (llvm::isa<DUG::StoreNode>(node)) {
           // Get the cfg_id of this node
-          auto cfg_id = ssa.getCFGid(node.extId());
+          auto cfg_id = ssa.getCFGid(node.rep());
 
           // Get the node in the CFG
-          auto node_set = part_graph.getNodes(cfg_id);
-          assert(std::distance(node_set.first, node_set.second) == 1);
-          // Ooops, I aliased a variable... shame on me
-          auto &node = part_graph.getNode<CFG::Node>(node_set.first->second);
+          auto &node = part_graph.getNode<CFG::Node>(cfg_id);
 
           // Set M and R
           node.setM();
@@ -388,10 +383,8 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
           // Assuming global init
           // For this we need a global init node in the CFG
           // The init node (CFGInit was made especially for this purpose
-          auto cfg_node_pr = part_graph.getNodes(CFG::CFGInit);
-          assert(std::distance(cfg_node_pr.first, cfg_node_pr.second) == 1);
           auto &cfg_node =
-            part_graph.getNode<CFG::Node>(cfg_node_pr.first->second);
+            part_graph.getNode<CFG::Node>(CFG::CFGInit);
 
           cfg_node.setM();
           cfg_node.setR();
@@ -464,7 +457,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
           (const CFG::NodeID node_id) {
         auto &ssa_node = part_ssa.getNode<CFG::Node>(node_id);
 
-        auto cfg_id = ssa_node.extId();
+        auto cfg_id = ssa_node.id();
         dout("Visiting cfg_id of: " << cfg_id << "\n");
 
         // The DUG rep of this id
@@ -582,10 +575,10 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
         std::for_each(std::begin(preds), std::end(preds),
             [&graph, &delayed_edges, &cfg_node_rep, &dug_id,
               &part_id, &part_ssa]
-            (const CFG::EdgeID pred_edge_id) {
-          auto pred_node_id = part_ssa.getEdge(pred_edge_id).src();
+            (const CFG::NodeID pred_id) {
+          auto pred_node_id = pred_id;
 
-          auto pred_cfg_id = part_ssa.getNode<CFG::Node>(pred_node_id).extId();
+          auto pred_cfg_id = part_ssa.getNode<CFG::Node>(pred_node_id).id()
           dout("    have pred_node_id of: " << pred_node_id << "\n");
 
           // NOTE: if we were not doing a topo order we may have to evaluate the
@@ -614,7 +607,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
       std::for_each(std::begin(delayed_edges), std::end(delayed_edges),
           [&graph, &part_ssa, &cfg_node_rep, &delayed_dedup_edges]
           (std::tuple<CFG::NodeID, DUG::DUGid, DUG::PartID> &tup) {
-        auto pred_cfg_id = part_ssa.getNode(std::get<0>(tup)).extId();
+        auto pred_cfg_id = part_ssa.getNode(std::get<0>(tup)).id();
         delayed_dedup_edges.emplace_back(pred_cfg_id, std::get<1>(tup),
           std::get<2>(tup));
       });

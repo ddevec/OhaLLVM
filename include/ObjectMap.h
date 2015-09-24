@@ -665,8 +665,6 @@ class ObjectMap {
           pm.emplace(id, val);
 
 
-          llvm::dbgs() << "objIsStruct[" << id << "] = " << num_sizes-cur_size
-            << "\n";
           objIsStruct_.emplace(id, num_sizes-cur_size);
           cur_size++;
           // Denote which objects this structure field occupies

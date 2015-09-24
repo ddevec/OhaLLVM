@@ -81,7 +81,7 @@ class Worklist {
 class PtstoSet {
   //{{{
  public:
-    typedef typename SEG<ObjectMap::ObjID>::NodeID NodeID;
+    typedef typename SEG::NodeID NodeID;
     bool set(ObjectMap::ObjID id) {
       return ptsto_.test_and_set(id.val());
     }
@@ -305,7 +305,7 @@ class PtstoSet {
 class TopLevelPtsto {
   //{{{
  public:
-    typedef typename SEG<ObjectMap::ObjID>::NodeID NodeID;
+    typedef typename SEG::NodeID NodeID;
     typedef ObjectMap::ObjID ObjID;
 
     TopLevelPtsto() = default;
@@ -399,7 +399,7 @@ class TopLevelPtsto {
 class PtstoGraph {
   //{{{
  public:
-    typedef typename SEG<ObjectMap::ObjID>::NodeID NodeID;
+    typedef typename SEG::NodeID NodeID;
     typedef ObjectMap::ObjID ObjID;
 
     PtstoGraph() = default;

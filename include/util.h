@@ -22,6 +22,7 @@
 
 // Performance junks
 class PerfTimer {
+  //{{{
  public:
     typedef std::chrono::high_resolution_clock Clock;
     typedef Clock::time_point TimePoint;
@@ -91,9 +92,11 @@ class PerfTimer {
     Duration totalTime_ = Duration::zero();
     int64_t numTimes_ = 0;
     bool running_ = false;
+  //}}}
 };
 
 class PerfTimerPrinter {
+  //{{{
  public:
     explicit PerfTimerPrinter(llvm::raw_ostream &o, std::string name) :
         o_(o), name_(std::move(name)) {
@@ -113,6 +116,7 @@ class PerfTimerPrinter {
     llvm::raw_ostream &o_;
     PerfTimer timer_;
     std::string name_;
+  //}}}
 };
 
 template<class T = uint64_t, T initial_value = T(0),

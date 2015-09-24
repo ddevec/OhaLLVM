@@ -1894,7 +1894,7 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
             is_ext = true;
           // If its not an allocation, add normal constraints
           } else {
-            llvm::dbgs() << "  Non-malloc call!\n";
+            // llvm::dbgs() << "  Non-malloc call!\n";
             is_ext |= addConstraintsForCall(cg, cfg, omap, CS,
               const_cast<llvm::Function *>(fcn), nullptr);
           }

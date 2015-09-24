@@ -78,9 +78,8 @@ void DUG::AllocNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   // Add all top level variables updated to worklist
   if (change) {
     std::for_each(succ_begin(), succ_end(),
-        [&dug, &work](DUG::EdgeID id) {
-      auto &edge = dug.getEdge(id);
-      auto &nd = dug.getNode(edge.dest());
+        [&dug, &work](DUG::DUGid succ_id) {
+      auto &nd = dug.getNode(succ_id);
       dout("  Pushing nd to work: " << nd.id() << "\n");
       work.push(&nd);
     });
@@ -117,9 +116,8 @@ void DUG::CopyNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   // Add all updated successors to worklist
   if (change) {
     std::for_each(succ_begin(), succ_end(),
-        [&dug, &work](DUG::EdgeID id) {
-      auto &edge = dug.getEdge(id);
-      auto &nd = dug.getNode(edge.dest());
+        [&dug, &work](DUG::DUGid succ_id) {
+      auto &nd = dug.getNode(succ_id);
       dout("  Pushing nd to work: " << nd.id() << "\n");
       work.push(&nd);
     });
@@ -207,9 +205,8 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
 
   if (changed) {
     std::for_each(succ_begin(), succ_end(),
-        [&dug, &work](DUG::EdgeID id) {
-      auto &edge = dug.getEdge(id);
-      auto &nd = dug.getNode(edge.dest());
+        [&dug, &work](DUG::DUGid succ_id) {
+      auto &nd = dug.getNode(succ_id);
       dout("  Pushing nd to work: " << nd.id() << "\n");
       work.push(&nd);
     });
@@ -403,9 +400,8 @@ void DUG::GlobalInitNode::process(DUG &dug, TopLevelPtsto &pts_top,
 
   if (change) {
     std::for_each(succ_begin(), succ_end(),
-        [&dug, &work](DUG::EdgeID id) {
-      auto &edge = dug.getEdge(id);
-      auto &nd = dug.getNode(edge.dest());
+        [&dug, &work](DUG::DUGid succ_id) {
+      auto &nd = dug.getNode(succ_id);
       dout("  Pushing non-part nd to work: " << nd.id() << "\n");
       work.push(&nd);
     });

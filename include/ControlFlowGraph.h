@@ -16,10 +16,6 @@ class CFG {
  public:
 
     // Id Types {{{
-    // Control Flow graph ids
-    struct cfg_id { };
-    typedef ID<cfg_id, int32_t, -1> CFGid;
-    //}}}
 
     // Constant CFGid values {{{
     enum class CFGEnum : int32_t {
@@ -29,25 +25,26 @@ class CFG {
       eLastEnumValue
     };
 
-    static const CFGid CFGInit;
-    static const CFGid CFGArgvBegin;
-    static const CFGid CFGArgvEnd;
+    static const SEG::NodeID CFGInit;
+    static const SEG::NodeID CFGArgvBegin;
+    static const SEG::NodeID CFGArgvEnd;
     //}}}
 
     // Graph types {{{
-    typedef SEG<CFGid> ControlFlowGraph;
-    typedef SEG<CFGid>::NodeID NodeID;
-    typedef SEG<CFGid>::EdgeID EdgeID;
+    typedef SEG ControlFlowGraph;
+    typedef SEG::NodeID NodeID;
+    // Legacy... I should remove at some point
+    typedef SEG::NodeID CFGid;
     //}}}
 
     // Nodes {{{
-    class Node : public UnifyNode<CFGid> {
+    class Node : public SEG::Node {
      public:
-        Node(SEG<CFGid>::NodeID node_id, CFGid id) :
-          UnifyNode<CFGid>(NodeKind::CFGNode, node_id, id) { }
+        Node(SEG::NodeID node_id) :
+          SEG::Node(NodeKind::CFGNode, node_id) { }
 
-        Node(SEG<CFGid>::NodeID node_id, CFGid id, const llvm::BasicBlock *bb) :
-          UnifyNode<CFGid>(NodeKind::CFGNode, node_id, id), bb_(bb) { }
+        Node(SEG::NodeID node_id, const llvm::BasicBlock *bb) :
+          SEG::Node(NodeKind::CFGNode, node_id), bb_(bb) { }
 
         // No Copy/move {{{
         Node(const Node &) = default;
@@ -84,17 +81,11 @@ class CFG {
         void print_label(llvm::raw_ostream &ofil,
             const ObjectMap &) const override {
           if (bb_ == nullptr) {
-            ofil << SEGNode<CFGid>::extId() << " : {";
+            ofil << SEG::Node::id() << " : {";
           } else {
-            ofil << SEGNode<CFGid>::extId() << "(" << bb_->getName() << ")" <<
+            ofil << SEG::Node::id() << "(" << bb_->getName() << ")" <<
                 " : {";
           }
-
-          std::for_each(UnifyNode<CFGid>::rep_begin(),
-              UnifyNode<CFGid>::rep_end(),
-              [&ofil] (CFGid rep) {
-            ofil << " " << rep;
-          });
 
           ofil << " } : m: " << m_ << " r: " << r_ << " c: " << c_;
         }
@@ -127,7 +118,7 @@ class CFG {
         //}}}
 
         // Unite {{{
-        void unite(SEG<CFGid> &graph, SEGNode<CFGid> &n) override {
+        void unite(SEG &graph, SEG::Node &n) override {
           auto &node = llvm::cast<Node>(n);
 
           m_ |= node.m_;
@@ -137,27 +128,15 @@ class CFG {
           uses_.insert(std::begin(node.uses_), std::end(node.uses_));
           defs_.insert(std::begin(node.defs_), std::end(node.defs_));
           glblInits_.insert(std::begin(node.glblInits_), std::end(node.glblInits_));
-          /*
-          llvm::dbgs() << "Post merge for node: " << extId() << "<-" <<
-            node.extId() << "\n";
-          llvm::dbgs() << "  node.debug_uses:\n";
-          node.debug_defs();
-          llvm::dbgs() << "  debug_uses():\n";
-          debug_defs();
-          */
 
 
-          UnifyNode<CFGid>::unite(graph, n);
+          SEG::Node::unite(graph, n);
         }
         //}}}
 
         // Def/use tracking {{{
         bool addDef(ObjectMap::ObjID def_id) {
           // Don't allow double adds... for now
-          /*
-          llvm::dbgs() << "Adding def: " << def_id << " to node (" << id() <<
-            ") : " << extId() << "\n";
-          */
           auto ret = defs_.insert(def_id);
           assert(ret.second);
           return ret.second;
@@ -320,9 +299,10 @@ class CFG {
     CFG() {
       // Add the default nodes to the graph...
       for (int i = 0; i < static_cast<int32_t>(CFGEnum::eLastEnumValue); i++) {
-        auto node_it = CFG_.addNode<Node>(CFGid(i));
+        auto node_id = CFG_.addNode<Node>();
+        assert(node_id.val() == i);
 
-        auto &node = CFG_.getNode<Node>(node_it->second);
+        auto &node = CFG_.getNode<Node>(node_id);
 
         // global init nodes are np nodes, and relevant
         node.setM();
@@ -331,22 +311,11 @@ class CFG {
     }
 
     CFG(const CFG &other) :
-      CFG_(other.getSEG().clone<Node, Edge>()) { }
+      CFG_(other.getSEG().clone<Node>()) { }
     CFG(CFG &&) = default;
 
     CFG &operator=(const CFG &) = delete;
     CFG &operator=(CFG &&) = default;
-    //}}}
-
-    // Edges {{{
-    class Edge : public SEGEdge<CFGid> {
-     public:
-        typedef typename SEG<CFGid>::NodeID NodeID;
-        Edge(NodeID dest, NodeID src) :
-            SEGEdge<CFGid>(EdgeKind::CFGEdge, dest, src) { }
-
-     private:
-    };
     //}}}
 
     // Setters {{{
@@ -354,10 +323,8 @@ class CFG {
       CFG_.cleanEdges();
     }
 
-    void addEdge(CFGid cfg_id1, CFGid cfg_id2) {
-      auto node_id1 = getNode(cfg_id1).id();
-      auto node_id2 = getNode(cfg_id2).id();
-      CFG_.addEdge<Edge>(node_id1, node_id2);
+    void addEdge(CFGid node_id1, CFGid node_id2) {
+      CFG_.addEdge(node_id1, node_id2);
     }
 
     void addCallsite(CFGid call_id, ConstraintGraph::ObjID fcn_id, CFGid ret_id) {
@@ -409,20 +376,6 @@ class CFG {
       return CFG_.getNode<Node>(id);
     }
 
-    Node &getNode(CFGid id) {
-      auto pr = CFG_.getNodes(id);
-      assert(std::distance(pr.first, pr.second) == 1);
-
-      return getNode(pr.first->second);
-    }
-
-    const Node &getNode(CFGid id) const {
-      auto pr = CFG_.getNodes(id);
-      assert(std::distance(pr.first, pr.second) == 1);
-
-      return getNode(pr.first->second);
-    }
-
     const std::vector<std::pair<CFGid, CFGid>> &
     getCallRetInfo(ConstraintGraph::ObjID fcn_id) const {
       return cfgFcnToCallRet_.at(fcn_id);
@@ -469,10 +422,7 @@ class CFG {
     // Def/use/global tracking {{{
     // Setters {{{
     bool addUse(CFGid cfg_id, ObjectMap::ObjID load_dest_id) {
-      auto node_pr = CFG_.getNodes(cfg_id);
-      assert(std::distance(node_pr.first, node_pr.second) == 1);
-      auto node_id = node_pr.first->second;
-      auto &node = CFG_.getNode<Node>(node_id);
+      auto &node = CFG_.getNode<Node>(cfg_id);
 
       node.addUse(load_dest_id);
 
@@ -482,10 +432,7 @@ class CFG {
     }
 
     bool addDef(CFGid cfg_id, ObjectMap::ObjID store_id) {
-      auto node_pr = CFG_.getNodes(cfg_id);
-      assert(std::distance(node_pr.first, node_pr.second) == 1);
-      auto node_id = node_pr.first->second;
-      auto &node = CFG_.getNode<Node>(node_id);
+      auto &node = CFG_.getNode<Node>(cfg_id);
 
       node.addDef(store_id);
 
@@ -521,19 +468,11 @@ class CFG {
 
     // Unique Identifier Generator {{{
     CFGid nextNode() {
-      auto ret = idGenerator_.next();
-
-      CFG_.addNode<Node>(ret);
-
-      return ret;
+      return CFG_.addNode<Node>();
     }
 
     CFGid nextNode(const llvm::BasicBlock *bb) {
-      auto ret = idGenerator_.next();
-
-      CFG_.addNode<Node>(ret, bb);
-
-      return ret;
+      return CFG_.addNode<Node>(bb);
     }
     //}}}
 
@@ -632,40 +571,6 @@ class CFG {
     //}}}
 
     // Def/use/global init Iterators {{{
-    /*
-    typedef std::map<ObjectMap::ObjID, >::const_iterator
-      const_def_use_iterator;
-
-    typedef std::map<CFGid, std::vector<ObjectMap::ObjID>>::iterator
-      def_use_iterator;
-    */
-
-    /*
-    const_def_use_iterator defs_begin() const {
-      return std::begin(defs_);
-    }
-
-    const_def_use_iterator defs_end() const {
-      return std::end(defs_);
-    }
-
-    def_use_iterator uses_begin() {
-      return std::begin(uses_);
-    }
-
-    def_use_iterator uses_end() {
-      return std::end(uses_);
-    }
-
-    const_def_use_iterator uses_begin() const {
-      return std::begin(uses_);
-    }
-
-    const_def_use_iterator uses_end() const {
-      return std::end(uses_);
-    }
-    */
-
     typedef std::vector<ObjectMap::ObjID>::const_iterator
       const_glbl_init_iterator;
 
@@ -736,11 +641,6 @@ class CFG {
 
     // List of functions that have no obvious uses
     std::map<ObjectMap::ObjID, std::vector<ConstraintGraph::ConsID>> unusedFunctions_;
-
-    // CFGid Generator for CFGids
-    IDGenerator<CFGid, static_cast<int32_t>(CFGEnum::eLastEnumValue)>
-      idGenerator_;
-    //}}}
 };
 
 #endif  // INCLUDE_CONTROLFLOWGRAPH_H_

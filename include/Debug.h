@@ -71,46 +71,50 @@ class null_ostream : public llvm::raw_ostream {
 #define TODO(x) DO_PRAGMA(message ("TODO - " x))
 #define FIXME(x) DO_PRAGMA(message ("FIXME - " x))
 
+// If debug NDEBUG enabled
+#ifndef NDEBUG
+#  define if_debug_enabled(X) X
+#else
+#  define if_debug_enabled(X)
+#endif
+
 #if (defined(SPECSFS_LOGDEBUG) || defined(SPECSFS_DEBUG)) \
   && !defined(SPECSFS_NODEBUG)
-#define if_print_debug(X) X
+#  define if_print_debug(X) X
 #else
-#define if_print_debug(X)
+#  define if_print_debug(X)
 #endif
 
 #if defined(SPECSFS_LOGDEBUG) && !defined(SPECSFS_NODEBUG)
 #  if defined(SPECSFS_DEBUG)
 #    error "SPECSFS_LOGDEBUG and SPECSFS_DEBUG should not be defined together"
 #  endif
-#define logout(X) (llvm::dbgs() << X)
+#  define logout(X) (llvm::dbgs() << X)
 #else
-#define logout(X)
+#  define logout(X)
 #endif
 
 // NOTE: DEBUG is defined at the top of each c file when needed!
 // debug on/off statements
 #if defined(SPECSFS_DEBUG) && !defined(SPECSFS_NODEBUG)
-#define if_debug(...) __VA_ARGS__
-#define if_not_debug(...)
-#define if_else_debug(X, Y) X
-#define debug_or_true(X) X
-#define debug_or_false(X) X
+#  define if_debug(...) __VA_ARGS__
+#  define if_not_debug(...)
+#  define if_else_debug(X, Y) X
+#  define debug_or_true(X) X
+#  define debug_or_false(X) X
 #else
-#define if_debug(...)
-#define if_not_debug(...) __VA_ARGS__
-#define if_else_debug(X, Y) Y
-#define debug_or_true(X) true
-#define debug_or_false(X) false
+#  define if_debug(...)
+#  define if_not_debug(...) __VA_ARGS__
+#  define if_else_debug(X, Y) Y
+#  define debug_or_true(X) true
+#  define debug_or_false(X) false
 #endif
 
 // printing
 #if defined(SPECSFS_DEBUG) && !defined(SPECSFS_NODEBUG)
-#define dout(X) (llvm::dbgs() << X)
+#  define dout(X) (llvm::dbgs() << X)
 #else
-// This can/should be super-duper optimized
-// #define dout null_ostream::nullstream()
-#define dout(X)
-//  #define dout 0 && llvm::dbgs()
+#  define dout(X)
 #endif
 
 #endif  // INCLUDE_DEBUG_H_

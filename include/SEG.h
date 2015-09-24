@@ -76,20 +76,7 @@ static void printDotFooter(llvm::raw_ostream &ofil) {
 // ObjID->ObjID in 1:1 mapping, or PEid->ObjID)
 
 
-template<typename id_type>
-struct id_converter_default {
-  //{{{
-  id_type operator()(id_type in) {
-    return in;
-  }
-  //}}}
-};
-
 // Forward decl for graph!
-struct edge_id { };
-typedef ID<edge_id, int32_t, -1> EdgeID;
-
-template<typename id_type>
 class SEG;
 
 // Enum For llvm RTTI {{{
@@ -124,456 +111,6 @@ enum class EdgeKind {
 };
 //}}}
 
-template<typename id_type>
-class SEGEdge {
-  //{{{
- public:
-    typedef typename SEG<id_type>::EdgeID EdgeID;
-    typedef typename SEG<id_type>::NodeID NodeID;
-
-    SEGEdge(EdgeKind kind, NodeID src, NodeID dest) :
-        kind_(kind), src_(src), dest_(dest) { }
-
-    NodeID src() const {
-      return src_;
-    }
-
-    NodeID dest() const {
-      return dest_;
-    }
-
-    // By default print nothing
-    virtual void print_label(llvm::raw_ostream &,
-        const ObjectMap &) const { }
-
-    EdgeKind getKind() const {
-      return kind_;
-    }
-
-    static bool classof(const SEGEdge<id_type> *) {
-      return true;
-    }
-
-    virtual bool operator==(const SEGEdge<id_type> &rhs) const {
-      return src() == rhs.src() && dest() == rhs.dest();
-    }
-
-    bool operator!=(const SEGEdge<id_type> &rhs) const {
-      return !operator==(rhs);
-    }
-
-    virtual bool operator==(
-        const std::reference_wrapper<SEGEdge<id_type>> &rhs) const {
-      // Remove reference wrapper...
-      return operator==(rhs.get());
-    }
-
-    virtual bool operator<(const SEGEdge<id_type> &rhs) const {
-      if (src() != rhs.src()) {
-        return src() < rhs.src();
-      }
-
-      return dest() <= rhs.dest();
-    }
-
-    friend bool operator<(const std::reference_wrapper<SEGEdge<id_type>> &lhs,
-        const std::reference_wrapper<SEGEdge<id_type>> &rhs) {
-      // Remove reference wrapper...
-      return lhs.get() < rhs.get();
-    }
-
-    void retarget(std::pair<NodeID, NodeID> &new_edge) {
-      src_ = new_edge.first;
-      dest_ = new_edge.second;
-    }
-
- protected:
-    EdgeKind kind_;
-
-    NodeID src_;
-    NodeID dest_;
-  //}}}
-};
-
-
-template<typename id_type>
-class SEGNode {
-  //{{{
- public:
-    typedef typename SEG<id_type>::NodeID NodeID;
-    typedef typename SEG<id_type>::EdgeID EdgeID;
-
-    // Constructors {{{
-    SEGNode(NodeKind kind, NodeID node_id, id_type ext_id) : kind_(kind),
-      id_(node_id), extId_(ext_id) { }
-
-    SEGNode(const SEGNode &) = default;
-    SEGNode(SEGNode &&) = default;
-
-    SEGNode &operator=(const SEGNode &) = default;
-    SEGNode &operator=(SEGNode &&) = default;
-    //}}}
-
-    // Comparison operators {{{
-    bool operator==(const SEGNode &n) {
-      return id_ == n.id_;
-    }
-
-    bool operator!=(const SEGNode &n) {
-      return id_ != n.id_;
-    }
-
-    bool operator<(const SEGNode &n) {
-      return id_ < n.id_;
-    }
-    //}}}
-
-    // Accessors {{{
-    /*
-    struct hasher {
-      std::size_t operator()(const SEGNode &nd) const {
-        return std::hash<int32_t>(nd.id());
-      }
-    };
-    */
-    // For llvm RTTI
-    NodeKind getKind() const {
-      return kind_;
-    }
-
-    std::vector<EdgeID> &preds() {
-      return preds_;
-    }
-
-    const std::vector<EdgeID> &preds() const {
-      return preds_;
-    }
-
-    std::vector<EdgeID> &succs() {
-      return succs_;
-    }
-
-    const std::vector<EdgeID> &succs() const {
-      return succs_;
-    }
-
-    id_type extId() const {
-      return extId_;
-    }
-
-    NodeID id() const {
-      return id_;
-    }
-
-    // Required for SEG to support UnifyNode
-    bool is_rep(id_type id) const {
-      return true;
-    }
-    //}}}
-
-    // LLVM RTTI support {{{
-    static bool classof(const SEGNode<id_type> *) {
-      return true;
-    }
-    //}}}
-
-    // Modifiers {{{
-    bool addSucc(EdgeID id) {
-      succs().push_back(id);
-      return true;
-    }
-
-    void removeDuplicatePreds(SEG<id_type> &seg) {
-      std::vector<EdgeID> remove_list;
-      std::set<std::reference_wrapper<SEGEdge<id_type>>> edges;
-      for (auto edge_id : preds()) {
-        auto ret = edges.insert(seg.getEdge(edge_id));
-        if (!ret.second) {
-          remove_list.push_back(edge_id);
-        }
-      }
-
-      std::for_each(std::begin(remove_list), std::end(remove_list),
-          [this, &seg](EdgeID rm_id) {
-        // Delete the edge
-        seg.removeEdge(rm_id);
-      });
-    }
-
-    void removeDuplicateSuccs(SEG<id_type> &seg) {
-      std::vector<EdgeID> remove_list;
-      std::set<std::reference_wrapper<SEGEdge<id_type>>> edges;
-      for (auto edge_id : succs()) {
-        auto ret = edges.insert(seg.getEdge(edge_id));
-        if (!ret.second) {
-          remove_list.push_back(edge_id);
-        }
-      }
-
-      std::for_each(std::begin(remove_list), std::end(remove_list),
-          [this, &seg](EdgeID rm_id) {
-        // Delete the edge
-        seg.removeEdge(rm_id);
-      });
-    }
-
-    bool addPred(EdgeID id) {
-      preds().push_back(id);
-      return true;
-    }
-
-
-    void removeSucc(EdgeID id) {
-      auto found = std::end(succs());
-      for (auto it = std::begin(succs()), en = std::end(succs());
-          it != en; ++it) {
-        if (*it == id) {
-          found = it;
-          break;
-        }
-      }
-
-      assert(found != std::end(succs()));
-      std::swap(*found, succs()[succs().size()-1]);
-      succs().pop_back();
-    }
-
-    void removePred(EdgeID id) {
-      auto found = std::end(preds());
-      for (auto it = std::begin(preds()), en = std::end(preds());
-          it != en; ++it) {
-        if (*it == id) {
-          found = it;
-          break;
-        }
-      }
-
-      assert(found != std::end(preds()));
-      std::swap(*found, preds()[preds().size()-1]);
-      preds().pop_back();
-    }
-    //}}}
-
-    // Iterators {{{
-    typedef typename std::vector<EdgeID>::iterator iterator;
-    typedef typename std::vector<EdgeID>::const_iterator const_iterator;
-
-    iterator succ_begin() {
-      return std::begin(succs_);
-    }
-
-    iterator succ_end() {
-      return std::end(succs_);
-    }
-
-    const_iterator succ_begin() const {
-      return std::begin(succs_);
-    }
-
-    const_iterator succ_end() const {
-      return std::end(succs_);
-    }
-
-    const_iterator succ_cbegin() const {
-      return succs_.cbegin();
-    }
-
-    const_iterator succ_cend() const {
-      return succs_.cend();
-    }
-    //}}}
-
-    // Dot print support {{{
-    virtual void print_label(llvm::raw_ostream &,
-        const ObjectMap &) const { }
-    //}}}
-
- private:
-    // Private data {{{
-    // For llvm RTTI
-    const NodeKind kind_;
-
-    // Used to determine the node's unique id
-    NodeID id_;
-
-    // The id for this node
-    id_type extId_;
-    //}}}
-
- protected:
-    // Protected data {{{
-    // We hold references to our pred and successor nodes
-    std::vector<EdgeID> preds_;
-    std::vector<EdgeID> succs_;
-    //}}}
-  //}}}
-};
-
-template<typename id_type>
-class UnifyNode : public SEGNode<id_type> {
-  // {{{
- public:
-    typedef typename SEG<id_type>::NodeID NodeID;
-    typedef typename SEG<id_type>::EdgeID EdgeID;
-    // Constructors {{{
-    UnifyNode(NodeKind kind, NodeID node_id, id_type id) :
-      SEGNode<id_type>(kind, node_id, id) {
-        reps_.insert(id);
-      }
-
-    UnifyNode(const UnifyNode &) = default;
-    UnifyNode(UnifyNode &&) = default;
-
-    UnifyNode &operator=(const UnifyNode &) = default;
-    UnifyNode &operator=(UnifyNode &&) = default;
-    //}}}
-
-    // Actual unite functionality {{{
-    virtual void unite(SEG<id_type> &graph, SEGNode<id_type> &n) {
-      assert(SEGNode<id_type>::operator!=(n));
-      // Retarget all edges pointing towards n
-      // llvm::dbgs() << "Testing preds for node: " << n.id() << "\n";
-      std::vector<EdgeID> preds(std::begin(n.preds()), std::end(n.preds()));
-      std::for_each(std::begin(preds), std::end(preds),
-          [this, &graph, &n](EdgeID pred_edge_id) {
-        auto &old_edge = graph.getEdge(pred_edge_id);
-        // llvm::dbgs() << "have edge_id: " << pred_edge_id << "\n";
-        NodeID pred_id = old_edge.src();
-        // llvm::dbgs() << "Have pred: " << pred_id << "\n";
-
-        auto new_edge = std::make_pair(pred_id, SEGNode<id_type>::id());
-
-        // properly handle ptr to self
-        if (pred_id == n.id()) {
-          new_edge.first = new_edge.second;
-        }
-
-        /*
-        llvm::dbgs() << "new_edge: (" << new_edge.first << ", " <<
-            new_edge.second << ")\n";
-        */
-
-        // If the old edge wasn't a pointer to self, and the new edge is a
-        // pointer to self, don't retarget it, just remove it
-        if (old_edge.src() != old_edge.dest() &&
-              new_edge.first == new_edge.second) {
-          // llvm::dbgs() << "Removing edge\n";
-          graph.removeEdge(pred_edge_id);
-        } else {
-          // llvm::dbgs() << "Retargeting edge (" << pred_edge_id << ")\n";
-          graph.retargetEdge(pred_edge_id, new_edge);
-        }
-      });
-
-      // And all edges from n
-      // llvm::dbgs() << "Testing succs for node: " << n.id() << "\n";
-      std::vector<EdgeID> succs(std::begin(n.succs()), std::end(n.succs()));
-      std::for_each(std::begin(succs), std::end(succs),
-          [this, &graph, &n](EdgeID succ_edge_id) {
-        // llvm::dbgs() << "have edge_id: " << succ_edge_id << "\n";
-        auto old_edge = graph.getEdge(succ_edge_id);
-        NodeID succ_id = old_edge.dest();
-
-        // llvm::dbgs() << "Have succ: " << succ_id << "\n";
-
-        auto new_edge = std::make_pair(SEGNode<id_type>::id(), succ_id);
-
-        /*
-        llvm::dbgs() << "new_edge: (" << new_edge.first << ", " <<
-            new_edge.second << ")\n";
-        */
-
-        if (succ_id == n.id()) {
-          new_edge.second = new_edge.first;
-        }
-
-        // If the old edge wasn't a pointer to self, and the new edge is a
-        // pointer to self, don't retarget it, just remove it
-        if (old_edge.src() != old_edge.dest() &&
-              new_edge.first == new_edge.second) {
-          // llvm::dbgs() << "Removing edge\n";
-          graph.removeEdge(succ_edge_id);
-        } else {
-          // llvm::dbgs() << "Retargeting edge(" << succ_edge_id << ")\n";
-          graph.retargetEdge(succ_edge_id, new_edge);
-        }
-      });
-
-      // Also replace the graph's index to n with our pointer
-      auto &un = llvm::cast<UnifyNode<id_type>>(n);
-
-      std::vector<id_type> rep(un.rep_begin(), un.rep_end());
-      assert(rep.size() > 0);
-      std::for_each(std::begin(rep), std::end(rep),
-          [this, &graph](id_type rep_id) {
-        graph.retargetId(rep_id, SEGNode<id_type>::id());
-
-        // Add all rep ids to our "reps"
-        reps_.insert(rep_id);
-      });
-
-      // We have to clear the node's reps, so they aren't deleted, because we
-      //   just merged them!
-      un.reps_.clear();
-      // delete the node
-      n.preds().clear();
-      n.succs().clear();
-      graph.removeNode(un.id());
-    }
-    //}}}
-
-    // Accessors: {{{
-    // Required for unify node:
-    bool is_rep(id_type id) {
-      return id() == id;
-    }
-    //}}}
-
-    // For llvm RTTI {{{
-    static bool classof(const SEGNode<id_type> *node) {
-      return node->getKind() >= NodeKind::Unify &&
-          node->getKind() < NodeKind::UnifyEnd;
-    }
-    //}}}
-
-    // Iterating the set of united nodes {{{
-    typedef typename std::set<id_type>::iterator rep_iterator;
-    typedef typename std::set<id_type>::const_iterator const_rep_iterator;
-
-    rep_iterator rep_begin() {
-      return std::begin(reps_);
-    }
-
-    rep_iterator rep_end() {
-      return std::end(reps_);
-    }
-
-    const_rep_iterator rep_begin() const {
-      return std::begin(reps_);
-    }
-
-    const_rep_iterator rep_end() const {
-      return std::end(reps_);
-    }
-
-    const_rep_iterator rep_cbegin() const {
-      return reps_.cbegin();
-    }
-
-    const_rep_iterator rep_cend() const {
-      return reps_.cend();
-    }
-    //}}}
-
- private:
-    // Private data for supporting unification {{{
-    std::set<id_type> reps_;
-    bool del_ = false;
-    //}}}
-  //}}}
-};
-
-template <typename id_type>
 class SEG {
   //{{{
  public:
@@ -581,8 +118,6 @@ class SEG {
     struct node_id { };
     typedef ID<node_id, int32_t, -1> NodeID;
 
-    struct edge_id { };
-    typedef ID<edge_id, int32_t, -1> EdgeID;
     //}}}
     // Constructors {{{
     // Copy/move {{{
@@ -595,36 +130,268 @@ class SEG {
     //
     //}}}
 
+    // Node class {{{
+    class Node {
+      //{{{
+     public:
+        // Constructors {{{
+        Node(NodeKind kind, NodeID node_id) : kind_(kind),
+          id_(node_id), rep_(node_id) { }
+
+        Node(const Node &) = default;
+        Node(Node &&) = default;
+
+        Node &operator=(const Node &) = default;
+        Node &operator=(Node &&) = default;
+        //}}}
+
+        // Comparison operators {{{
+        bool operator==(const Node &n) {
+          return id_ == n.id_;
+        }
+
+        bool operator!=(const Node &n) {
+          return id_ != n.id_;
+        }
+
+        bool operator<(const Node &n) {
+          return id_ < n.id_;
+        }
+        //}}}
+
+        // Accessors {{{
+        /*
+        struct hasher {
+          std::size_t operator()(const Node &nd) const {
+            return std::hash<int32_t>(nd.id());
+          }
+        };
+        */
+        // For llvm RTTI
+        NodeKind getKind() const {
+          return kind_;
+        }
+
+        std::vector<NodeID> &preds() {
+          return preds_;
+        }
+
+        const std::vector<NodeID> &preds() const {
+          return preds_;
+        }
+
+        std::vector<NodeID> &succs() {
+          return succs_;
+        }
+
+        const std::vector<NodeID> &succs() const {
+          return succs_;
+        }
+
+        NodeID id() const {
+          return id_;
+        }
+        //}}}
+
+        // LLVM RTTI support {{{
+        static bool classof(const Node *) {
+          return true;
+        }
+        //}}}
+
+        // Modifiers {{{
+        bool addSucc(NodeID id) {
+          succs().push_back(id);
+          return true;
+        }
+
+        void uniqueList(SEG &graph, std::vector<NodeID> &list) {
+          // Convert to all reps
+          std::transform(std::begin(list), std::end(list), std::begin(list),
+              [&graph] (NodeID id) {
+            auto rep = graph.getRep(id);
+            assert(&graph.getNode(rep) != nullptr);
+            return graph.getRep(id);
+          });
+
+          // Make reps unique
+          std::sort(std::begin(list), std::end(list));
+          auto it = std::unique(std::begin(list), std::end(list));
+          list.erase(it, std::end(list));
+        }
+
+        void removeDuplicatePreds(SEG &graph) {
+          // First update all edges to be reps:
+          uniqueList(graph, preds());
+        }
+
+        void removeDuplicateSuccs(SEG &graph) {
+          uniqueList(graph, succs());
+        }
+
+        bool addPred(NodeID id) {
+          preds().push_back(id);
+          return true;
+        }
+
+
+        void removeFromList(SEG &graph, NodeID id, std::vector<NodeID> &list) {
+          auto rep_id = graph.getRep(id);
+          auto it = std::remove_if(std::begin(list), std::end(list),
+              [&rep_id, &graph] (NodeID list_id) {
+            return (graph.getRep(list_id) == rep_id);
+          });
+          list.erase(it, std::end(list));
+        }
+
+        void removeSucc(SEG &graph, NodeID id) {
+          removeFromList(graph, id, succs());
+        }
+
+        void removePred(SEG &graph, NodeID id) {
+          removeFromList(graph, id, preds());
+        }
+        //}}}
+
+        // Iterators {{{
+        typedef typename std::vector<NodeID>::iterator iterator;
+        typedef typename std::vector<NodeID>::const_iterator const_iterator;
+
+        iterator succ_begin() {
+          return std::begin(succs_);
+        }
+
+        iterator succ_end() {
+          return std::end(succs_);
+        }
+
+        const_iterator succ_begin() const {
+          return std::begin(succs_);
+        }
+
+        const_iterator succ_end() const {
+          return std::end(succs_);
+        }
+
+        const_iterator succ_cbegin() const {
+          return succs_.cbegin();
+        }
+
+        const_iterator succ_cend() const {
+          return succs_.cend();
+        }
+        //}}}
+
+        // Dot print support {{{
+        virtual void print_label(llvm::raw_ostream &,
+            const ObjectMap &) const { }
+        //}}}
+
+        // Actual unite functionality {{{
+        virtual void unite(SEG &graph, Node &n) {
+          assert(operator!=(n));
+          // Retarget all edges pointing towards n
+          auto &preds = n.preds();
+          std::for_each(std::begin(preds), std::end(preds),
+              [this, &graph, &n](NodeID pred_id) {
+            pred_id = graph.getRep(pred_id);
+
+            auto pred_edge = std::make_pair(pred_id, n.id());
+            // Create a new edge which points to me
+            auto new_edge = std::make_pair(pred_id, id());
+
+            // properly handle ptr to self
+            if (pred_id == n.id()) {
+              new_edge.first = new_edge.second;
+            }
+
+            // Only retarget the edge (add it to our edge set), if the new edge
+            //   isn't a pointer to self, (unless the old edge was a
+            //   pointer to self)
+            if (pred_edge.first == pred_edge.second ||
+                  new_edge.first != new_edge.second) {
+              graph.addEdge(new_edge.first, new_edge.second);
+            }
+          });
+
+          // And all edges from n
+          // std::set<NodeID> succs;
+          // succs.insert(std::begin(n.succs()), std::end(n.succs()));
+          auto &succs = n.succs();
+          std::for_each(std::begin(succs), std::end(succs),
+              [this, &graph, &n](NodeID succ_id) {
+            succ_id = graph.getRep(succ_id);
+            auto pred_edge = std::make_pair(n.id(), succ_id);
+            auto new_edge = std::make_pair(id(), succ_id);
+
+            if (succ_id == n.id()) {
+              new_edge.second = new_edge.first;
+            }
+
+            // If the old edge wasn't a pointer to self, and the new edge is a
+            // pointer to self, don't retarget it, just remove it
+            if (pred_edge.first == pred_edge.second ||
+                  new_edge.first != new_edge.second) {
+              graph.addEdge(new_edge.first, new_edge.second);
+            }
+          });
+
+          // We have to clear the node's reps, so they aren't deleted,
+          //   because we just merged them!
+          n.rep_ = id();
+          n.preds().clear();
+          n.succs().clear();
+        }
+        //}}}
+
+        // Accessors: {{{
+        // Required for unify node:
+        NodeID rep() const {
+          return rep_;
+        }
+
+        void setRep(NodeID new_rep) {
+          rep_ = new_rep;
+        }
+
+        bool isRep() const {
+          return rep_ == id();
+        }
+        //}}}
+
+     private:
+        // Private data {{{
+        // For llvm RTTI
+        const NodeKind kind_;
+
+        // Used to determine the node's unique id
+        NodeID id_;
+
+        // Used to manage representative nodes for uniting/merging nodes
+        NodeID rep_;
+
+        //}}}
+
+     protected:
+        // Protected data {{{
+        // We hold references to our pred and successor nodes
+        std::vector<NodeID> preds_;
+        std::vector<NodeID> succs_;
+        //}}}
+      //}}}
+    };
+    //}}}
+
     // Iterators {{{
     // Typedefs {{{
-    typedef std::multimap<id_type, NodeID> NodeMap;
-    typedef typename NodeMap::iterator node_map_iterator;
-    typedef typename NodeMap::const_iterator const_node_map_iterator;
-
-    typedef std::unique_ptr<SEGNode<id_type>> node_iter_type;
-
-    /*
-    typedef typename std::vector<std::unique_ptr<SEGNode<id_type>>>::iterator
-      node_iterator;
-    typedef typename std::vector<std::unique_ptr<SEGNode<id_type>>>::const_iterator
-      const_node_iterator;
-    */
+    typedef std::unique_ptr<Node> node_iter_type;
 
     typedef typename std::vector<NodeID>::iterator
       scc_iterator;
     typedef typename std::vector<NodeID>::const_iterator
       const_scc_iterator;
 
-    typedef typename std::unique_ptr<SEGEdge<id_type>>
-      edge_iter_type;
-    /*
-    typedef typename std::vector<std::unique_ptr<SEGEdge<id_type>>>::iterator
-      edge_iterator;
-    typedef typename std::vector<std::unique_ptr<SEGEdge<id_type>>>::const_iterator // NOLINT
-      const_edge_iterator;
-    */
     //}}}
-
 
     // Iterator Types {{{
     // Node iterator {{{
@@ -646,7 +413,7 @@ class SEG {
             typename std::vector<node_iter_type>::iterator itr,
             typename std::vector<node_iter_type>::iterator end) :
           itr_(itr), end_(end) {
-            while (itr_ != end_ && *itr_ == nullptr) {
+            while (itr_ != end_ && (*itr_ == nullptr || !(*itr_)->isRep())) {
               ++itr_;
             }
         }
@@ -675,15 +442,15 @@ class SEG {
           return ret;
         }
 
-        reference operator->() const {
-          reference ret = itr_.operator->();
+        pointer operator->() const {
+          auto ret = itr_.operator->();
           assert(ret != nullptr);
           return ret;
         }
 
         node_iterator &operator--() {
           --itr_;
-          while (itr_ != end_ && *itr_ == nullptr) {
+          while (itr_ != end_ && (*itr_ == nullptr || !(*itr_)->isRep())) {
             --itr_;
           }
 
@@ -694,7 +461,7 @@ class SEG {
           node_iterator tmp(*this);
           --itr_;
 
-          while (itr_ != end_ && *itr_ == nullptr) {
+          while (itr_ != end_ && (*itr_ == nullptr || !(*itr_)->isRep())) {
             --itr_;
           }
 
@@ -704,7 +471,7 @@ class SEG {
         node_iterator &operator++() {
           ++itr_;
 
-          while (itr_ != end_ && *itr_ == nullptr) {
+          while (itr_ != end_ && (*itr_ == nullptr || !(*itr_)->isRep())) {
             ++itr_;
           }
 
@@ -715,7 +482,7 @@ class SEG {
           node_iterator tmp(*this);
           ++itr_;
 
-          while (itr_ != end_ && *itr_ == nullptr) {
+          while (itr_ != end_ && (*itr_ == nullptr || !(*itr_)->isRep())) {
             ++itr_;
           }
 
@@ -749,7 +516,7 @@ class SEG {
             typename std::vector<node_iter_type>::const_iterator itr,
             typename std::vector<node_iter_type>::const_iterator end) :
           itr_(itr), end_(end) {
-            while (itr_ != end_ && *itr_ == nullptr) {
+            while (itr_ != end_ && (*itr_ == nullptr || !(*itr_)->isRep())) {
               ++itr_;
             }
           }
@@ -771,21 +538,21 @@ class SEG {
           return !operator==(it);
         }
 
-        const std::unique_ptr<SEGNode<id_type>> &operator*() const {
+        const std::unique_ptr<Node> &operator*() const {
           auto &ret = itr_.operator*();
           assert(ret != nullptr);
           return ret;
         }
 
-        const std::unique_ptr<SEGNode<id_type>> &operator->() const {
-          auto &ret = itr_.operator->();
+        const std::unique_ptr<Node> &operator->() const {
+          auto &ret = *itr_.operator->();
           assert(ret != nullptr);
           return ret;
         }
 
         const_node_iterator &operator--() {
           --itr_;
-          while (itr_ != end_ && *itr_ == nullptr) {
+          while (itr_ != end_ && (*itr_ == nullptr || !(*itr_)->isRep())) {
             --itr_;
           }
 
@@ -796,7 +563,7 @@ class SEG {
           const_node_iterator tmp(*this);
           --itr_;
 
-          while (itr_ != end_ && *itr_ == nullptr) {
+          while (itr_ != end_ && (*itr_ == nullptr || !(*itr_)->isRep())) {
             --itr_;
           }
 
@@ -806,7 +573,7 @@ class SEG {
         const_node_iterator &operator++() {
           ++itr_;
 
-          while (itr_ != end_ && *itr_ == nullptr) {
+          while (itr_ != end_ && (*itr_ == nullptr || !(*itr_)->isRep())) {
             ++itr_;
           }
 
@@ -817,7 +584,7 @@ class SEG {
           const_node_iterator tmp(*this);
           ++itr_;
 
-          while (itr_ != end_ && *itr_ == nullptr) {
+          while (itr_ != end_ && (*itr_ == nullptr || !(*itr_)->isRep())) {
             ++itr_;
           }
 
@@ -829,213 +596,6 @@ class SEG {
         // Private data {{{
         typename std::vector<node_iter_type>::const_iterator itr_;
         typename std::vector<node_iter_type>::const_iterator end_;
-        //}}}
-      //}}}
-    };
-    //}}}
-
-    // Edge iterator {{{
-    class edge_iterator {
-      //{{{
-     public:
-        // Stuff to make it stl compatible {{{
-        typedef std::bidirectional_iterator_tag iterator_category;
-        typedef typename std::vector<edge_iter_type>::value_type value_type;
-        typedef typename std::vector<edge_iter_type>::difference_type
-          difference_type;
-        typedef typename std::vector<edge_iter_type>::pointer pointer;
-        typedef typename std::vector<edge_iter_type>::reference reference;
-        //}}}
-
-        // Constructors {{{
-        // No arguments returns end()
-        explicit edge_iterator(
-            typename std::vector<edge_iter_type>::iterator itr,
-            typename std::vector<edge_iter_type>::iterator end) :
-          itr_(itr), end_(end) {
-          while (itr_ != end_ && *itr_ == nullptr) {
-            ++itr_;
-          }
-        }
-
-        edge_iterator(const edge_iterator &) = default;
-        edge_iterator(edge_iterator &&) = default;
-
-        edge_iterator &operator=(const edge_iterator &) = default;
-        edge_iterator &operator=(edge_iterator &&) = default;
-
-        // Without a node does iteration for the graph
-        //}}}
-
-        // accessors {{{
-        bool operator==(const edge_iterator &it) const {
-          return (itr_ == it.itr_);
-        }
-
-        bool operator!=(const edge_iterator &it) const {
-          return !operator==(it);
-        }
-
-        reference operator*() const {
-          reference ret = itr_.operator*();
-          assert(ret != nullptr);
-          return ret;
-        }
-
-        reference operator->() const {
-          reference ret = itr_.operator->();
-          assert(ret != nullptr);
-          return ret;
-        }
-
-        edge_iterator &operator--() {
-          --itr_;
-          while (itr_ != end_ && *itr_ == nullptr) {
-            --itr_;
-          }
-
-          return *this;
-        }
-
-        edge_iterator operator--(int) {
-          edge_iterator tmp(*this);
-          --itr_;
-
-          while (itr_ != end_ && *itr_ == nullptr) {
-            --itr_;
-          }
-
-          return std::move(tmp);
-        }
-
-        edge_iterator &operator++() {
-          ++itr_;
-
-          while (itr_ != end_ && *itr_ == nullptr) {
-            ++itr_;
-          }
-
-          return *this;
-        }
-
-        edge_iterator operator++(int) {
-          edge_iterator tmp(*this);
-          ++itr_;
-
-          while (itr_ != end_ && *itr_ == nullptr) {
-            ++itr_;
-          }
-
-          return std::move(tmp);
-        }
-        //}}}
-
-     private:
-        // Private data {{{
-        typename std::vector<edge_iter_type>::iterator itr_;
-        typename std::vector<edge_iter_type>::iterator end_;
-        //}}}
-      //}}}
-    };
-
-    class const_edge_iterator {
-      //{{{
-     public:
-        // Stuff to make it stl compatible {{{
-        typedef std::bidirectional_iterator_tag iterator_category;
-        typedef typename std::vector<edge_iter_type>::value_type value_type;
-        typedef typename std::vector<edge_iter_type>::difference_type
-          difference_type;
-        typedef typename std::vector<edge_iter_type>::pointer pointer;
-        typedef typename std::vector<edge_iter_type>::reference reference;
-        //}}}
-
-        // Constructors {{{
-        // No arguments returns end()
-        explicit const_edge_iterator(
-            typename std::vector<edge_iter_type>::const_iterator itr,
-            typename std::vector<edge_iter_type>::const_iterator end) :
-            itr_(itr), end_(end) {
-          while (itr_ != end_ && *itr_ == nullptr) {
-            ++itr_;
-          }
-        }
-
-        const_edge_iterator(const const_edge_iterator &) = default;
-        const_edge_iterator(const_edge_iterator &&) = default;
-
-        const_edge_iterator &operator=(const const_edge_iterator &) = default;
-        const_edge_iterator &operator=(const_edge_iterator &&) = default;
-
-        // Without a node does iteration for the graph
-        //}}}
-
-        // accessors {{{
-        bool operator==(const const_edge_iterator &it) const {
-          return (itr_ == it.itr_);
-        }
-        bool operator!=(const const_edge_iterator &it) const {
-          return !operator==(it);
-        }
-
-        const std::unique_ptr<SEGEdge<id_type>> &operator*() const {
-          auto &ret = itr_.operator*();
-          assert(ret != nullptr);
-          return ret;
-        }
-
-        const std::unique_ptr<SEGEdge<id_type>> &operator->() const {
-          auto &ret = itr_.operator->();
-          assert(ret != nullptr);
-          return ret;
-        }
-
-        const_edge_iterator &operator--() {
-          --itr_;
-          while (itr_ != end_ && *itr_ == nullptr) {
-            --itr_;
-          }
-
-          return *this;
-        }
-
-        const_edge_iterator operator--(int) {
-          const_edge_iterator tmp(*this);
-          --itr_;
-
-          while (itr_ != end_ && *itr_ == nullptr) {
-            --itr_;
-          }
-
-          return std::move(tmp);
-        }
-
-        const_edge_iterator &operator++() {
-          ++itr_;
-
-          while (itr_ != end_ && *itr_ == nullptr) {
-            ++itr_;
-          }
-
-          return *this;
-        }
-
-        const_edge_iterator operator++(int) {
-          const_edge_iterator tmp(*this);
-          ++itr_;
-
-          while (itr_ != end_ && *itr_ == nullptr) {
-            ++itr_;
-          }
-
-          return std::move(tmp);
-        }
-        //}}}
-
-     private:
-        // Private data {{{
-        typename std::vector<edge_iter_type>::const_iterator itr_;
-        typename std::vector<edge_iter_type>::const_iterator end_;
         //}}}
       //}}}
     };
@@ -1063,7 +623,7 @@ class SEG {
         topo_iterator &operator=(topo_iterator &&) = default;
 
         // With node, does reverse topo iteration for the node
-        topo_iterator(const SEG<id_type> &graph, NodeID start_node,
+        topo_iterator(const SEG &graph, NodeID start_node,
               bool reverse = false) :
             end_(false), begin_(true),
             L_(std::make_shared<std::list<NodeID>>()) {
@@ -1081,33 +641,18 @@ class SEG {
         }
 
         // Without a node does iteration for the graph
-        explicit topo_iterator(SEG<id_type> &graph,
+        explicit topo_iterator(SEG &graph,
               bool reverse = false) :
             end_(false),
             begin_(true),
             L_(std::make_shared<std::list<NodeID>>()) {
           std::set<NodeID> mark;
-          // llvm::dbgs() << "topo iterator create\n";
-
-          /*
-          std::for_each(std::begin(graph), std::end(graph),
-              [this, &graph, &mark, reverse] (const node_iter_type &pr) {
-            auto &node = *pr.second;
-            llvm::dbgs() << "visit node: " << pr.first << ", node.id(): "
-                << node.id() << "\n";
-            visit(graph, mark, node, reverse, true);
-          });
-          */
-
+          llvm::dbgs() << "topo iterator create\n";
 
           for (auto itr = std::begin(graph), en = std::end(graph);
               itr != en; ++itr) {
             auto &node = *(*itr);
 
-            /*
-            llvm::dbgs() << "visit node: " << itr->first << ", node.id(): "
-                << node.id() << "\n";
-                */
             visit(graph, mark, node, reverse, true);
           }
 
@@ -1149,11 +694,11 @@ class SEG {
           return !operator==(it);
         }
 
-        NodeID operator*() const {
+        reference operator*() const {
           return itr_.operator*();
         }
 
-        NodeID operator->() const {
+        pointer operator->() const {
           return itr_.operator->();
         }
 
@@ -1194,21 +739,17 @@ class SEG {
 
      private:
         // Private functions {{{
-        void visit(const SEG<id_type> &graph, std::set<NodeID> &mark,
-            const SEGNode<id_type> &node, bool reverse, bool print = false) {
+        void visit(const SEG &graph, std::set<NodeID> &mark,
+            const Node &node, bool reverse, bool print = false) {
           // ddevec -- TODO: Check for cycles???
           if (mark.count(node.id()) == 0) {
-            /*
-            llvm::dbgs() << "Checking node: " << node.id() << "\n";
-            */
             // For cycles...
             mark.insert(node.id());
 
             auto &succs = node.succs();
             std::for_each(std::begin(succs), std::end(succs),
-                [this, &graph, &mark, reverse, print](EdgeID edge_id) {
-              auto &edge = graph.getEdge(edge_id);
-              visit(graph, mark, graph.getNode(edge.dest()), reverse);
+                [this, &graph, &mark, reverse, print](NodeID succ_id) {
+              visit(graph, mark, graph.getNode(succ_id), reverse);
             });
 
             if (reverse) {
@@ -1233,191 +774,6 @@ class SEG {
       //}}}
     };
 
-    class rep_iterator {
-      //{{{
-     public:
-        // Stuff to make it stl compatible {{{
-        typedef std::forward_iterator_tag iterator_category;
-        typedef typename node_map_iterator::value_type value_type;
-        typedef typename node_map_iterator::difference_type difference_type;
-        typedef typename node_map_iterator::pointer pointer;
-        typedef typename node_map_iterator::reference reference;
-        //}}}
-
-        // Constructor {{{
-        // FIXME -- map_begin?
-        explicit rep_iterator(SEG<id_type> &G, bool begin) :
-            G_(G), itr_((begin) ? G.map_begin() : G.map_end()),
-            eitr_(G.map_end()) {
-          if (begin) {
-            advance_to_rep(false);
-          }
-        }
-        //}}}
-
-        // Operators {{{
-        bool operator==(const rep_iterator &it) const {
-          return (itr_ == it.itr_);
-        }
-
-        bool operator!=(const rep_iterator &it) const {
-          return !operator==(it);
-        }
-
-        reference operator*() const {
-          return itr_.operator*();
-        }
-
-        reference operator->() const {
-          return itr_.operator->();
-        }
-
-        rep_iterator &operator++() {
-          advance_to_rep();
-
-          return *this;
-        }
-
-        rep_iterator operator++(int) {
-          rep_iterator tmp(*this);
-          advance_to_rep();
-
-          return std::move(tmp);
-        }
-        //}}}
-
-     private:
-        // Private functions {{{
-        void advance_to_rep(bool advance_first = true) {
-          if (advance_first && itr_ != eitr_) {
-            ++itr_;
-          }
-
-          while (itr_ != eitr_) {
-            auto nd = G_.getNode<UnifyNode<id_type>>(*itr_->second);
-
-            // If this node actually represents itself...
-            if (nd.id() == itr_->first) {
-              break;
-            }
-
-            ++itr_;
-          }
-        }
-        //}}}
-
-        // Private data {{{
-        SEG<id_type> &G_;
-        node_map_iterator itr_;
-        node_map_iterator eitr_;
-        //}}}
-      //}}}
-    };
-
-    class const_rep_iterator {
-      //{{{
-     public:
-        // Stuff to make it stl compatible {{{
-        typedef std::forward_iterator_tag iterator_category;
-        typedef typename const_node_map_iterator::value_type value_type;
-        typedef typename const_node_map_iterator::difference_type
-          difference_type;
-        typedef typename const_node_map_iterator::pointer pointer;
-        typedef typename const_node_map_iterator::reference reference;
-        //}}}
-
-        // Constructor {{{
-        explicit const_rep_iterator(const SEG<id_type> &G, bool begin) :
-            itr_((begin) ? std::begin(G) : std::end(G)),
-            eitr_(std::end(G)) {
-          if (begin) {
-            advance_to_rep(false);
-          }
-        }
-        //}}}
-
-        // Operators {{{
-        bool operator==(const const_rep_iterator &it) const {
-          return (itr_ == it.itr_);
-        }
-
-        bool operator!=(const const_rep_iterator &it) const {
-          return !operator==(it);
-        }
-
-        reference operator*() const {
-          return itr_.operator*();
-        }
-
-        reference operator->() const {
-          return itr_.operator->();
-        }
-
-        const_rep_iterator &operator++() {
-          advance_to_rep();
-
-          return *this;
-        }
-
-        const_rep_iterator operator++(int) {
-          rep_iterator tmp(*this);
-          advance_to_rep();
-
-          return std::move(tmp);
-        }
-        //}}}
-
-     private:
-        // Private functions {{{
-        void advance_to_rep(bool advance_first = true) {
-          if (advance_first && itr_ != eitr_) {
-            ++itr_;
-          }
-
-          while (itr_ != eitr_) {
-            auto nd = llvm::cast<UnifyNode<id_type>>(*itr_->second);
-
-            // If this node actually represents itself...
-            if (nd.id() == itr_->first) {
-              break;
-            }
-            ++itr_;
-          }
-        }
-        //}}}
-
-        // Private data {{{
-        const_node_map_iterator itr_;
-        const_node_map_iterator eitr_;
-        //}}}
-      //}}}
-    };
-    //}}}
-
-    // NodeMap iteration {{{
-    node_map_iterator node_map_begin() {
-      return std::begin(node_map_);
-    }
-
-    node_map_iterator node_map_end() {
-      return std::end(node_map_);
-    }
-
-    const_node_map_iterator node_map_begin() const {
-      return std::begin(node_map_);
-    }
-
-    const_node_map_iterator node_map_end() const {
-      return std::end(node_map_);
-    }
-
-    const_node_map_iterator node_map_cbegin() const {
-      return std::begin(node_map_);
-    }
-
-    const_node_map_iterator node_map_cend() const {
-      return std::end(node_map_);
-    }
     //}}}
 
     // Node iteration (pair<id, node>) {{{
@@ -1456,11 +812,11 @@ class SEG {
       return topo_iterator();
     }
 
-    topo_iterator topo_begin(id_type id) const {
+    topo_iterator topo_begin(NodeID id) const {
       return topo_iterator(*this, id);
     }
 
-    topo_iterator topo_end(id_type) const {
+    topo_iterator topo_end(NodeID) const {
       return topo_iterator();
     }
 
@@ -1481,217 +837,60 @@ class SEG {
     }
     //}}}
 
-    // Rep iteration {{{
-    const_rep_iterator rep_cbegin() const {
-      return const_rep_iterator(*this, true);
-    }
-
-    const_rep_iterator rep_cend() const {
-      return const_rep_iterator(*this, false);
-    }
-
-    const_rep_iterator rep_begin() const {
-      return const_rep_iterator(*this, true);
-    }
-
-    const_rep_iterator rep_end() const {
-      return const_rep_iterator(*this, false);
-    }
-
-    rep_iterator rep_begin() {
-      return rep_iterator(*this, true);
-    }
-
-    rep_iterator rep_end() {
-      return rep_iterator(*this, false);
-    }
-    //}}}
-
-    // Edge iteration {{{
-    edge_iterator edges_begin() {
-      return edge_iterator(std::begin(edges_), std::end(edges_));;
-    }
-
-    edge_iterator edges_end() {
-      return edge_iterator(std::end(edges_), std::end(edges_));;
-    }
-
-    const_edge_iterator edges_begin() const {
-      return const_edge_iterator(std::begin(edges_), std::end(edges_));;
-    }
-
-    const_edge_iterator edges_end() const {
-      return const_edge_iterator(std::end(edges_), std::end(edges_));;
-    }
-
-    const_edge_iterator edges_cbegin() const {
-      return const_edge_iterator(std::begin(edges_), std::end(edges_));;
-    }
-
-    const_edge_iterator edges_cend() const {
-      return const_edge_iterator(std::end(edges_), std::end(edges_));;
-    }
-    //}}}
-
     //}}}
 
     // Modifiers {{{
     // Converters to transform between two SEGs {{{
     SEG() = default;
 
-    template <typename node_type, typename edge_type>
-    SEG<id_type> clone() const;
+    template <typename node_type>
+    SEG clone() const;
     //}}}
 
     // Edge Manipulation {{{
-    template <typename edge_type>
-    EdgeID addEdgeSafe(const edge_type &edge) {
-      // Ensure that a node exists for each edge point..
-      edges_.emplace_back(new edge_type(edge));
-
-      EdgeID edge_id(edges_.size() - 1);
-
-      // FIXME: ddevec -- Don't think I actually need this, because the edge ids
-      //   will be duplicated by the copy constructor of the nodes
-      /*
-      assert(getNode(edge.src()).succs().find(edge_id) !=
-          std::end(getNode(edge.src()).succs()));
-      assert(getNode(edge.dest()).preds().find(edge_id) !=
-          std::end(getNode(edge.dest()).preds()));
-      */
-      /*
-      auto &src_node = getNode(edge.src());
-      auto &dest_node = getNode(edge.dest());
-
-      // Add succ/pred info for src/dest
-      src_node.addSucc(*this, edge_id);
-      dest_node.addPred(*this, edge_id);
-      */
-
-      return edge_id;
-    }
-
     // Adds edge of edge_type between two nodes
-    template <typename edge_type, typename... va_args>
-    EdgeID addEdge(NodeID src, NodeID dest, va_args&... args) {
+    bool addEdge(NodeID src, NodeID dest) {
       // Ensure that a node exists for each edge point..
       auto &src_node = getNode(src);
       auto &dest_node = getNode(dest);
-      edges_.emplace_back(new edge_type(src, dest, args...));
-
-      EdgeID edge_id(edges_.size() - 1);
 
       // Add succ/pred info for src/dest
-      bool ret = src_node.addSucc(edge_id);
-      if (!ret) {
-        llvm::dbgs() << "addSucc failed :(\n";
-        edges_.pop_back();
-        return EdgeID::invalid();
-      }
-      ret = dest_node.addPred(edge_id);
-      if (!ret) {
-        llvm::dbgs() << "addPred failed :(\n";
-        src_node.removeSucc(edge_id);
-        edges_.pop_back();
-        return EdgeID::invalid();
-      }
+      src_node.addSucc(dest);
+      dest_node.addPred(src);
 
-      return edge_id;
+      return true;
     }
 
-    // Adds edge of edge_type between two nodes
-    template <typename edge_type, typename... va_args>
-    EdgeID addEdgeSafe(NodeID src, NodeID dest, va_args&... args) {
-      // Ensure that a node exists for each edge point..
-      auto &src_node = getNode(src);
-      auto &dest_node = getNode(dest);
-      edges_.emplace_back(new edge_type(src, dest, args...));
-
-      EdgeID edge_id(edges_.size() - 1);
-
-      // Add succ/pred info for src/dest
-      src_node.addSucc(edge_id);
-      dest_node.addPred(edge_id);
-
-      return edge_id;
-    }
-
-    void tryRemoveEdge(EdgeID id) {
-      // Also remove info from node:
-      /*
-      llvm::dbgs() << "edge_id is: ( " << edge_id.first << ", " <<
-        edge_id.second << " )\n";
-      */
-      auto &edge = getEdge(id);
-
-      auto &src = getNode(edge.src());
-      auto &dest = getNode(edge.dest());
-
-      // Free up the memory... maybe resize the array at some point?
-      // llvm::dbgs() << __LINE__ << "erasing: " << id << "\n";
-      edges_.at(id.val()).reset(nullptr);
+    void removeEdge(NodeID src_id, NodeID dest_id) {
+      auto &src = getNode(src_id);
+      auto &dest = getNode(dest_id);
 
       // Remove the pointer from src
-      src.tryRemoveSucc(id);
+      src.removeSucc(*this, dest_id);
 
       // Remove the pointer from dest
-      dest.tryRemovePred(id);
+      dest.removePred(*this, src_id);
     }
 
-    void removeEdge(EdgeID id) {
-      // Also remove info from node:
-      auto &edge = getEdge(id);
-
-      auto &src = getNode(edge.src());
-      auto &dest = getNode(edge.dest());
-
-      // Free up the memory... maybe resize the array at some point?
-      // llvm::dbgs() << __LINE__ << "erasing: " << id << "\n";
-      edges_.at(id.val()).reset(nullptr);
-
-      // Remove the pointer from src
-      src.removeSucc(id);
-
-      // Remove the pointer from dest
-      dest.removePred(id);
-    }
-
-    void retargetEdge(EdgeID id,
-        std::pair<NodeID, NodeID> &new_target) {
+    void retargetEdge(const std::pair<NodeID, NodeID> &orig,
+        const std::pair<NodeID, NodeID> &new_target) {
       // Update edge src/dest
-      auto &edge = getEdge(id);
-      /*
-      llvm::dbgs() << "Retargeting (" << edge.src() << ", " << edge.dest()
-        << ") to (" << new_target.first << ", " << new_target.second << ")\n";
-        */
 
       // Fix up for equivalence between multiple edges?
-      auto &src = getNode(edge.src());
-      auto &dest = getNode(edge.dest());
+      auto &src = getNode(orig.first);
+      auto &dest = getNode(orig.second);
 
       // Actually add the edge to the new source and dest
       // llvm::dbgs() << "removing succ from src: " << src.id() << "\n";
-      src.removeSucc(id);
+      src.removeSucc(*this, orig.second);
       // llvm::dbgs() << "removing pred from dest: " << dest.id() << "\n";
-      dest.removePred(id);
-
-      edge.retarget(new_target);
+      dest.removePred(*this, orig.first);
 
       auto &new_src = getNode(new_target.first);
       auto &new_dest = getNode(new_target.second);
-      /*
-      llvm::dbgs() << "adding succ (" << id << ") to new_src: "
-        << new_src.id() << "\n";
-      */
-      // Only add the pred if the succ succeeded!
-      new_src.addSucc(id);
-      new_dest.addPred(id);
 
-      // Removing duplicates?
-      /*
-      new_src.removeDuplicateSuccs(*this);
-      new_dest.removeDuplicatePreds(*this);
-      */
+      new_src.addSucc(new_target.second);
+      new_dest.addPred(new_target.first);
     }
 
     void cleanEdges() {
@@ -1713,15 +912,16 @@ class SEG {
     }
 
     template <typename node_type, typename... va_args>
-    node_map_iterator addNode(id_type id, va_args&&... args) {
+    NodeID addNode(va_args&&... args) {
       auto node_id = NodeID(nodes_.size());
-      nodes_.emplace_back(new node_type(node_id, id,
+      nodes_.emplace_back(new node_type(node_id,
             std::forward<va_args>(args)...));
 
-      auto ret = node_map_.emplace(id, node_id);
+      return node_id;
+    }
 
-
-      return ret;
+    void checkNode() {
+      assert(!nodes_.at(6)->isRep());
     }
 
     void removeNode(NodeID id) {
@@ -1729,77 +929,31 @@ class SEG {
 
       // Remove all edges to this node
       // We need a temp container, as we can't remove while iterating...
-      std::vector<EdgeID> remove_edges;
 
-      auto &preds = node.preds();
+      std::set<NodeID> preds;
+      preds.insert(std::begin(node.preds()), std::end(node.preds()));
       std::for_each(std::begin(preds), std::end(preds),
-          [&remove_edges](EdgeID pred_id) {
-        remove_edges.emplace_back(pred_id);
+          [this, &id](NodeID pred_id) {
+        auto &pred_node = getNode(pred_id);
+        pred_node.removeSucc(*this, id);
       });
 
       // Remove all edges from this node
-      auto &succs = node.succs();
+      std::set<NodeID> succs;
+      succs.insert(std::begin(node.succs()), std::end(node.succs()));
       std::for_each(std::begin(succs), std::end(succs),
-          [&remove_edges](EdgeID succ_id) {
-        remove_edges.emplace_back(succ_id);
+          [this, &id](NodeID succ_id) {
+        // Don't do pointer to self... that was already done
+        auto &succ_node = getNode(succ_id);
+        succ_node.removePred(*this, id);
       });
-
-      // Remove duplicates
-      std::sort(std::begin(remove_edges), std::end(remove_edges));
-      auto it = std::unique(std::begin(remove_edges), std::end(remove_edges));
-      remove_edges.erase(it, std::end(remove_edges));
-
-      for (auto &edge : remove_edges) {
-        /*
-        llvm::dbgs() << "  Edge remove: (" << getEdge(edge).src() << ", " <<
-          getEdge(edge).dest() << ")\n";
-          */
-        removeEdge(edge);
-      }
 
       // llvm::dbgs() << "calling nodes_.erase on id: " << id << "\n";
 
       // Delete the node
-      // If its a unify node, we need to mark it as deleted... because multiple
-      //   ids may point to it
-      if (auto pun = llvm::dyn_cast<UnifyNode<id_type>>(&node)) {
-        // This should really be, for each id in rep, remove from nodes
-        std::for_each(pun->rep_begin(), pun->rep_end(),
-            [this](id_type id) {
-          node_map_.erase(id);
-        });
-      } else {
-        node_map_.erase(node.extId());
-      }
-
-      // llvm::dbgs() << __LINE__ << " erasing: " << node.id() << "\n";
       nodes_.at(node.id().val()).reset(nullptr);
     }
 
-    void addMapping(id_type ext_id, NodeID mapped_node) {
-      auto node_range = node_map_.equal_range(ext_id);
-      if (std::distance(node_range.first, node_range.second) == 0) {
-        node_map_.emplace(ext_id, mapped_node);
-      }
-      /* else {
-        
-        std::for_each(node_range.first, node_range.second,
-            [this, &mapped_node] (std::pair<const id_type, NodeID> &pr) {
-          pr.second = mapped_node;
-        });
-      }
-      */
-    }
-
-    // For use by unification operations only...
-    void retargetId(id_type old_id, NodeID new_dest) {
-      auto pr = node_map_.equal_range(old_id);
-
-      std::for_each(pr.first, pr.second,
-          [&new_dest](std::pair<const id_type, NodeID> &pr) {
-        pr.second = new_dest;
-      });
-    }
     //}}}
     //}}}
 
@@ -1811,83 +965,100 @@ class SEG {
       return nodes_.size();
     }
 
-    size_t getNumEdges() const {
-      return edges_.size();
+    NodeID getRep(NodeID id) const {
+      auto ret = id;
+      auto &nd = nodes_.at(id.val());
+      if (nd == nullptr) {
+        return NodeID::invalid();
+      }
+
+      if (!nd->isRep()) {
+        ret = getRep(nd->rep());
+      }
+
+      return ret;
     }
 
-    // Finds a node (allows the node not to exist)
-    const_node_map_iterator findNode(id_type id) const {
-      return node_map_.find(id);
+    NodeID getRep(NodeID id) {
+      auto ret = id;
+      auto &nd = nodes_.at(id.val());
+      if (nd == nullptr) {
+        return NodeID::invalid();
+      }
+
+      if (!nd->isRep()) {
+        ret = getRep(nd->rep());
+        nd->setRep(ret);
+      }
+
+      return ret;
     }
 
-    // Gets the node
-    template <typename node_type = SEGNode<id_type>>
-    node_type *getNodeOrNull(id_type id) {
-      // We jsut get the lower one...
-      auto itr = node_map_.lower_bound(id);
-      if (itr->first != id) {
+    template <typename node_type = Node>
+    node_type *tryGetNode(NodeID id) {
+      auto rep = getRep(id);
+      if (rep == NodeID::invalid()) {
         return nullptr;
       }
 
-      return &getNode<node_type>(itr->second);
+      auto &pnd = nodes_.at(rep.val());
+
+      return llvm::cast<node_type>(pnd.get());
     }
 
-    std::pair<node_map_iterator, node_map_iterator>
-    getNodesOrNull(id_type id) {
-      auto pr = node_map_.equal_range(id);
+    template <typename node_type = Node>
+    node_type *tryGetNode(NodeID id) const {
+      auto rep = getRep(id);
+      if (rep == NodeID::invalid()) {
+        return nullptr;
+      }
 
-      return pr;
+      auto &pnd = nodes_.at(rep.val());
+
+      return llvm::cast<node_type>(pnd.get());
     }
 
-    std::pair<node_map_iterator, node_map_iterator>
-    getNodes(id_type id) {
-      auto pr = node_map_.equal_range(id);
-      assert(std::distance(pr.first, pr.second) > 0);
-
-      return pr;
-    }
-
-    std::pair<const_node_map_iterator, const_node_map_iterator>
-    getNodes(id_type id) const {
-      auto pr = node_map_.equal_range(id);
-      assert(std::distance(pr.first, pr.second) > 0);
-
-      return pr;
-    }
-
-    template <typename node_type = SEGNode<id_type>>
+    template <typename node_type = Node>
     node_type &getNode(NodeID id) {
-      auto &pnd = nodes_.at(id.val());
+      auto rep = getRep(id);
+
+      auto &pnd = nodes_.at(rep.val());
       assert(pnd != nullptr);
+
+      assert(pnd->id() == rep);
 
       return llvm::cast<node_type>(*pnd);
     }
 
-    template <typename node_type = SEGNode<id_type>>
+    template <typename node_type = Node>
     const node_type &getNode(NodeID id) const {
-      auto &pnd = nodes_.at(id.val());
+      auto rep = getRep(id);
+
+      auto &pnd = nodes_.at(rep.val());
       assert(pnd != nullptr);
+
+      assert(pnd->id() == rep);
 
       return llvm::cast<node_type>(*pnd);
     }
 
-    template <typename edge_type = SEGEdge<id_type>>
-    const edge_type &getEdge(EdgeID edge_id) const {
-      return llvm::cast<edge_type>(*edges_.at(edge_id.val()));
-    }
+    void createSCC() {
+      int index = 0;
 
-    template <typename edge_type = SEGEdge<id_type>>
-    edge_type &getEdge(EdgeID edge_id) {
-      return llvm::cast<edge_type>(*edges_.at(edge_id.val()));
-    }
+      // Create SCC data for each node:
+      std::vector<SCCData> data(nodes_.size());
 
-    /*
-    const_edge_iterator findEdge(std::pair<id_type, id_type> &id) const {
-      return edges_.find(id);
-    }
-    */
+      // Create our required stack of visited nodes
+      std::stack<NodeID> st;
 
-    void createSCC();
+      std::for_each(begin(), end(),
+          [this, &data, &index, &st]
+          (node_iter_type &pnode) {
+        if (pnode != nullptr) {
+          sccStrongconnect(data, pnode->id(), index, st, *this);
+        }
+      });
+    }
     //}}}
 
     // Debug functions {{{
@@ -1899,51 +1070,39 @@ class SEG {
       std::for_each(begin(), end(),
           [&ofil, &omap]
           (const node_iter_type &pnode) {
-        const SEGNode<id_type> &node = *pnode;
-        std::string idNode = idToString(node.extId());
+        const Node &node = *pnode;
+        std::string idNode = idToString(node.id());
 
         ofil << "  " << idNode << " [label=\"";
         node.print_label(ofil, omap);
         ofil << "\"" << " shape=box" << "];\n";
       });
 
-      /*
-      std::for_each(edges_begin(), edges_end(),
-      */
-      int edge_id = 0;
-      std::for_each(std::begin(edges_), std::end(edges_),
-          [this, &ofil, &omap, &edge_id]
-          (const edge_iter_type &pedge) {
-        if (pedge != nullptr) {
-          auto &edge = *pedge;
-          /*
-          llvm::dbgs() << "Getting src: " << edge.src() << " from edge: " <<
-              edge_id << "\n";
-              */
-          std::string idNode1 = idToString(getNode(edge.src()).extId());
-          std::string idNode2 = idToString(getNode(edge.dest()).extId());
+      std::for_each(begin(), end(),
+          [this, &ofil, &omap]
+          (const node_iter_type &pnode) {
+        if (pnode != nullptr) {
+          auto src = pnode->id();
+          for (auto dest_id : pnode->succs()) {
+            std::string idNode1 = idToString(src);
+            std::string idNode2 = idToString(dest_id);
 
-          ofil << "  " << idNode1 << " -> " << idNode2 <<
-            " [label=\"";
-          edge.print_label(ofil, omap);
-          ofil << "\"];\n";
+            ofil << "  " << idNode1 << " -> " << idNode2 <<
+              " [label=\"";
+            // We don't label edges anymore...
+            // edge.print_label(ofil, omap);
+            ofil << "\"];\n";
+          }
         }
-        edge_id++;
       });
       printDotFooter(ofil);
     }
     //}}}
 
  private:
-    friend class SEGNode<id_type>;
     // Private variables {{{
     // Holds all of the nodes
-    std::vector<std::unique_ptr<SEGNode<id_type>>> nodes_;
-
-    NodeMap node_map_;
-
-    // Holds edge data
-    std::vector<std::unique_ptr<SEGEdge<id_type>>> edges_;
+    std::vector<std::unique_ptr<Node>> nodes_;
     //}}}
 
     // Private functions {{{
@@ -1995,52 +1154,129 @@ class SEG {
       //}}}
     };
 
-    bool checkEdge(EdgeID) const {
-      // auto &edge = getEdge(edge_id);
+    void sccStrongconnect(std::vector<SCCData> &scc_data,
+        NodeID id, int &index, std::stack<NodeID> &st, SEG &ret) const {
+      SCCData &data = scc_data.at(id.val());
+      data.setIndex(index);
+      data.setLowlink(index);
+      data.setOnStack(true);
+      st.push(id);
 
-      // llvm::dbgs() << "getting edge: " << edge_id << "\n";
+      index++;
 
-      /*
-      llvm::dbgs() << "  edge: (" << edge.src() << ", "
-        << edge.dest() << "\n";
-        */
 
-      /*
-      auto &src_node = getNode(edge.src());
-      auto &dest_node = getNode(edge.dest());
-      */
+      auto &node = getNode(id);
+      for (auto succ_id : node.succs()) {
+        // Update to rep...
+        succ_id = getRep(succ_id);
+        auto &succ_data = scc_data.at(succ_id.val());
 
-      /*
-      llvm::dbgs() << "  src.succs:";
-      std::for_each(std::begin(src_node.succs()), std::end(src_node.succs()),
-          [](EdgeID id) {
-        llvm::dbgs() << " " << id;
-      });
-      llvm::dbgs() << "\n";
+        if (succ_data.index() == SCCData::invalidIndex) {
+          sccStrongconnect(scc_data, succ_id, index, st, ret);
+          data.setLowlink(std::min(data.lowlink(), succ_data.lowlink()));
+        } else if (succ_data.onStack()) {
+          data.setLowlink(std::min(data.lowlink(), succ_data.index()));
+        }
+      }
 
-      llvm::dbgs() << "  dest.preds:";
-      std::for_each(std::begin(dest_node.preds()), std::end(dest_node.preds()),
-          [](EdgeID id) {
-        llvm::dbgs() << " " << id;
-      });
-      llvm::dbgs() << "\n";
-      */
+      // If node is a root node
+      if (data.lowlink() == data.index()) {
+        // Copy node into scc, as our scc root
+        auto &rep = ret.getNode(node.id());
 
+        while (true) {
+          auto &grp = ret.getNode(st.top());
+          st.pop();
+
+          if (grp == rep) {
+            break;
+          }
+
+          scc_data.at(grp.id().val()).setOnStack(false);
+
+          // Unite all of the SCCs with the one we just made
+          rep.unite(ret, grp);
+        }
+      }
+    }
+    //}}}
+  //}}}
+};
+
+class SEGEdge {
+  //{{{
+ public:
+    typedef typename SEG::NodeID NodeID;
+
+    SEGEdge(EdgeKind kind, NodeID src, NodeID dest) :
+        kind_(kind), src_(src), dest_(dest) { }
+
+    NodeID src() const {
+      return src_;
+    }
+
+    NodeID dest() const {
+      return dest_;
+    }
+
+    // By default print nothing
+    virtual void print_label(llvm::raw_ostream &,
+        const ObjectMap &) const { }
+
+    EdgeKind getKind() const {
+      return kind_;
+    }
+
+    static bool classof(const SEGEdge *) {
       return true;
     }
 
-    void sccStrongconnect(std::vector<SCCData> &seg_data,
-      NodeID id, int &index, std::stack<NodeID> &st, SEG &ret) const;
-    //}}}
+    virtual bool operator==(const SEGEdge &rhs) const {
+      return src() == rhs.src() && dest() == rhs.dest();
+    }
+
+    bool operator!=(const SEGEdge &rhs) const {
+      return !operator==(rhs);
+    }
+
+    virtual bool operator==(
+        const std::reference_wrapper<SEGEdge> &rhs) const {
+      // Remove reference wrapper...
+      return operator==(rhs.get());
+    }
+
+    virtual bool operator<(const SEGEdge &rhs) const {
+      if (src() != rhs.src()) {
+        return src() < rhs.src();
+      }
+
+      return dest() <= rhs.dest();
+    }
+
+    friend bool operator<(const std::reference_wrapper<SEGEdge> &lhs,
+        const std::reference_wrapper<SEGEdge> &rhs) {
+      // Remove reference wrapper...
+      return lhs.get() < rhs.get();
+    }
+
+    void retarget(std::pair<NodeID, NodeID> &new_edge) {
+      src_ = new_edge.first;
+      dest_ = new_edge.second;
+    }
+
+ protected:
+    EdgeKind kind_;
+
+    NodeID src_;
+    NodeID dest_;
   //}}}
 };
 
 // SEG Impl {{{
 // SEG clone {{{
-template <typename id_type>
-template <typename node_type, typename edge_type>
-SEG<id_type> SEG<id_type>::clone() const {
-  SEG<id_type> ret;
+template <typename node_type>
+SEG SEG::clone() const {
+  SEG ret;
 
   // We don't use node itr, because we want to include nullptrs
   int i = 0;
@@ -2056,34 +1292,15 @@ SEG<id_type> SEG<id_type>::clone() const {
     i++;
   });
 
-  i = 0;
-  std::for_each(std::begin(edges_), std::end(edges_),
+  std::for_each(begin(), end(),
       [this, &ret, &i]
-      (const edge_iter_type &pedge) {
-    // llvm::dbgs() << "Cloning edge: " << i << "\n";
-    // llvm::dbgs() << "pedge is: " << pedge.get() << "\n";
-    if (pedge != nullptr) {
-      // llvm::dbgs() << "not nullptr!\n";
-      auto &my_edge = llvm::cast<edge_type>(*pedge);
-
-      assert(checkEdge(EdgeID(i)));
-      // Don't need checks, this edge is guaranteed not to exist
-      ret.addEdgeSafe(my_edge);
-    } else {
-      // llvm::dbgs() << "nullptr!\n";
-      // Add in a nullptr, to keep the edges in sync
-      ret.edges_.push_back(nullptr);
+      (const node_iter_type &pnode) {
+    if (pnode != nullptr) {
+      auto src_id = pnode->id();
+      for (auto dest_id : pnode->succs()) {
+        ret.addEdge(src_id, dest_id);
+      }
     }
-
-    i++;
-  });
-
-  // Now, replicate node_mapping
-  // Node map should be empty at this point, so I can clone it
-  assert(ret.node_map_.size() == 0);
-  std::for_each(node_map_.begin(), node_map_.end(),
-      [this, &ret] (const std::pair<const id_type, NodeID> &pr) {
-    ret.node_map_.emplace(pr.first, pr.second);
   });
 
   return std::move(ret);
@@ -2095,78 +1312,6 @@ SEG<id_type> SEG<id_type>::clone() const {
 // Use Tarjan's method to calculate SCCs for this graph
 // SCC wrapper
 
-template <typename id_type>
-void SEG<id_type>::sccStrongconnect(
-    std::vector<SCCData> &scc_data,
-    NodeID id, int &index,
-    std::stack<NodeID> &st,
-    SEG &ret) const {
-
-  SCCData &data = scc_data.at(id.val());
-  data.setIndex(index);
-  data.setLowlink(index);
-  data.setOnStack(true);
-  st.push(id);
-
-  index++;
-
-
-  auto &node = getNode<UnifyNode<id_type>>(id);
-  for (EdgeID succ_edge_id : node.succs()) {
-    auto &succ_edge = getEdge(succ_edge_id);
-    auto &succ_node = getNode(succ_edge.dest());
-    auto succ_id = succ_node.id();
-
-    auto &succ_data = scc_data.at(succ_id.val());
-
-    if (succ_data.index() == SCCData::invalidIndex) {
-      sccStrongconnect(scc_data, succ_id, index, st, ret);
-      data.setLowlink(std::min(data.lowlink(), succ_data.lowlink()));
-    } else if (succ_data.onStack()) {
-      data.setLowlink(std::min(data.lowlink(), succ_data.index()));
-    }
-  }
-
-  // If node is a root node
-  // FIXME: need to de-duplicate edges...
-  if (data.lowlink() == data.index()) {
-    // Copy node into scc, as our scc root
-    auto &rep = ret.getNode<UnifyNode<id_type>>(node.id());
-
-    while (true) {
-      auto &grp = ret.getNode<UnifyNode<id_type>>(st.top());
-      st.pop();
-
-      if (grp == rep) {
-        break;
-      }
-
-      scc_data.at(grp.id().val()).setOnStack(false);
-
-      // Unite all of the SCCs with the one we just made
-      rep.unite(ret, grp);
-    }
-  }
-}
-
-template <typename id_type>
-void SEG<id_type>::createSCC() {
-  int index = 0;
-
-  // Create SCC data for each node:
-  std::vector<SCCData> data(nodes_.size());
-
-  // Create our required stack of visited nodes
-  std::stack<NodeID> st;
-
-  std::for_each(begin(), end(),
-      [this, &data, &index, &st]
-      (node_iter_type &pnode) {
-    if (pnode != nullptr) {
-      sccStrongconnect(data, pnode->id(), index, st, *this);
-    }
-  });
-}
 //}}}
 //}}}
 //}}}

@@ -26,18 +26,18 @@
 
 class DUG;
 // An individual node within the DUG
-class DUGNode : public SEGNode<ObjectMap::ObjID> {
+class DUGNode : public SEG::Node {
   //{{{
  public:
     // Constructors {{{
-     DUGNode(NodeKind kind, SEG<ObjectMap::ObjID>::NodeID id,
+     DUGNode(NodeKind kind, SEG::NodeID id,
          ObjectMap::ObjID dest, ObjectMap::ObjID src, int32_t offset) :
-      SEGNode<ObjectMap::ObjID>(kind, id, dest),
+      SEG::Node(kind, id),
       dest_(dest), src_(src), offset_(offset) { }
     //}}}
 
     // For llvm RTTI {{{
-    static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
+    static bool classof(const SEG::Node *node) {
       return node->getKind() >= NodeKind::DUGNode &&
         node->getKind() < NodeKind::DUGNodeEnd;
     }
@@ -123,22 +123,7 @@ class DUG {
     */
 
     typedef ObjectMap::ObjID ObjID;
-    typedef SEG<ObjID>::NodeID DUGid;
-    typedef SEG<ObjID>::EdgeID EdgeID;
-    //}}}
-
-    // Internal Classes {{{
-    class DUGEdge : public SEGEdge<ObjID> {
-     public:
-        DUGEdge(SEG<ObjID>::NodeID s, SEG<ObjID>::NodeID d) :
-          SEGEdge<ObjID>(EdgeKind::DUG, s, d) { }
-
-        // For LLVM RTTI {{{
-        static bool classof(const SEGEdge<ObjID> *id) {
-          return id->getKind() == EdgeKind::DUG;
-        }
-        //}}}
-    };
+    typedef SEG::NodeID DUGid;
     //}}}
 
     // Constructors {{{
@@ -189,6 +174,8 @@ class DUG {
           auto src = cons.src();
           auto offs = cons.offs();
 
+          SEG::NodeID node_id;
+
           dout("Adding node to DUG for obj_id: " << dest << ": " <<
               ValPrint(dest) << "\n");
 
@@ -202,10 +189,8 @@ class DUG {
                 // Add AllocNode
                 bool strong = cons.strong();
                 // O(log(n))
-                if_debug(auto ret =)
-                  DUG_.addNode<AllocNode>(dest, src, offs, strong);
-                dout("  DUGid is " << ret->second << "\n");
-                // logout("n " << ret->second << "\n");
+                node_id = DUG_.addNode<AllocNode>(dest, src, offs, strong);
+                dout("  DUGid is " << node_id << "\n");
 
                 // FIXME: Should store strong information in ptsset for top lvl
                 //    variables...
@@ -216,7 +201,6 @@ class DUG {
                 } else {
                   it->second &= strong;
                 }
-                // logout("t " << 0 << "\n");
               }
               break;
             case ConstraintType::Store:
@@ -232,10 +216,9 @@ class DUG {
                 auto st_id = stcons.nodeId();
                 dout("  adding for store: (" << st_id << ") "
                   << ValPrint(st_id) << "\n");
-                if_debug(auto ret =)
-                  DUG_.addNode<StoreNode>(st_id, dest, src, offs);
-                dout("  DUGid is " << ret->second << "\n");
-                // logout("n " << ret->second << "\n");
+                node_id = DUG_.addNode<StoreNode>(st_id, dest, src, offs);
+                dout("  DUGid is " << node_id << "\n");
+                // logout("n " << ret << "\n");
                 assert(strongCons.find(st_id) == std::end(strongCons));
                 strongCons.emplace(st_id, cons.strong());
                 // logout("t " << 1 << "\n");
@@ -248,15 +231,15 @@ class DUG {
                 auto ld_id = ldcons.nodeId();
                 dout("  Actual load_id is: (" << ld_id << ") " <<
                   ValPrint(ld_id) << "\n");
-                auto ret = DUG_.addNode<LoadNode>(ld_id, dest, src, offs);
-                // logout("n " << ret->second << "\n");
+                node_id = DUG_.addNode<LoadNode>(ld_id, dest, src, offs);
+                // logout("n " << ret << "\n");
                 dout("  Confirming load node!\n");
-                if_debug(auto &nd =) DUG_.getNode<LoadNode>(ret->second);
+                if_debug(auto &nd =) DUG_.getNode<LoadNode>(node_id);
                 dout("    dest is: " << ValPrint(nd.dest())
                     << "\n");
                 dout("    src is: " << ValPrint(nd.src())
                     << "\n");
-                dout("  DUGid is " << ret->second << "\n");
+                dout("  DUGid is " << node_id << "\n");
                 strongCons.emplace(ld_id, cons.strong());
                 // Just trust me on this one...
                 // We don't enforce this... assert(strong_ret.second);
@@ -270,16 +253,16 @@ class DUG {
 
                 auto glbl_id = glblcons.nodeId();
                 dout("  Actual glbl_id is: (" << glbl_id << ")\n");
-                auto ret =
+                node_id =
                   DUG_.addNode<GlobalInitNode>(glbl_id, dest, src, offs);
-                // logout("n " << ret->second << "\n");
+                // logout("n " << ret << "\n");
                 dout("  Confirming GlobalInit node!\n");
-                if_debug(auto &nd =) DUG_.getNode<GlobalInitNode>(ret->second);
+                if_debug(auto &nd =) DUG_.getNode<GlobalInitNode>(node_id);
                 dout("    dest is: " << ValPrint(nd.dest())
                     << "\n");
                 dout("    src is: " << ValPrint(nd.src())
                     << "\n");
-                dout("  DUGid is " << ret->second << "\n");
+                dout("  DUGid is " << node_id << "\n");
                 assert(strongCons.find(glbl_id) == std::end(strongCons));
                 strongCons.emplace(glbl_id, cons.strong());
                 // logout("t " << 3 << "\n");
@@ -289,17 +272,17 @@ class DUG {
               {
                 if (auto ncons = llvm::dyn_cast<NodeConstraint>(&cons)) {
                   dout("  node is Copy\n");
-                  if_debug(auto ret =)
+                  node_id =
                     DUG_.addNode<CopyNode>(ncons->nodeId(), dest, src, offs);
-                  // logout("n " << ret->second << "\n");
-                  dout("  DUGid is " << ret->second << "\n");
+                  // logout("n " << ret << "\n");
+                  dout("  DUGid is " << node_id << "\n");
                   strongCons.emplace(dest, cons.strong());
                 } else {
                   dout("  node is Copy\n");
-                  if_debug(auto ret =)
+                  node_id =
                     DUG_.addNode<CopyNode>(dest, src, offs);
-                  // logout("n " << ret->second << "\n");
-                  dout("  DUGid is " << ret->second << " : consid is: "
+                  // logout("n " << ret << "\n");
+                  dout("  DUGid is " << node_id << " : consid is: "
                       << consid <<  "\n");
                   strongCons.emplace(dest, cons.strong());
                 }
@@ -309,6 +292,9 @@ class DUG {
             default:
               llvm_unreachable("Unrecognized constraint type");
           }
+
+          auto &nd = DUG_.getNode<DUGNode>(node_id);
+          nodeMap_.emplace(nd.rep(), node_id);
 
           dout("Adding node to DUG for obj_id: " << dest << ": " <<
               ValPrint(dest) << "\n");
@@ -326,7 +312,7 @@ class DUG {
       {
         PerfTimerPrinter strong_timer(llvm::dbgs(), "strong loop");
         std::for_each(std::begin(DUG_), std::end(DUG_),
-            [this, &strongCons] (SEG<ObjID>::node_iter_type &upnode) {
+            [this, &strongCons] (SEG::node_iter_type &upnode) {
           auto pnode = upnode.get();
 
           if (auto pst = llvm::dyn_cast<DUG::StoreNode>(pnode)) {
@@ -348,7 +334,7 @@ class DUG {
       {
         PerfTimerPrinter edge_discovery_timer(llvm::dbgs(), "Edge Discovery");
         std::for_each(std::begin(DUG_), std::end(DUG_),
-            [this, &dest_to_node] (SEG<ObjID>::node_iter_type &upnode) {
+            [this, &dest_to_node] (SEG::node_iter_type &upnode) {
           auto &node = llvm::cast<DUGNode>(*upnode);
           dest_to_node.emplace(node.dest(), node.id());
         });
@@ -360,7 +346,7 @@ class DUG {
       {
         PerfTimerPrinter edge_addition(llvm::dbgs(), "Edge creation");
         std::for_each(std::begin(DUG_), std::end(DUG_),
-            [this, &dest_to_node] (SEG<ObjID>::node_iter_type &upnode) {
+            [this, &dest_to_node] (SEG::node_iter_type &upnode) {
           auto pnode = upnode.get();
 
           auto &node = llvm::cast<DUGNode>(*pnode);
@@ -370,7 +356,7 @@ class DUG {
           auto src_node_set = dest_to_node.equal_range(node.src());
           // O(E)
           std::for_each(src_node_set.first, src_node_set.second,
-              [this, &node] (std::pair<const ObjID, SEG<ObjID>::NodeID> &pr) {
+              [this, &node] (std::pair<const ObjID, SEG::NodeID> &pr) {
             auto &pr_node = DUG_.getNode<DUGNode>(pr.second);
             auto dest_id = pr_node.id();
             // Don't add an edge to yourself!
@@ -380,7 +366,7 @@ class DUG {
                   node.id() << "\n");
               */
               // O(log(n))
-              DUG_.addEdge<DUGEdge>(dest_id, node.id());
+              DUG_.addEdge(dest_id, node.id());
             }
           });
 
@@ -395,22 +381,27 @@ class DUG {
             auto dest_nodes = dest_to_node.equal_range(dest_id);
             // O(E)
             std::for_each(dest_nodes.first, dest_nodes.second,
-                [this, &node] (std::pair<const ObjID, SEG<ObjID>::NodeID> &pr) {
+                [this, &node] (std::pair<const ObjID, SEG::NodeID> &pr) {
               // Don't add an edge to yourself!
               if (pr.second != node.id()) {
                 // O(log(n))
-                DUG_.addEdge<DUGEdge>(pr.second, node.id());
+                DUG_.addEdge(pr.second, node.id());
               }
             });
           }
         });
+      }
+
+      {
+        PerfTimerPrinter edge_addition(llvm::dbgs(), "Edge cleanup");
+        DUG_.cleanEdges();
       }
     }
     //}}}
 
     // DUG Construction Methods {{{
     DUGid addPhi() {
-      return DUG_.addNode<PhiNode>(ObjectMap::UniversalValue, 0)->second;
+      return DUG_.addNode<PhiNode>(ObjectMap::UniversalValue, 0);
     }
 
     void addEdge(DUGid src, DUGid dest) {
@@ -420,7 +411,7 @@ class DUG {
     void addEdge(DUGid src, DUGid dest, PartID part) {
       // Okay, add a named edge from src to dest
       if (part == PartID::invalid()) {
-        DUG_.addEdge<DUGEdge>(src, dest);
+        DUG_.addEdge(src, dest);
       } else {
         auto &pn = DUG_.getNode<PartNode>(src);
 
@@ -439,8 +430,12 @@ class DUG {
       return structInfo_;
     }
 
-    DUGEdge &getEdge(EdgeID id) {
-      return DUG_.getEdge<DUGEdge>(id);
+    const DUGNode &getNode(ObjectMap::ObjID oid) const {
+      return DUG_.getNode<DUGNode>(nodeMap_.at(oid));
+    }
+
+    DUGNode &getNode(ObjectMap::ObjID oid) {
+      return DUG_.getNode<DUGNode>(nodeMap_.at(oid));
     }
 
     DUGNode &getNode(DUGid id) {
@@ -450,32 +445,6 @@ class DUG {
     const DUGNode &getNode(DUGid id) const {
       return DUG_.getNode<DUGNode>(id);
     }
-
-    /*
-    std::pair<SEG<ObjID>::NodeMap::iterator, SEG<ObjID>::NodeMap::iterator>
-    getNodes(ObjectMap::ObjID id) {
-      return DUG_.getNodes(id);
-    }
-    */
-
-    DUGNode &getNode(ObjectMap::ObjID id) {
-      auto ret_pr = DUG_.getNodes(id);
-      assert(std::distance(ret_pr.first, ret_pr.second) == 1);
-      return getNode(ret_pr.first->second);
-    }
-
-    const DUGNode &getNode(ObjectMap::ObjID id) const {
-      auto ret_pr = DUG_.getNodes(id);
-      assert(std::distance(ret_pr.first, ret_pr.second) == 1);
-      return getNode(ret_pr.first->second);
-    }
-
-    /*
-    std::pair<SEG<ObjID>::node_map_iterator, SEG<ObjID>::node_map_iterator>
-    getNode(ObjectMap::ObjID id) {
-      return DUG_.getNodes(id);
-    }
-    */
     //}}}
 
     // Equivalence mappings {{{
@@ -552,9 +521,9 @@ class DUG {
     //}}}
 
     // Node iteration {{{
-    typedef SEG<ObjID>::node_iterator node_iterator;
-    typedef SEG<ObjID>::const_node_iterator const_node_iterator;
-    typedef SEG<ObjID>::node_iter_type node_iter_type;
+    typedef SEG::node_iterator node_iterator;
+    typedef SEG::const_node_iterator const_node_iterator;
+    typedef SEG::node_iter_type node_iter_type;
 
     node_iterator nodes_begin() {
       return std::begin(DUG_);
@@ -581,17 +550,6 @@ class DUG {
     }
     //}}}
 
-    // Node Map iteration {{{
-    typedef SEG<ObjID>::const_node_map_iterator const_node_map_iterator;
-
-    const_node_map_iterator node_map_cbegin() const {
-      return DUG_.node_map_begin();
-    }
-
-    const_node_map_iterator node_map_cend() const {
-      return DUG_.node_map_end();
-    }
-    //}}}
     //}}}
 
     // For debugging {{{
@@ -601,7 +559,7 @@ class DUG {
     class AllocNode : public DUGNode {
       //{{{
      public:
-        AllocNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest,
+        AllocNode(SEG::NodeID node_id, ObjectMap::ObjID dest,
               ObjectMap::ObjID src, int32_t offset, bool strong) :
             DUGNode(NodeKind::AllocNode, node_id, dest, src, offset) {
           // FIXME: Hacky
@@ -611,7 +569,7 @@ class DUG {
         // NOTE: Process implemented in "Solve.cpp"
         void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
 
-        static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
+        static bool classof(const SEG::Node *node) {
           return node->getKind() == NodeKind::AllocNode;
         }
       //}}}
@@ -620,12 +578,12 @@ class DUG {
     class CopyNode : public DUGNode {
       //{{{
      public:
-        CopyNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest,
+        CopyNode(SEG::NodeID node_id, ObjectMap::ObjID dest,
             ObjectMap::ObjID src, int32_t offset)
           : DUGNode(NodeKind::CopyNode, node_id, dest, src, offset),
             realDest_(dest) { }
 
-        CopyNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID node,
+        CopyNode(SEG::NodeID node_id, ObjectMap::ObjID node,
             ObjectMap::ObjID dest, ObjectMap::ObjID src, int32_t offset)
           : DUGNode(NodeKind::CopyNode, node_id, node, src, offset),
           realDest_(dest) { }
@@ -633,7 +591,7 @@ class DUG {
         // NOTE: Process implemented in "Solve.cpp"
         void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
 
-        static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
+        static bool classof(const SEG::Node *node) {
           return node->getKind() == NodeKind::CopyNode;
         }
 
@@ -653,7 +611,7 @@ class DUG {
     class PartNode : public DUGNode {
       //{{{
      public:
-      PartNode(NodeKind kind, SEG<ObjID>::NodeID node_id, ObjectMap::ObjID dest,
+      PartNode(NodeKind kind, SEG::NodeID node_id, ObjectMap::ObjID dest,
             ObjectMap::ObjID src, int32_t offset) :
           DUGNode(kind, node_id, dest, src, offset) {
         assert(kind > NodeKind::PartNode && kind < NodeKind::PartNodeEnd);
@@ -675,7 +633,7 @@ class DUG {
         in_ = PtstoGraph(vars);
       }
 
-      static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
+      static bool classof(const SEG::Node *node) {
         return node->getKind() >= NodeKind::PartNode &&
           node->getKind() < NodeKind::PartNodeEnd;
       }
@@ -691,7 +649,7 @@ class DUG {
     class LoadNode : public PartNode {
       //{{{
      public:
-        LoadNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID rep,
+        LoadNode(SEG::NodeID node_id, ObjectMap::ObjID rep,
             ObjectMap::ObjID dest, ObjectMap::ObjID src, int32_t offset)
           : PartNode(NodeKind::LoadNode, node_id, rep, src, offset),
             realDest_(dest) { }
@@ -699,7 +657,7 @@ class DUG {
         // NOTE: Process implemented in "Solve.cpp"
         void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
 
-        static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
+        static bool classof(const SEG::Node *node) {
           return node->getKind() == NodeKind::LoadNode;
         }
 
@@ -719,7 +677,7 @@ class DUG {
     class StoreNode : public PartNode {
       //{{{
      public:
-        StoreNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID rep,
+        StoreNode(SEG::NodeID node_id, ObjectMap::ObjID rep,
             ObjectMap::ObjID dest, ObjectMap::ObjID src, int32_t offset)
           : PartNode(NodeKind::StoreNode, node_id, rep, src, offset),
           realDest_(dest) { }
@@ -727,7 +685,7 @@ class DUG {
         // NOTE: Process implemented in "Solve.cpp"
         void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
 
-        static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
+        static bool classof(const SEG::Node *node) {
           return node->getKind() == NodeKind::StoreNode;
         }
 
@@ -757,7 +715,7 @@ class DUG {
     class GlobalInitNode : public PartNode {
       //{{{
      public:
-        GlobalInitNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID rep,
+        GlobalInitNode(SEG::NodeID node_id, ObjectMap::ObjID rep,
             ObjectMap::ObjID dest, ObjectMap::ObjID src, int32_t offset)
           : PartNode(NodeKind::GlobalInitNode, node_id, rep, src, offset),
           realDest_(dest) { }
@@ -765,7 +723,7 @@ class DUG {
         // NOTE: Process implemented in "Solve.cpp"
         void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
 
-        static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
+        static bool classof(const SEG::Node *node) {
           return node->getKind() == NodeKind::GlobalInitNode;
         }
 
@@ -786,13 +744,13 @@ class DUG {
     class PhiNode : public PartNode {
       //{{{
      public:
-        PhiNode(SEG<ObjID>::NodeID node_id, ObjectMap::ObjID id, int32_t offset)
+        PhiNode(SEG::NodeID node_id, ObjectMap::ObjID id, int32_t offset)
           : PartNode(NodeKind::PhiNode, node_id, id, id, offset) { }
 
         // NOTE: Process implemented in "Solve.cpp"
         void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
 
-        static bool classof(const SEGNode<ObjectMap::ObjID> *node) {
+        static bool classof(const SEG::Node *node) {
           return node->getKind() == NodeKind::PhiNode;
         }
       //}}}
@@ -807,9 +765,11 @@ class DUG {
     std::map<ObjID, PartID> revPartitionMap_;
     std::map<ObjID, std::vector<DUGid>> partNodes_;
 
+    std::map<ObjID, SEG::NodeID> nodeMap_;
+
     std::map<ObjID, int32_t> structInfo_;
 
-    SEG<ObjID> DUG_;
+    SEG DUG_;
     //}}}
   //}}}
 };

@@ -297,7 +297,9 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
     auto dest_id = dest_pr.first->second;
 
 
-    huSeg.addEdge<HUEdge>(src_id, dest_id, huSeg, cons);
+    huSeg.addEdge(src_id, dest_id);
+
+    processHUEdge(src_id, dest_id, huSeg, cons);
   });
 
 
