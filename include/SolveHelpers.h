@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <map>
 #include <queue>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -106,12 +107,16 @@ class PtstoSet {
       return ptsto_.test_and_set(id.val());
     }
 
-    bool orOffs(const PtstoSet &rhs, int32_t offs) {
+    bool orOffs(const PtstoSet &rhs, int32_t offs,
+        const std::map<ObjectMap::ObjID, int32_t> struct_set) {
       bool ret = false;
       std::for_each(std::begin(rhs.ptsto_), std::end(rhs.ptsto_),
-          [this, &ret, &offs] (const int32_t &val) {
+          [this, &ret, &offs, &struct_set]
+          (const int32_t &val) {
         auto or_offs = offs;
-        if (ObjectMap::isSpecial(ObjectMap::ObjID(val))) {
+        // If this isn't a structure, don't treat it with an offset
+        auto it = struct_set.find(ObjectMap::ObjID(val));
+        if (it == std::end(struct_set) || it->second <= or_offs) {
           or_offs = 0;
         }
         ret |= ptsto_.test_and_set(val + or_offs);

@@ -118,6 +118,8 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
 
   if_debug(cfg.getSEG().printDotFile("CFG.dot", omap));
 
+  cfg.cleanup();
+
   Andersens aux;
   // Get AUX info, in this instance we choose Andersens
   {
@@ -171,6 +173,7 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
       aux_to_obj_.emplace(aux_val_id, obj_id);
     });
   }
+
   // Now, fill in the indirect function calls
   {
     PerfTimerPrinter indir_timer(llvm::dbgs(), "addIndirectCalls");
@@ -227,6 +230,8 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
       error("ComputePartSSA failure!");
     }
   }
+
+  graph.setStructInfo(omap.getIsStructSet());
 
   // Finally, solve the graph
   {

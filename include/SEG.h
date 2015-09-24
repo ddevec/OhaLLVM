@@ -278,34 +278,9 @@ class SEGNode {
     //}}}
 
     // Modifiers {{{
-    bool addSucc(SEG<id_type> &seg, EdgeID id) {
-      bool found = false;
-      auto &edge = seg.getEdge(id);
-      for (auto edge_id : succs()) {
-        auto &test_edge = seg.getEdge(edge_id);
-
-        if (edge == test_edge) {
-          found = true;
-          break;
-        }
-      }
-
-      if (!found) {
-        succs().push_back(id);
-      } else {
-        // If we couldn't add the edge, delete it?
-        seg.tryRemoveEdge(id);
-      }
-
-      return !found;
-    }
-
-    void addSuccSafe(EdgeID id) {
+    bool addSucc(EdgeID id) {
       succs().push_back(id);
-    }
-
-    void addPredSafe(EdgeID id) {
-      preds().push_back(id);
+      return true;
     }
 
     void removeDuplicatePreds(SEG<id_type> &seg) {
@@ -321,7 +296,6 @@ class SEGNode {
       std::for_each(std::begin(remove_list), std::end(remove_list),
           [this, &seg](EdgeID rm_id) {
         // Delete the edge
-        // llvm::dbgs() << "Removing duplicate pred_edge: " << rm_id << "\n";
         seg.removeEdge(rm_id);
       });
     }
@@ -339,75 +313,15 @@ class SEGNode {
       std::for_each(std::begin(remove_list), std::end(remove_list),
           [this, &seg](EdgeID rm_id) {
         // Delete the edge
-        // llvm::dbgs() << "Removing duplicate succ_edge: " << rm_id << "\n";
         seg.removeEdge(rm_id);
       });
     }
 
-    bool addPred(SEG<id_type> &seg, EdgeID id) {
-      bool found = false;
-      auto &edge = seg.getEdge(id);
-      for (auto edge_id : preds()) {
-        auto &test_edge = seg.getEdge(edge_id);
-
-        if (edge == test_edge) {
-          found = true;
-          break;
-        }
-      }
-
-      if (!found) {
-        preds().push_back(id);
-      } else {
-        // If we couldn't add the edge, delete it?
-        seg.tryRemoveEdge(id);
-      }
-
-      return !found;
+    bool addPred(EdgeID id) {
+      preds().push_back(id);
+      return true;
     }
 
-    void tryRemoveSucc(EdgeID id) {
-      /*
-      auto src_it = succs().find(id);
-      if (src_it != std::end(succs())) {
-        succs().erase(src_it);
-      }
-      */
-      auto found = std::end(succs());
-      for (auto it = std::begin(succs()), en = std::end(succs());
-          it != en; ++it) {
-        if (*it == id) {
-          found = it;
-          break;
-        }
-      }
-
-      if (found != std::end(succs())) {
-        std::swap(*found, succs()[succs().size()-1]);
-        succs().pop_back();
-      }
-    }
-
-    void tryRemovePred(EdgeID id) {
-      /*
-      auto src_it = preds().find(id);
-      if (src_it != std::end(preds())) {
-        preds().erase(src_it);
-      }
-      */
-      auto found = std::end(preds());
-      for (auto it = std::begin(preds()), en = std::end(preds());
-          it != en; ++it) {
-        if (*it == id) {
-          found = it;
-          break;
-        }
-      }
-      if (found != std::end(preds())) {
-        std::swap(*found, preds()[preds().size()-1]);
-        preds().pop_back();
-      }
-    }
 
     void removeSucc(EdgeID id) {
       auto found = std::end(succs());
@@ -1668,13 +1582,13 @@ class SEG {
       EdgeID edge_id(edges_.size() - 1);
 
       // Add succ/pred info for src/dest
-      bool ret = src_node.addSucc(*this, edge_id);
+      bool ret = src_node.addSucc(edge_id);
       if (!ret) {
         llvm::dbgs() << "addSucc failed :(\n";
         edges_.pop_back();
         return EdgeID::invalid();
       }
-      ret = dest_node.addPred(*this, edge_id);
+      ret = dest_node.addPred(edge_id);
       if (!ret) {
         llvm::dbgs() << "addPred failed :(\n";
         src_node.removeSucc(edge_id);
@@ -1696,8 +1610,8 @@ class SEG {
       EdgeID edge_id(edges_.size() - 1);
 
       // Add succ/pred info for src/dest
-      src_node.addSuccSafe(edge_id);
-      dest_node.addPredSafe(edge_id);
+      src_node.addSucc(edge_id);
+      dest_node.addPred(edge_id);
 
       return edge_id;
     }
@@ -1770,18 +1684,25 @@ class SEG {
         << new_src.id() << "\n";
       */
       // Only add the pred if the succ succeeded!
-      if (new_src.addSucc(*this, id)) {
-        /*
-        llvm::dbgs() << "adding pred (" << id << ") to new_dest: "
-          << new_dest.id() << "\n";
-        */
-        new_dest.addPred(*this, id);
-      }
+      new_src.addSucc(id);
+      new_dest.addPred(id);
 
       // Removing duplicates?
+      /*
       new_src.removeDuplicateSuccs(*this);
       new_dest.removeDuplicatePreds(*this);
+      */
     }
+
+    void cleanEdges() {
+      for (auto &pnode : nodes_) {
+        if (pnode != nullptr) {
+          pnode->removeDuplicateSuccs(*this);
+          pnode->removeDuplicatePreds(*this);
+        }
+      }
+    }
+
     //}}}
 
     // Node Manipulation {{{

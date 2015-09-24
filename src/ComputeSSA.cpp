@@ -42,6 +42,8 @@ void T4(CFG::ControlFlowGraph &G, const CFG::ControlFlowGraph &Xp) {
       }
     });
   });
+
+  G.cleanEdges();
   dout("Finished T4\n");
 }
 
@@ -71,6 +73,7 @@ void T2(CFG::ControlFlowGraph &G, CFG::ControlFlowGraph &Xp) {
     }
   });
 
+  G.cleanEdges();
   dout("Finished T2\n");
 }
 
@@ -228,6 +231,8 @@ void T5(CFG::ControlFlowGraph &G) {
 
     succ_node.unite(G, unite_node);
   });
+
+  G.cleanEdges();
   dout("Finished T5\n");
 }
 //}}}

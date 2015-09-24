@@ -350,6 +350,9 @@ class CFG {
     //}}}
 
     // Setters {{{
+    void cleanup() {
+      CFG_.cleanEdges();
+    }
 
     void addEdge(CFGid cfg_id1, CFGid cfg_id2) {
       auto node_id1 = getNode(cfg_id1).id();
@@ -377,7 +380,7 @@ class CFG {
     }
 
     void addCallRetInfo(ConstraintGraph::ObjID fcn_id, CFGid call_id, CFGid ret_id) {
-      cfgFcnToCallRet_.emplace(fcn_id, std::make_pair(call_id, ret_id));
+      cfgFcnToCallRet_[fcn_id].emplace_back(call_id, ret_id);
     }
 
     void addIndirFcn(ConstraintGraph::ObjID call_id, ConstraintGraph::ObjID fcn_id) {
@@ -420,7 +423,7 @@ class CFG {
       return getNode(pr.first->second);
     }
 
-    const std::pair<CFGid, CFGid> &
+    const std::vector<std::pair<CFGid, CFGid>> &
     getCallRetInfo(ConstraintGraph::ObjID fcn_id) const {
       return cfgFcnToCallRet_.at(fcn_id);
     }
@@ -684,40 +687,6 @@ class CFG {
     typedef std::pair<ObjectMap::ObjID, CFGid>
       obj_to_cfg_type;
 
-    /*
-    typedef ControlFlowGraph::edge_iterator cfg_iterator;
-    typedef ControlFlowGraph::const_edge_iterator const_cfg_iterator;
-    cfg_iterator cfg_begin() {
-      // return std::begin(cfgEdges_);
-      return CFG_.edges_begin();
-    }
-
-    cfg_iterator cfg_end() {
-      // return std::end(cfgEdges_);
-      return CFG_.edges_end();
-    }
-
-    const_cfg_iterator cfg_begin() const {
-      // return std::begin(cfgEdges_);
-      return CFG_.edges_begin();
-    }
-
-    const_cfg_iterator cfg_end() const {
-      // return std::end(cfgEdges_);
-      return CFG_.edges_end();
-    }
-
-    const_cfg_iterator cfg_cbegin() const {
-      // return cfgEdges_.cbegin();
-      return CFG_.edges_cbegin();
-    }
-
-    const_cfg_iterator cfg_cend() const {
-      // return cfgEdges_.cend();
-      return CFG_.edges_cend();
-    }
-    */
-
     const_obj_to_cfg_iterator obj_to_cfg_begin() const {
       return std::begin(objToCFG_);
     }
@@ -741,7 +710,8 @@ class CFG {
     ControlFlowGraph CFG_;
 
     // FunctionCFGid to call/ret nodes
-    std::map<ObjectMap::ObjID, std::pair<CFGid, CFGid>> cfgFcnToCallRet_;
+    std::map<ObjectMap::ObjID, std::vector<std::pair<CFGid, CFGid>>>
+      cfgFcnToCallRet_;
 
     // Maps Control Flow nodes to the call functions within them
     std::map<CFGid, std::vector<ObjectMap::ObjID>> cfgDirCallsites_;

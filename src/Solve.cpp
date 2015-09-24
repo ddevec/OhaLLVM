@@ -108,7 +108,8 @@ void DUG::CopyNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   logout("f " << offset() << "\n");
 
   // bool change = (dest_pts |= src_pts);
-  bool change = dest_pts.orOffs(src_pts, offset());
+  auto &struct_list = dug.getStructInfo();
+  bool change = dest_pts.orOffs(src_pts, offset(), struct_list);
 
   logout("D " << dest() << " " << dest_pts << "\n");
   dout("  pts_top[" << dest() << "] is now: " << dest_pts << "\n");
@@ -271,11 +272,11 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
         [this, &change, &src_pts] (ObjectMap::ObjID elm) {
       change |= out_.orElement(elm, src_pts);
     });
-
-    dout("    Final out: " << out_ << "\n");
-    dout("    Final in: " << in() << "\n");
   }
 
+
+  dout("    Final out: " << out_ << "\n");
+  dout("    Final in: " << in() << "\n");
   logout("I " << in() << "\n");
   logout("O " << out_ << "\n");
 

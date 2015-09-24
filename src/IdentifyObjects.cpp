@@ -1823,73 +1823,87 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
     llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
     auto fptr = CS.getCalledValue();
 
-    // Get the functon call/ret info for this function:
-    auto &pr = cfg.getCallRetInfo(omap.getValue(fptr));
-    CFG::CFGid aux_call_id = pr.first;
-    CFG::CFGid aux_ret_id = pr.second;
-
     // Add an edge from this call to the fcn
     CFG::CFGid call_id = pair.second;
     CFG::CFGid ret_id = cfg.getCallSuccessor(call_id);
 
-    // Now add edges
-    cfg.addEdge(call_id, aux_call_id);
-    cfg.addEdge(aux_ret_id, ret_id);
+    // Get the functon call/ret info for this function:
+    auto &cr_vec = cfg.getCallRetInfo(omap.getValue(fptr));
+    for (auto pr : cr_vec) {
+      CFG::CFGid aux_call_id = pr.first;
+      CFG::CFGid aux_ret_id = pr.second;
+
+      // Now add edges
+      cfg.addEdge(call_id, aux_call_id);
+      cfg.addEdge(aux_ret_id, ret_id);
+    }
 
     bool is_ext = false;
     // Its possible I cannot Identify the indir function from the list andersens
     //   gave me.  I ignore it then, and that /should/ be safe?
+    // I'm also only following indirect functions for functions I can precisely
+    //   identify, otherwise things get too nasty
     if (cfg.haveIndirFcn(pair.first)) {
       const std::vector<ConstraintGraph::ObjID> &fcnTargets =
         cfg.getIndirFcns(pair.first);
-
       // Also, add constraints if needed
-      std::for_each(std::begin(fcnTargets), std::end(fcnTargets),
-            [this, &aux, &cg, &cfg, &omap, &CS, &ci, &is_ext]
-            (const ConstraintGraph::ObjID fcn_id) {
-        const llvm::Function *fcn = omap.getFunction(fcn_id);
+      if (fcnTargets.size() == 1) {
+        std::for_each(std::begin(fcnTargets), std::end(fcnTargets),
+              [this, &aux, &cg, &cfg, &omap, &CS, &ci, &is_ext]
+              (const ConstraintGraph::ObjID fcn_id) {
+          const llvm::Function *fcn = omap.getFunction(fcn_id);
+          /*
+          llvm::dbgs() << "Checking fcnTarget for: " << *ci <<
+              " : " << fcn->getName() << "\n";
+          */
 
-        // If this is an allocation we need to note that in our structures...
-        if (llvm::isa<llvm::PointerType>(ci->getType()) &&
-            Andersens::fcnIsMalloc(fcn)) {
-          llvm::dbgs() << "Have indirect malloc call: " << *ci << "\n";
-          // If its a malloc, we don't add constriants for the call, we instead
-          //   pretend the call is actually a addressof operation
-          //
-          // Unfortunately, malloc doesn't tell us what size strucutre is
-          //   being allocated, we infer this information from its uses
-          auto &inst = *ci;
-          auto inferred_type = findLargestType(omap, inst);
+          // If this is an allocation we need to note that in our structures...
+          if (Andersens::fcnIsMalloc(fcn) &&
+              llvm::isa<llvm::PointerType>(ci->getType())) {
+            llvm::dbgs() << "Have indirect malloc call\n";
+            // If its a malloc, we don't add constriants for the call, we
+            //   instead pretend the call is actually a addressof operation
+            //
+            // Unfortunately, malloc doesn't tell us what size strucutre is
+            //   being allocated, we infer this information from its uses
+            auto &inst = *ci;
+            auto inferred_type = findLargestType(omap, inst);
 
-          auto dest_id = omap.getValue(&inst);
-          // Add objects for this call...
-          llvm::dbgs() << "adding indirect objects: " << inst << "\n";
-          auto &aux_ptsto = aux.getPointsTo(ci);
+            auto dest_id = omap.getValue(&inst);
+            // Add objects for this call...
+            // llvm::dbgs() << "adding indirect objects: " << inst << "\n";
 
-          std::vector<ObjectMap::ObjID> alias_ptsto;
-          // Convert aux_ptsto to our ptsto
-          for (int32_t i : aux_ptsto) {
-            alias_ptsto.push_back(aux_to_obj_[i]);
+            std::vector<ObjectMap::ObjID> alias_ptsto;
+            auto &aux_ptsto = aux.getPointsTo(ci);
+            // Convert aux_ptsto to our ptsto
+            for (int32_t i : aux_ptsto) {
+              alias_ptsto.push_back(aux_to_obj_[i]);
+            }
+
+            omap.addObjectsAlias(inferred_type, &inst, alias_ptsto);
+            auto src_obj_id = omap.getObject(&inst);
+            /*
+            llvm::dbgs() << "  got source object: " << src_obj_id << "\n";
+
+            llvm::dbgs() << "  Malloc addAddressForType(" << dest_id << ", " <<
+                src_obj_id << ")\n";
+                */
+            addConstraintForType(ConstraintType::AddressOf, cg, omap,
+                inferred_type, dest_id, src_obj_id, false);
+
+            is_ext = true;
+          // If its not an allocation, add normal constraints
+          } else {
+            llvm::dbgs() << "  Non-malloc call!\n";
+            is_ext |= addConstraintsForCall(cg, cfg, omap, CS,
+              const_cast<llvm::Function *>(fcn), nullptr);
           }
 
-          omap.addObjectsAlias(inferred_type, &inst, alias_ptsto);
-          auto src_obj_id = omap.getObject(&inst);
-          llvm::dbgs() << "got source object: " << src_obj_id << "\n";
-
-          llvm::dbgs() << "Malloc addAddressForType(" << dest_id << ", " <<
-              src_obj_id << ")\n";
-          addConstraintForType(ConstraintType::AddressOf, cg, omap,
-              inferred_type, dest_id, src_obj_id, false);
-
-          is_ext = true;
-        // If its not an allocation, add normal constraints
-        } else {
-          is_ext |= addConstraintsForCall(cg, cfg, omap, CS,
-            const_cast<llvm::Function *>(fcn), nullptr);
-        }
-
-        cfg.removeUnusedFunction(cg, fcn_id);
-      });
+          cfg.removeUnusedFunction(cg, fcn_id);
+        });
+      }
+    // FIXME: Universal pointer contraints?
+    } else {
     }
 
     if (is_ext) {

@@ -380,7 +380,7 @@ class DUG {
                   node.id() << "\n");
               */
               // O(log(n))
-              DUG_.addEdgeSafe<DUGEdge>(dest_id, node.id());
+              DUG_.addEdge<DUGEdge>(dest_id, node.id());
             }
           });
 
@@ -399,7 +399,7 @@ class DUG {
               // Don't add an edge to yourself!
               if (pr.second != node.id()) {
                 // O(log(n))
-                DUG_.addEdgeSafe<DUGEdge>(pr.second, node.id());
+                DUG_.addEdge<DUGEdge>(pr.second, node.id());
               }
             });
           }
@@ -428,9 +428,17 @@ class DUG {
         pn.addPartitionSuccessor(part, dest);
       }
     }
+
+    void setStructInfo(const std::map<ObjID, int32_t> info) {
+      structInfo_ = info;
+    }
     //}}}
 
     // Accessors {{{
+    const std::map<ObjID, int32_t> &getStructInfo() const {
+      return structInfo_;
+    }
+
     DUGEdge &getEdge(EdgeID id) {
       return DUG_.getEdge<DUGEdge>(id);
     }
@@ -798,6 +806,8 @@ class DUG {
     std::map<ObjID, Bitmap> relevantNodes_;
     std::map<ObjID, PartID> revPartitionMap_;
     std::map<ObjID, std::vector<DUGid>> partNodes_;
+
+    std::map<ObjID, int32_t> structInfo_;
 
     SEG<ObjID> DUG_;
     //}}}

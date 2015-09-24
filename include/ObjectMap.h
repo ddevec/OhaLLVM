@@ -8,6 +8,7 @@
 #include <cstdint>
 
 #include <map>
+#include <set>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -309,6 +310,10 @@ class ObjectMap {
     //}}}
 
     // Value Retrieval {{{
+    const std::map<ObjID, int32_t> &getIsStructSet() const {
+      return objIsStruct_;
+    }
+
     static bool isSpecial(ObjID id) {
       assert(id.val() >= 0);
       return id.val() < static_cast<int32_t>(ObjEnum::eNumDefaultObjs);
@@ -588,6 +593,7 @@ class ObjectMap {
     // Struct info
     std::map<const llvm::StructType *, StructInfo> structInfo_;
     std::map<ObjID, std::vector<ObjID>> objToAliases_;
+    std::map<ObjID, int32_t> objIsStruct_;
     const StructInfo *maxStructInfo_ = nullptr;
 
     static constexpr int32_t phonyIdBase = 1<<30;
@@ -634,10 +640,14 @@ class ObjectMap {
         // Fill out the struct:
         auto &struct_info = getStructInfo(st);
 
+        int num_sizes = struct_info.size();
+        int cur_size = 0;
         // llvm::dbgs() << "Got StructInfo: " << struct_info << "\n";
         bool first = true;
         std::for_each(struct_info.sizes_begin(), struct_info.sizes_end(),
-            [this, &ret_id, &alias, &pm, &mp, &first, &val] (int32_t) {
+            [this, &ret_id, &alias, &pm, &mp, &first, &val, &num_sizes,
+              &cur_size]
+            (int32_t) {
           // This is logically reserving an ObjID for this index within the
           //   struct
           ObjID id = createMapping(val);
@@ -654,6 +664,11 @@ class ObjectMap {
           assert(pm.find(id) == std::end(pm));
           pm.emplace(id, val);
 
+
+          llvm::dbgs() << "objIsStruct[" << id << "] = " << num_sizes-cur_size
+            << "\n";
+          objIsStruct_.emplace(id, num_sizes-cur_size);
+          cur_size++;
           // Denote which objects this structure field occupies
           if (alias == nullptr) {
             objToAliases_[ret_id].emplace_back(id);
@@ -673,6 +688,11 @@ class ObjectMap {
         mp.emplace(val, ret_id);
         assert(pm.find(ret_id) == std::end(pm));
         pm.emplace(ret_id, val);
+        if (alias != nullptr) {
+          for (auto &obj_id : *alias) {
+            objToAliases_[obj_id].emplace_back(ret_id);
+          }
+        }
       }
 
       return ret_id;

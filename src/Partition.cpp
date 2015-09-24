@@ -222,7 +222,7 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
         (ObjectMap::ObjID &obj_id) {
       // Check to see if this is an internal alias I introduced...
       //    An example of this would be structure fields
-      //    Or copies to universal values
+      //    Or allocations from indirect pointers
       auto field_pr = omap.findObjAliases(obj_id);
 
       // If so, add each field to the part map
@@ -232,9 +232,9 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
             [&pr, &part_map] (ObjectMap::ObjID id) {
           part_map[id] = pr.first;
         });
-      // Otherwise, just add the obj
       }
 
+      // Now, just add the obj
       part_map[obj_id] = pr.first;
     });
   });
@@ -669,6 +669,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
       std::for_each(std::begin(objs), std::end(objs),
           [&graph, &vars, &omap] (ObjectMap::ObjID &obj_id) {
         // We're going to try converting these to objects instead of values...
+        // Also adding pointers for aliased objects
         auto field_pr = omap.findObjAliases(obj_id);
         if (field_pr.first) {
           auto &field_vec = field_pr.second;
@@ -680,12 +681,22 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
       });
     });
 
+    /*
     if_debug(
       dout("  Setting up vars as:");
       for (auto &obj : vars) {
         dout(" " << obj);
       }
       dout("\n"));
+    */
+    /*
+    llvm::dbgs() << "  (" << pr.first << ")Setting up vars as:";
+    for (auto &obj : vars) {
+      llvm::dbgs() << " " << obj;
+    }
+    llvm::dbgs() << "\n";
+    */
+
     part_node.setupPartGraph(vars);
   });
 
