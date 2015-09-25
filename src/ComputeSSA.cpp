@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2015 David Devecsery
  */
-#define SPECSFS_DEBUG
+// #define SPECSFS_DEBUG
 
 #include <algorithm>
 #include <set>
@@ -64,7 +64,7 @@ void T2(CFG::ControlFlowGraph &G, CFG::ControlFlowGraph &Xp) {
 
       // We don't unite if we're our own predecessor
       if (w_node != pred_node) {
-        w_node.unite(G, pred_node);
+        pred_node.unite(G, w_node);
       }
     }
   });
@@ -241,10 +241,13 @@ void Ramalingam(CFG::ControlFlowGraph &G) {
   // Make Gp a copy of G
   if_debug(G.printDotFile("G.dot", *g_omap));
 
+  dout("Creating Gp\n");
+  G.cleanEdges();
   CFG::ControlFlowGraph Gp = G.clone<CFG::Node>();
 
   if_debug(Gp.printDotFile("Gp_orig.dot", *g_omap));
 
+  dout("  Creating remove list\n");
   std::vector<CFG::NodeID> remove_list;
   std::for_each(std::begin(Gp), std::end(Gp),
       [&remove_list]
@@ -256,10 +259,12 @@ void Ramalingam(CFG::ControlFlowGraph &G) {
     }
   });
 
+  Gp.cleanEdges();
+
+  dout("  removing remove list\n");
   // Remove all non-preserving nodes from Gp
   std::for_each(std::begin(remove_list), std::end(remove_list),
       [&Gp](CFG::NodeID id) {
-    // llvm::dbgs() << "Removing node: " << id << "\n";
     Gp.removeNode(id);
   });
 
@@ -268,8 +273,10 @@ void Ramalingam(CFG::ControlFlowGraph &G) {
   // Now get the SCC version of Gp
   // NOTE: This will merge the nodes for me
   // We must clean edges before creating the SCC...
+  dout("  Creating SCC\n");
   Gp.createSCC();
   Gp.cleanEdges();
+  dout("Gp Done\n");
   G.cleanEdges();
 
   if_debug(Gp.printDotFile("Xp.dot", *g_omap));

@@ -3,7 +3,7 @@
  */
 
 // #define SPECSFS_DEBUG
-#define SPECSFS_LOGDEBUG
+// #define SPECSFS_LOGDEBUG
 
 #include <algorithm>
 #include <utility>

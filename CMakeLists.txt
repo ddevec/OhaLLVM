@@ -112,6 +112,10 @@ add_llvm_loadable_module(SpecSFS
     ${SPECSFS_SOURCES}
   )
 
+target_link_libraries(SpecSFS
+  profiler
+  )
+
 add_cpplint_target(SpecSFS ${SPECSFS_SOURCES})
 add_cpplint_headers(SpecSFS ${SPECSFS_HEADERS})
 

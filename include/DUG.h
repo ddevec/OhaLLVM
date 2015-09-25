@@ -366,7 +366,7 @@ class DUG {
                   node.id() << "\n");
               */
               // O(log(n))
-              DUG_.addEdge(dest_id, node.id());
+              DUG_.addDirectionalEdge(dest_id, node.id());
             }
           });
 
@@ -385,17 +385,19 @@ class DUG {
               // Don't add an edge to yourself!
               if (pr.second != node.id()) {
                 // O(log(n))
-                DUG_.addEdge(pr.second, node.id());
+                DUG_.addDirectionalEdge(pr.second, node.id());
               }
             });
           }
         });
       }
 
+      /*
       {
         PerfTimerPrinter edge_addition(llvm::dbgs(), "Edge cleanup");
         DUG_.cleanEdges();
       }
+      */
     }
     //}}}
 
