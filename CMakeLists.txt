@@ -68,7 +68,7 @@ set(CMAKE_CXX_FLAGS_DEBUG "-O1 -ggdb3")
 
 set(CMAKE_CXX_COMPILER "g++-5")
 #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -flto -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -std=c++14 -flto -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
 #set(CMAKE_CXX_LINKER_FLAGS "${CMAKE_CXX_LINKER_FLAGS} -flto")
 #set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -flto")
@@ -91,6 +91,9 @@ set(SPECSFS_SOURCES
   src/ComputeSSA.cpp
   src/Partition.cpp
   src/Solve.cpp
+
+  # Instrumentation passes
+  lib/Instrument/IndirFcnTarget.cpp
   )
 
 set(SPECSFS_HEADERS
@@ -118,6 +121,16 @@ target_link_libraries(SpecSFS
 
 add_cpplint_target(SpecSFS ${SPECSFS_SOURCES})
 add_cpplint_headers(SpecSFS ${SPECSFS_HEADERS})
+
+set(PROF_INDIR_SOURCES
+  lib/Instrument/StaticLibs/IndirFcnTargetLib.cpp
+  )
+  
+
+add_library(prof_indir STATIC
+  ${PROF_INDIR_SOURCES}
+  )
+add_cpplint_target(prof_indir ${PROF_INDIR_SOURCES})
 
 add_subdirectory(test)
 
