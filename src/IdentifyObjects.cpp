@@ -23,10 +23,14 @@
 #include "include/ConstraintGraph.h"
 #include "include/DUG.h"
 #include "include/Andersens.h"
+#include "include/lib/IndirFcnTarget.h"
 
+#include "llvm/Pass.h"
 #include "llvm/Constants.h"
+#include "llvm/Function.h"
 #include "llvm/IntrinsicInst.h"
 #include "llvm/Module.h"
+#include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Support/CFG.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/GetElementPtrTypeIterator.h"
@@ -42,108 +46,136 @@ struct aux_id { };
 typedef ID<aux_id, int32_t, -1> AuxID;
 
 static void identifyAUXFcnCallRetInfo(CFG &cfg,
-    ObjectMap &omap, const Andersens &aux) {
+    ObjectMap &omap, const Andersens &aux,
+    const IndirFunctionInfo &dyn_info) {
+  // If we don't have dynamic info:
+  if (!dyn_info.hasInfo()) {
+    // The mapping of andersen's values to functions
+    std::map<AuxID, ObjectMap::ObjID> anders_to_fcn;
 
-  // The mapping of andersen's values to functions
-  std::map<AuxID, ObjectMap::ObjID> anders_to_fcn;
+    auto &aux_val_nodes = aux.getObjectMap();
+    std::for_each(std::begin(aux_val_nodes), std::end(aux_val_nodes),
+        [&anders_to_fcn, &aux, &omap]
+        (const std::pair<const llvm::Value *, uint32_t> &pr) {
+      if (auto pfcn = llvm::dyn_cast<llvm::Function>(pr.first)) {
+        auto fcn_id = omap.getFunction(pfcn);
+        auto aux_val_id = pr.second;
 
-  auto &aux_val_nodes = aux.getObjectMap();
-  std::for_each(std::begin(aux_val_nodes), std::end(aux_val_nodes),
-      [&anders_to_fcn, &aux, &omap]
-      (const std::pair<const llvm::Value *, uint32_t> &pr) {
-    if (auto pfcn = llvm::dyn_cast<llvm::Function>(pr.first)) {
-      auto fcn_id = omap.getFunction(pfcn);
-      auto aux_val_id = pr.second;
-
-      anders_to_fcn.emplace(AuxID(aux_val_id), fcn_id);
-    }
-  });
-
-  /*
-  std::for_each(omap.functions_cbegin(), omap.functions_cend(),
-      [&anders_to_fcn, &aux]
-      (const std::pair<ObjectMap::ObjID, const llvm::Value *> &pair) {
-    anders_to_fcn[AuxID(aux.obj(pair.second))] = pair.first;
-  });
-  */
-
-  if_debug(
-    dout("Got ids for functions:");
-    for (auto pr : anders_to_fcn) {
-      dout(" {" << ValPrint(pr.second) << ", " << pr.first << "}");
-    }
-    dout("\n"));
-
-  // We iterate each indirect call in the CFG
-  // to add the indirect info to the constraint map:
-  std::for_each(cfg.indirect_cbegin(), cfg.indirect_cend(),
-      // We take different arguments, depending on if we're debugging...
-      [&cfg, &aux, &anders_to_fcn, &omap]
-      (const std::pair<ConstraintGraph::ObjID, CFG::CFGid> &pair) {
-    const llvm::CallInst *ci =
-      llvm::cast<llvm::CallInst>(omap.valueAtID(pair.first));
-
-    llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
-
-    auto fptr = CS.getCalledValue();
-
-    // This is the andersen's node for this element
-    auto ptsto = aux.getPointsTo(fptr);
+        anders_to_fcn.emplace(AuxID(aux_val_id), fcn_id);
+      }
+    });
 
     if_debug(
-      dout("have ptsto:");
-      for (auto aid : ptsto) {
-        dout(" " << aid);
+      dout("Got ids for functions:");
+      for (auto pr : anders_to_fcn) {
+        dout(" {" << ValPrint(pr.second) << ", " << pr.first << "}");
       }
       dout("\n"));
 
-    CFG::CFGid call_id = cfg.nextNode();
-    CFG::CFGid ret_id = cfg.nextNode();
-    dout("call cfg_id: " << call_id << "\n");
-    dout("ret cfg_id: " << ret_id << "\n");
+    // We iterate each indirect call in the CFG
+    // to add the indirect info to the constraint map:
+    std::for_each(cfg.indirect_cbegin(), cfg.indirect_cend(),
+        // We take different arguments, depending on if we're debugging...
+        [&cfg, &aux, &anders_to_fcn, &omap]
+        (const std::pair<ConstraintGraph::ObjID, CFG::CFGid> &pair) {
+      const llvm::CallInst *ci =
+        llvm::cast<llvm::CallInst>(omap.valueAtID(pair.first));
 
-    for (auto anders_int_id : ptsto) {
-      // FIXME: Andersen's reports the function as pointing to the universal
-      //   set... or all unknown functions... I'm ignoring this for now, but
-      //   will fix if needed
-      if (anders_int_id == 0) {
-        llvm::dbgs() << "FIXME: Function points to universal value... Ignoring"
-          "the universal value ptr\n";
-        continue;
+      llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
+
+      auto fptr = CS.getCalledValue();
+
+      // This is the andersen's node for this element
+      auto ptsto = aux.getPointsTo(fptr);
+
+      if_debug(
+        dout("have ptsto:");
+        for (auto aid : ptsto) {
+          dout(" " << aid);
+        }
+        dout("\n"));
+
+      CFG::CFGid call_id = cfg.nextNode();
+      CFG::CFGid ret_id = cfg.nextNode();
+      dout("call cfg_id: " << call_id << "\n");
+      dout("ret cfg_id: " << ret_id << "\n");
+
+      for (auto anders_int_id : ptsto) {
+        // FIXME: Andersen's reports the function as pointing to the universal
+        //   set... or all unknown functions... I'm ignoring this for now, but
+        //   will fix if needed
+        if (anders_int_id == 0) {
+          llvm::dbgs() << "FIXME: Function points to universal value..."
+            " Ignoring the universal value ptr\n";
+          continue;
+        }
+
+        AuxID anders_id(anders_int_id);
+
+        auto fcn_id_it = anders_to_fcn.find(anders_id);
+        if (fcn_id_it == std::end(anders_to_fcn)) {
+          /*
+          llvm::dbgs() << "FIXME: Anders points to a function I don't"
+            " recognize???\n";
+          */
+          continue;
+        }
+        ObjectMap::ObjID fcn_id = fcn_id_it->second;
+
+        cfg.addIndirFcn(pair.first, fcn_id);
+
+        // Add edge from call->fcn start node
+        dout("Getting cfgfunctionstart for: " << fcn_id << "\n");
+        dout("Function is: " <<
+          llvm::cast<const llvm::Function>(omap.valueAtID(fcn_id))->getName() <<
+          "\n");
+        auto fcn_start_id = cfg.getFunctionStart(fcn_id);
+        cfg.addEdge(call_id, fcn_start_id);
+
+        // Some functions (like "error" or "abort" don't return)
+        if (cfg.hasFunctionReturn(fcn_id)) {
+          // Add edge from fcn ret node->ret
+          auto fcn_ret_id = cfg.getFunctionReturn(fcn_id);
+          cfg.addEdge(fcn_ret_id, ret_id);
+        }
       }
 
-      AuxID anders_id(anders_int_id);
+      cfg.addCallRetInfo(omap.getValue(fptr), call_id, ret_id);
+    });
+  // If we do have dynamic info, just ignore the andersens info, and use ours
+  } else {
+    std::for_each(cfg.indirect_cbegin(), cfg.indirect_cend(),
+        // We take different arguments, depending on if we're debugging...
+        [&cfg, &omap, &dyn_info]
+        (const std::pair<ConstraintGraph::ObjID, CFG::CFGid> &pair) {
+      const llvm::CallInst *ci =
+        llvm::cast<llvm::CallInst>(omap.valueAtID(pair.first));
 
-      auto fcn_id_it = anders_to_fcn.find(anders_id);
-      if (fcn_id_it == std::end(anders_to_fcn)) {
-        /*
-        llvm::dbgs() << "FIXME: Anders points to a function I don't"
-          " recognize???\n";
-        */
-        continue;
+      CFG::CFGid call_id = cfg.nextNode();
+      CFG::CFGid ret_id = cfg.nextNode();
+
+      auto fcn_targets = dyn_info.getTargets(ci);
+
+      for (auto fcn : fcn_targets) {
+        auto fcn_id = omap.getFunction(llvm::cast<llvm::Function>(fcn));
+        cfg.addIndirFcn(pair.first, fcn_id);
+
+        auto fcn_start_id = cfg.getFunctionStart(fcn_id);
+        cfg.addEdge(call_id, fcn_start_id);
+
+        if (cfg.hasFunctionReturn(fcn_id)) {
+          // Add edge from fcn ret node->ret
+          auto fcn_ret_id = cfg.getFunctionReturn(fcn_id);
+          cfg.addEdge(fcn_ret_id, ret_id);
+        }
       }
-      ObjectMap::ObjID fcn_id = fcn_id_it->second;
 
-      cfg.addIndirFcn(pair.first, fcn_id);
+      llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
+      auto fptr = CS.getCalledValue();
 
-      // Add edge from call->fcn start node
-      dout("Getting cfgfunctionstart for: " << fcn_id << "\n");
-      dout("Function is: " <<
-        llvm::cast<const llvm::Function>(omap.valueAtID(fcn_id))->getName() <<
-        "\n");
-      auto fcn_start_id = cfg.getFunctionStart(fcn_id);
-      cfg.addEdge(call_id, fcn_start_id);
-
-      // Some functions (like "error" or "abort" don't return)
-      if (cfg.hasFunctionReturn(fcn_id)) {
-        // Add edge from fcn ret node->ret
-        auto fcn_ret_id = cfg.getFunctionReturn(fcn_id);
-        cfg.addEdge(fcn_ret_id, ret_id);
-      }
-    }
-
-    cfg.addCallRetInfo(omap.getValue(fptr), call_id, ret_id);
-  });
+      cfg.addCallRetInfo(omap.getValue(fptr), call_id, ret_id);
+    });
+  }
 }
 
 
@@ -1801,7 +1833,8 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
 bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
     const Andersens &aux, ObjectMap &omap) {
   //{{{
-  identifyAUXFcnCallRetInfo(cfg, omap, aux);
+  const auto &dyn_indir_info = getAnalysis<IndirFunctionInfo>();
+  identifyAUXFcnCallRetInfo(cfg, omap, aux, dyn_indir_info);
 
   if_debug(
     dout("initial unused functions are: ");

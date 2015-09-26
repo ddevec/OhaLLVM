@@ -336,21 +336,37 @@ bool IndirFunctionInfo::runOnModule(llvm::Module &m) {
 
   // Now that we know the id mappings, lets parse our input file
   std::ifstream logfile(logfilename);
-  for (std::string line; std::getline(logfile, line, ':'); ) {
-    // First parse the first int till the :
-    int32_t call_id = stoi(line);
-    auto call = id_to_call[call_id];
+  if (!logfile.is_open()) {
+    llvm::dbgs() << "IndirFcnInfo, no logfile found!\n";
+    hasInfo_ = false;
+  } else {
+    hasInfo_ = true;
+    for (std::string line; std::getline(logfile, line, ':'); ) {
+      // First parse the first int till the :
+      int32_t call_id = stoi(line);
+      auto call = id_to_call[call_id];
 
-    std::getline(logfile, line);
-    // Now split the line...
-    std::stringstream converter(line);
-    int32_t fcn_id;
-    converter >> fcn_id;
-    while (!converter.fail()) {
-      auto fcn = llvm::cast<llvm::Function>(id_to_fcn[fcn_id]);
+      auto it = callToTarget_.find(call);
+      if (it == std::end(callToTarget_)) {
+        auto ret =
+          callToTarget_.emplace(std::piecewise_construct, std::make_tuple(call),
+              std::make_tuple());
+        assert(ret.second);
+        it = ret.first;
+      }
+      auto &fcn_vec = it->second;
 
-      callToTarget_[call].push_back(fcn);
+      std::getline(logfile, line);
+      // Now split the line...
+      std::stringstream converter(line);
+      int32_t fcn_id;
       converter >> fcn_id;
+      while (!converter.fail()) {
+        auto fcn = llvm::cast<llvm::Function>(id_to_fcn[fcn_id]);
+
+        fcn_vec.push_back(fcn);
+        converter >> fcn_id;
+      }
     }
   }
 

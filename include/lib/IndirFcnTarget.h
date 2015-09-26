@@ -26,6 +26,10 @@ class IndirFunctionInfo : public llvm::ModulePass {
 
     void getAnalysisUsage(llvm::AnalysisUsage &) const override;
 
+    bool hasInfo() const {
+      return hasInfo_;
+    }
+
     const std::vector<const llvm::Value *> &
     getTargets(const llvm::Value *val) const {
       return callToTarget_.at(val);
@@ -34,6 +38,8 @@ class IndirFunctionInfo : public llvm::ModulePass {
  private:
     std::map<const llvm::Value *, std::vector<const llvm::Value *>>
       callToTarget_;
+
+    bool hasInfo_;
 };
 
 #endif  // INCLUDE_LIB_INDIRFCNTARGET_H__

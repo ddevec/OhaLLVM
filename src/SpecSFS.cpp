@@ -27,6 +27,7 @@
 #include "include/Debug.h"
 #include "include/ObjectMap.h"
 #include "include/lib/UnusedFunctions.h"
+#include "include/lib/IndirFcnTarget.h"
 
 using std::swap;
 
@@ -69,6 +70,7 @@ void SpecSFS::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   usage.setPreservesAll();
   usage.addRequired<UnusedFunctions>();
   usage.addRequired<AliasAnalysis>();
+  usage.addRequired<IndirFunctionInfo>();
 }
 
 // runOnModule, the primary pass
