@@ -244,19 +244,9 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   }
 
 #ifndef SPECSFS_NODEBUG
-  // STATS!
-  int64_t total_variables = 0;
-  int64_t total_ptstos = 0;
-
-  int32_t num_objects[10] = {};
-
-  size_t max_objects = 0;
-  int32_t num_max = 0;
-
   llvm::dbgs() << "Printing final ptsto set for top level variables:\n";
   std::for_each(pts_top_.cbegin(), pts_top_.cend(),
-      [&omap, &total_variables, &total_ptstos, &max_objects, &num_objects,
-        &num_max]
+      [&omap]
       (const std::pair<const ObjectMap::ObjID, std::vector<PtstoSet>> &pr) {
     auto top_val = omap.valueAtID(pr.first);
 
@@ -277,6 +267,43 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
 
       // Statistics
       auto &ptsto = pr.second[i];
+
+      // Printing
+      std::for_each(ptsto.cbegin(), ptsto.cend(),
+          [&omap] (const ObjectMap::ObjID obj_id) {
+        auto loc_val = omap.valueAtID(obj_id);
+
+        if (loc_val == nullptr) {
+          llvm::dbgs() << "    Value is (id): " << obj_id << "\n";
+        } else if (auto gv = llvm::dyn_cast<llvm::GlobalValue>(loc_val)) {
+          llvm::dbgs() << "    " << obj_id << ": " << gv->getName() << "\n";
+        } else if (auto fcn = llvm::dyn_cast<llvm::Function>(loc_val)) {
+          llvm::dbgs() << "    " << obj_id << ": " << fcn->getName() << "\n";
+        } else {
+          llvm::dbgs() << "    " << obj_id << ": " << *loc_val << "\n";
+        }
+      });
+    }
+  });
+#endif
+
+#ifndef SPECSFS_NOSTATS
+  // STATS!
+  int64_t total_variables = 0;
+  int64_t total_ptstos = 0;
+
+  int32_t num_objects[10] = {};
+
+  size_t max_objects = 0;
+  int32_t num_max = 0;
+
+  std::for_each(pts_top_.cbegin(), pts_top_.cend(),
+      [&omap, &total_variables, &total_ptstos, &max_objects, &num_objects,
+        &num_max]
+      (const std::pair<const ObjectMap::ObjID, std::vector<PtstoSet>> &pr) {
+    for (uint32_t i = 0; i < pr.second.size(); i++) {
+      // Statistics
+      auto &ptsto = pr.second[i];
       size_t ptsto_size = ptsto.size();
 
       total_variables++;
@@ -294,22 +321,6 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
       if (ptsto_size == max_objects) {
         num_max++;
       }
-
-      // Printing
-      std::for_each(ptsto.cbegin(), ptsto.cend(),
-          [&omap] (const ObjectMap::ObjID obj_id) {
-        auto loc_val = omap.valueAtID(obj_id);
-
-        if (loc_val == nullptr) {
-          llvm::dbgs() << "    Value is (id): " << obj_id << "\n";
-        } else if (auto gv = llvm::dyn_cast<llvm::GlobalValue>(loc_val)) {
-          llvm::dbgs() << "    " << obj_id << ": " << gv->getName() << "\n";
-        } else if (auto fcn = llvm::dyn_cast<llvm::Function>(loc_val)) {
-          llvm::dbgs() << "    " << obj_id << ": " << fcn->getName() << "\n";
-        } else {
-          llvm::dbgs() << "    " << obj_id << ": " << *loc_val << "\n";
-        }
-      });
     }
   });
 

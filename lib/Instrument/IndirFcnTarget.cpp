@@ -337,9 +337,10 @@ bool IndirFunctionInfo::runOnModule(llvm::Module &m) {
   // Now that we know the id mappings, lets parse our input file
   std::ifstream logfile(logfilename);
   if (!logfile.is_open()) {
-    llvm::dbgs() << "IndirFcnInfo, no logfile found!\n";
+    llvm::dbgs() << "IndirFcnInfo: no logfile found!\n";
     hasInfo_ = false;
   } else {
+    llvm::dbgs() << "IndirFcnInfo: Successfully Loaded\n";
     hasInfo_ = true;
     for (std::string line; std::getline(logfile, line, ':'); ) {
       // First parse the first int till the :
@@ -348,6 +349,7 @@ bool IndirFunctionInfo::runOnModule(llvm::Module &m) {
 
       auto it = callToTarget_.find(call);
       if (it == std::end(callToTarget_)) {
+        llvm::dbgs() << "Adding call to targets: " << *call << "\n";
         auto ret =
           callToTarget_.emplace(std::piecewise_construct, std::make_tuple(call),
               std::make_tuple());

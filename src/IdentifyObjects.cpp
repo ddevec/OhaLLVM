@@ -129,14 +129,18 @@ static void identifyAUXFcnCallRetInfo(CFG &cfg,
         dout("Function is: " <<
           llvm::cast<const llvm::Function>(omap.valueAtID(fcn_id))->getName() <<
           "\n");
-        auto fcn_start_id = cfg.getFunctionStart(fcn_id);
-        cfg.addEdge(call_id, fcn_start_id);
+        // NOTE: Should add assert that the if should only be skipped in
+        //   instances of DCE
+        if (cfg.hasFunctionStart(fcn_id)) {
+          auto fcn_start_id = cfg.getFunctionStart(fcn_id);
+          cfg.addEdge(call_id, fcn_start_id);
 
-        // Some functions (like "error" or "abort" don't return)
-        if (cfg.hasFunctionReturn(fcn_id)) {
-          // Add edge from fcn ret node->ret
-          auto fcn_ret_id = cfg.getFunctionReturn(fcn_id);
-          cfg.addEdge(fcn_ret_id, ret_id);
+          // Some functions (like "error" or "abort" don't return)
+          if (cfg.hasFunctionReturn(fcn_id)) {
+            // Add edge from fcn ret node->ret
+            auto fcn_ret_id = cfg.getFunctionReturn(fcn_id);
+            cfg.addEdge(fcn_ret_id, ret_id);
+          }
         }
       }
 
@@ -154,6 +158,7 @@ static void identifyAUXFcnCallRetInfo(CFG &cfg,
       CFG::CFGid call_id = cfg.nextNode();
       CFG::CFGid ret_id = cfg.nextNode();
 
+      llvm::dbgs() << "Getting ci: " << *ci << "\n";
       auto fcn_targets = dyn_info.getTargets(ci);
 
       for (auto fcn : fcn_targets) {
@@ -920,19 +925,19 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
 static bool addConstraintsForCall(ConstraintGraph &cg, CFG &cfg,
     ObjectMap &omap, llvm::CallSite &CS, llvm::Function *F,
     CFG::CFGid *next_id) {
-  // bool isIndirect = (F == NULL);
-
   // Try to recover the function from a bitcast (taken from sfs code)
   // If this function was just cast to a function pointer from the prior
   // instruction, this will determine so statically, and treat it as a direct
   // call
   if (!F) {
-    llvm::Value *callee = CS.getInstruction()->getOperand(0);
+    llvm::Value *callee = CS.getCalledValue();
 
-    llvm::ConstantExpr *E =
-      llvm::dyn_cast<llvm::ConstantExpr>(callee);
-    if (E && E->getOpcode() == llvm::Instruction::BitCast) {
-      F = llvm::dyn_cast<llvm::Function>(E->getOperand(0));
+    auto ce = llvm::dyn_cast<llvm::ConstantExpr>(callee);
+
+    if (ce) {
+      if (ce->getOpcode() == llvm::Instruction::BitCast) {
+        F = llvm::dyn_cast<llvm::Function>(ce->getOperand(0));
+      }
     }
   }
 
@@ -1935,8 +1940,27 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
           cfg.removeUnusedFunction(cg, fcn_id);
         });
       }
-    // FIXME: Universal pointer contraints?
+    // If we can't figure out the target, add a universal constraint
     } else {
+      is_ext = true;
+      std::for_each(CS.arg_begin(), CS.arg_end(),
+          [&cfg, &cg, &omap] (const llvm::Use &arg) {
+        auto val = arg.get();
+        if (llvm::isa<llvm::PointerType>(val->getType())) {
+          auto node_id = omap.createPhonyID();
+          auto arg_id = omap.getValue(val);
+          cg.add(ConstraintType::Copy, node_id, arg_id,
+            ObjectMap::UniversalValue);
+        }
+      });
+
+      // Also return the universal value from the function
+      if (llvm::isa<llvm::PointerType>(CS.getType())) {
+        auto node_id = omap.createPhonyID();
+        auto arg_id = omap.getValue(CS.getInstruction());
+        cg.add(ConstraintType::Copy, node_id, arg_id,
+            ObjectMap::UniversalValue);
+      }
     }
 
     if (is_ext) {

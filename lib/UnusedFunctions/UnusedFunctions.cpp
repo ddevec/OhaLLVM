@@ -66,8 +66,11 @@ bool UnusedFunctions::runOnModule(llvm::Module &m) {
 
 
   if (used_fcns == 0) {
-    // llvm::dbgs() << "Found no used functions, assuming all are used...\n";
+    llvm::dbgs() << "UnusedFunctions: No logfile found\n";
     allUsed_ = true;
+  } else {
+    llvm::dbgs() << "UnusedFunctions: Successfully Loaded\n";
+    allUsed_ = false;
   }
 
   return false;
