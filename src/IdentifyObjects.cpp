@@ -1885,61 +1885,59 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
       const std::vector<ConstraintGraph::ObjID> &fcnTargets =
         cfg.getIndirFcns(pair.first);
       // Also, add constraints if needed
-      if (fcnTargets.size() == 1) {
-        std::for_each(std::begin(fcnTargets), std::end(fcnTargets),
-              [this, &aux, &cg, &cfg, &omap, &CS, &ci, &is_ext]
-              (const ConstraintGraph::ObjID fcn_id) {
-          const llvm::Function *fcn = omap.getFunction(fcn_id);
-          /*
-          llvm::dbgs() << "Checking fcnTarget for: " << *ci <<
-              " : " << fcn->getName() << "\n";
-          */
+      std::for_each(std::begin(fcnTargets), std::end(fcnTargets),
+            [this, &aux, &cg, &cfg, &omap, &CS, &ci, &is_ext]
+            (const ConstraintGraph::ObjID fcn_id) {
+        const llvm::Function *fcn = omap.getFunction(fcn_id);
+        /*
+        llvm::dbgs() << "Checking fcnTarget for: " << *ci <<
+            " : " << fcn->getName() << "\n";
+        */
 
-          // If this is an allocation we need to note that in our structures...
-          if (Andersens::fcnIsMalloc(fcn) &&
-              llvm::isa<llvm::PointerType>(ci->getType())) {
-            llvm::dbgs() << "Have indirect malloc call\n";
-            // If its a malloc, we don't add constriants for the call, we
-            //   instead pretend the call is actually a addressof operation
-            //
-            // Unfortunately, malloc doesn't tell us what size strucutre is
-            //   being allocated, we infer this information from its uses
-            auto &inst = *ci;
-            auto inferred_type = findLargestType(omap, inst);
+        // If this is an allocation we need to note that in our structures...
+        if (Andersens::fcnIsMalloc(fcn) &&
+            llvm::isa<llvm::PointerType>(ci->getType())) {
+          llvm::dbgs() << "Have indirect malloc call\n";
+          // If its a malloc, we don't add constriants for the call, we
+          //   instead pretend the call is actually a addressof operation
+          //
+          // Unfortunately, malloc doesn't tell us what size strucutre is
+          //   being allocated, we infer this information from its uses
+          auto &inst = *ci;
+          auto inferred_type = findLargestType(omap, inst);
 
-            auto dest_id = omap.getValue(&inst);
-            // Add objects for this call...
-            // llvm::dbgs() << "adding indirect objects: " << inst << "\n";
+          auto dest_id = omap.getValue(&inst);
+          // Add objects for this call...
+          // llvm::dbgs() << "adding indirect objects: " << inst << "\n";
 
-            std::vector<ObjectMap::ObjID> alias_ptsto;
-            auto &aux_ptsto = aux.getPointsTo(ci);
-            // Convert aux_ptsto to our ptsto
-            for (int32_t i : aux_ptsto) {
-              alias_ptsto.push_back(aux_to_obj_[i]);
-            }
-
-            omap.addObjectsAlias(inferred_type, &inst, alias_ptsto);
-            auto src_obj_id = omap.getObject(&inst);
-            /*
-            llvm::dbgs() << "  got source object: " << src_obj_id << "\n";
-
-            llvm::dbgs() << "  Malloc addAddressForType(" << dest_id << ", " <<
-                src_obj_id << ")\n";
-                */
-            addConstraintForType(ConstraintType::AddressOf, cg, omap,
-                inferred_type, dest_id, src_obj_id, false);
-
-            is_ext = true;
-          // If its not an allocation, add normal constraints
-          } else {
-            // llvm::dbgs() << "  Non-malloc call!\n";
-            is_ext |= addConstraintsForCall(cg, cfg, omap, CS,
-              const_cast<llvm::Function *>(fcn), nullptr);
+          std::vector<ObjectMap::ObjID> alias_ptsto;
+          auto &aux_ptsto = aux.getPointsTo(ci);
+          // Convert aux_ptsto to our ptsto
+          for (int32_t i : aux_ptsto) {
+            alias_ptsto.push_back(aux_to_obj_[i]);
           }
 
-          cfg.removeUnusedFunction(cg, fcn_id);
-        });
-      }
+          omap.addObjectsAlias(inferred_type, &inst, alias_ptsto);
+          auto src_obj_id = omap.getObject(&inst);
+          /*
+          llvm::dbgs() << "  got source object: " << src_obj_id << "\n";
+
+          llvm::dbgs() << "  Malloc addAddressForType(" << dest_id << ", " <<
+              src_obj_id << ")\n";
+              */
+          addConstraintForType(ConstraintType::AddressOf, cg, omap,
+              inferred_type, dest_id, src_obj_id, false);
+
+          is_ext = true;
+        // If its not an allocation, add normal constraints
+        } else {
+          // llvm::dbgs() << "  Non-malloc call!\n";
+          is_ext |= addConstraintsForCall(cg, cfg, omap, CS,
+            const_cast<llvm::Function *>(fcn), nullptr);
+        }
+
+        cfg.removeUnusedFunction(cg, fcn_id);
+      });
     // If we can't figure out the target, add a universal constraint
     } else {
       is_ext = true;

@@ -34,16 +34,17 @@ static llvm::cl::opt<std::string>
       llvm::cl::desc("Id file loaded by indir-fcn-loader"));
 
 static bool isIgnoredFcn(llvm::Function &fcn) {
-  if (fcn.getName().find("llvm.va") != 0 &&
-      fcn.getName().find("llvm.memcpy") != 0 &&
-      fcn.getName().find("llvm.memmov") != 0 &&
-      fcn.getName().find("llvm.debug.declare") != 0 &&
-      fcn.getName().find("__InstrIndirCalls_fcn_call") != 0 &&
-      fcn.getName().find("llvm.memset") != 0) {
-    return false;
+  // If this is a function I should ignore...
+  if (fcn.getName().find("llvm.va") == 0 ||
+      fcn.getName().find("llvm.memcpy") == 0 ||
+      fcn.getName().find("llvm.memmov") == 0 ||
+      fcn.getName().find("llvm.debug.declare") == 0 ||
+      fcn.getName().find("__InstrIndirCalls_fcn_call") == 0 ||
+      fcn.getName().find("llvm.memset") == 0) {
+    return true;
   }
 
-  return true;
+  return false;
 }
 
 // Instrumentation pass {{{
@@ -120,22 +121,26 @@ bool InstrIndirCalls::runOnModule(llvm::Module &m) {
       if (auto cci = llvm::dyn_cast<llvm::CallInst>(&inst)) {
         auto ci = const_cast<llvm::CallInst *>(cci);
         llvm::CallSite cs(ci);
+
+        // Ignore inline asm
         auto called = cs.getCalledFunction();
 
         if (called == nullptr) {
           auto callee = cs.getCalledValue();
 
-          auto ce = llvm::dyn_cast<llvm::ConstantExpr>(callee);
+          if (!llvm::isa<llvm::InlineAsm>(callee)) {
+            auto ce = llvm::dyn_cast<llvm::ConstantExpr>(callee);
 
-          if (ce) {
-            if (ce->getOpcode() == llvm::Instruction::BitCast) {
-              called = llvm::dyn_cast<llvm::Function>(ce->getOperand(0));
+            if (ce) {
+              if (ce->getOpcode() == llvm::Instruction::BitCast) {
+                called = llvm::dyn_cast<llvm::Function>(ce->getOperand(0));
+              }
+            }
+
+            if (called == nullptr) {
+              insert_list.push_back(ci);
             }
           }
-        }
-
-        if (called == nullptr) {
-          insert_list.push_back(ci);
         }
       }
     });
@@ -173,11 +178,6 @@ bool InstrIndirCalls::runOnModule(llvm::Module &m) {
       llvm::GlobalValue::ExternalLinkage,
       llvm::Constant::getNullValue(array_type),
       "__InstrIndirCalls_fcn_lookup_array");
-
-  for (size_t i = 0; i < fcn_lookup_initializer.size(); i++) {
-    llvm::dbgs() << "id: " << i << " -> fcn: " << *fcn_lookup_initializer[i] <<
-      "\n";
-  }
 
   /*
   auto initializer_array = llvm::ConstantArray::get(array_type,
@@ -267,7 +267,7 @@ bool InstrIndirCalls::runOnModule(llvm::Module &m) {
 }
 
 char InstrIndirCalls::ID = 0;
-static llvm::RegisterPass<InstrIndirCalls> X("instr-indir-calls",
+static llvm::RegisterPass<InstrIndirCalls> X("insert-indir-profiling",
     "Instruments indirect calls, for use with SpecSFS",
     false, false);
 }  // namespace
@@ -308,22 +308,25 @@ bool IndirFunctionInfo::runOnModule(llvm::Module &m) {
       if (auto cci = llvm::dyn_cast<llvm::CallInst>(&inst)) {
         auto ci = const_cast<llvm::CallInst *>(cci);
         llvm::CallSite cs(ci);
+
         auto called = cs.getCalledFunction();
 
         if (called == nullptr) {
           auto callee = cs.getCalledValue();
 
-          auto ce = llvm::dyn_cast<llvm::ConstantExpr>(callee);
+          if (!llvm::isa<llvm::InlineAsm>(callee)) {
+            auto ce = llvm::dyn_cast<llvm::ConstantExpr>(callee);
 
-          if (ce) {
-            if (ce->getOpcode() == llvm::Instruction::BitCast) {
-              called = llvm::dyn_cast<llvm::Function>(ce->getOperand(0));
+            if (ce) {
+              if (ce->getOpcode() == llvm::Instruction::BitCast) {
+                called = llvm::dyn_cast<llvm::Function>(ce->getOperand(0));
+              }
+            }
+
+            if (called == nullptr) {
+              insert_list.push_back(ci);
             }
           }
-        }
-
-        if (called == nullptr) {
-          insert_list.push_back(ci);
         }
       }
     });
@@ -377,7 +380,7 @@ bool IndirFunctionInfo::runOnModule(llvm::Module &m) {
 }
 
 char IndirFunctionInfo::ID = 0;
-static llvm::RegisterPass<IndirFunctionInfo> F("indir-fcn-loader",
+static llvm::RegisterPass<IndirFunctionInfo> F("load-indir",
     "Loads dynamic information about indirect callsites",
     false, false);
 //}}}
