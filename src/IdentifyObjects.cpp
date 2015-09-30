@@ -18,11 +18,12 @@
 
 #include "include/Debug.h"
 
-#include "include/SpecSFS.h"
-#include "include/ObjectMap.h"
+#include "include/AllocInfo.h"
+#include "include/Andersens.h"
 #include "include/ConstraintGraph.h"
 #include "include/DUG.h"
-#include "include/Andersens.h"
+#include "include/ObjectMap.h"
+#include "include/SpecSFS.h"
 #include "include/lib/IndirFcnTarget.h"
 
 #include "llvm/Pass.h"
@@ -37,6 +38,7 @@
 #include "llvm/Support/InstIterator.h"
 #include "llvm/Support/raw_ostream.h"
 
+
 // Private namespace for file-local info {{{
 namespace {
 
@@ -47,9 +49,9 @@ typedef ID<aux_id, int32_t, -1> AuxID;
 
 static void identifyAUXFcnCallRetInfo(CFG &cfg,
     ObjectMap &omap, const Andersens &aux,
-    const IndirFunctionInfo &dyn_info) {
+    const IndirFunctionInfo *dyn_info) {
   // If we don't have dynamic info:
-  if (!dyn_info.hasInfo()) {
+  if (dyn_info == nullptr || !dyn_info->hasInfo()) {
     // The mapping of andersen's values to functions
     std::map<AuxID, ObjectMap::ObjID> anders_to_fcn;
 
@@ -159,7 +161,7 @@ static void identifyAUXFcnCallRetInfo(CFG &cfg,
       CFG::CFGid ret_id = cfg.nextNode();
 
       llvm::dbgs() << "Getting ci: " << *ci << "\n";
-      auto fcn_targets = dyn_info.getTargets(ci);
+      auto fcn_targets = dyn_info->getTargets(ci);
 
       for (auto fcn : fcn_targets) {
         auto fcn_id = omap.getFunction(llvm::cast<llvm::Function>(fcn));
@@ -1836,9 +1838,9 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
 
 
 bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
-    const Andersens &aux, ObjectMap &omap) {
+    const Andersens &aux, const IndirFunctionInfo *dyn_indir_info,
+    ObjectMap &omap) {
   //{{{
-  const auto &dyn_indir_info = getAnalysis<IndirFunctionInfo>();
   identifyAUXFcnCallRetInfo(cfg, omap, aux, dyn_indir_info);
 
   if_debug(
@@ -1895,7 +1897,7 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
         */
 
         // If this is an allocation we need to note that in our structures...
-        if (Andersens::fcnIsMalloc(fcn) &&
+        if (AllocInfo::fcnIsMalloc(fcn) &&
             llvm::isa<llvm::PointerType>(ci->getType())) {
           llvm::dbgs() << "Have indirect malloc call\n";
           // If its a malloc, we don't add constriants for the call, we

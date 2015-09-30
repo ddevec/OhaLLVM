@@ -28,6 +28,8 @@
 #include "llvm/Support/InstIterator.h"
 #include "llvm/Support/MathExtras.h"
 
+#include "include/LLVMHelper.h"
+
 static llvm::cl::opt<std::string>
   IndirFcnFilename("indir-info-file", llvm::cl::init("indir_fcns.log"),
       llvm::cl::value_desc("filename"),
@@ -120,27 +122,10 @@ bool InstrIndirCalls::runOnModule(llvm::Module &m) {
       // Okay, lets get to work..
       if (auto cci = llvm::dyn_cast<llvm::CallInst>(&inst)) {
         auto ci = const_cast<llvm::CallInst *>(cci);
-        llvm::CallSite cs(ci);
+        auto fcn = LLVMHelper::getFcnFromCall(ci);
 
-        // Ignore inline asm
-        auto called = cs.getCalledFunction();
-
-        if (called == nullptr) {
-          auto callee = cs.getCalledValue();
-
-          if (!llvm::isa<llvm::InlineAsm>(callee)) {
-            auto ce = llvm::dyn_cast<llvm::ConstantExpr>(callee);
-
-            if (ce) {
-              if (ce->getOpcode() == llvm::Instruction::BitCast) {
-                called = llvm::dyn_cast<llvm::Function>(ce->getOperand(0));
-              }
-            }
-
-            if (called == nullptr) {
-              insert_list.push_back(ci);
-            }
-          }
+        if (fcn != nullptr) {
+          insert_list.push_back(ci);
         }
       }
     });
@@ -307,26 +292,11 @@ bool IndirFunctionInfo::runOnModule(llvm::Module &m) {
       // Okay, lets get to work..
       if (auto cci = llvm::dyn_cast<llvm::CallInst>(&inst)) {
         auto ci = const_cast<llvm::CallInst *>(cci);
-        llvm::CallSite cs(ci);
 
-        auto called = cs.getCalledFunction();
+        auto fcn = LLVMHelper::getFcnFromCall(ci);
 
-        if (called == nullptr) {
-          auto callee = cs.getCalledValue();
-
-          if (!llvm::isa<llvm::InlineAsm>(callee)) {
-            auto ce = llvm::dyn_cast<llvm::ConstantExpr>(callee);
-
-            if (ce) {
-              if (ce->getOpcode() == llvm::Instruction::BitCast) {
-                called = llvm::dyn_cast<llvm::Function>(ce->getOperand(0));
-              }
-            }
-
-            if (called == nullptr) {
-              insert_list.push_back(ci);
-            }
-          }
+        if (fcn != nullptr) {
+          insert_list.push_back(ci);
         }
       }
     });

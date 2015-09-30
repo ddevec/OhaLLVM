@@ -64,7 +64,7 @@ list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
 #set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-ggdb3 -O1")
 set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-g -O4 -DNDEBUG -DSPECSFS_NODEBUG")
 set(CMAKE_CXX_FLAGS_RELEASE "-O4 -DNDEBUG -DSPECSFS_NODEBUG")
-set(CMAKE_CXX_FLAGS_DEBUG "-O1 -ggdb3")
+set(CMAKE_CXX_FLAGS_DEBUG "-Og -ggdb3")
 
 set(CMAKE_CXX_COMPILER "g++-5")
 #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -flto -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
@@ -74,8 +74,8 @@ set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -std=c++14 -flto -D__STDC_
 #set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -flto")
 
 set(SPECSFS_SOURCES
-  ./lib/UnusedFunctions/UnusedFunctions.cpp
-  ./lib/PrintID.cpp
+  lib/UnusedFunctions/UnusedFunctions.cpp
+  lib/PrintID.cpp
 
   src/SpecSFS.cpp
 
@@ -94,6 +94,7 @@ set(SPECSFS_SOURCES
 
   # Instrumentation passes
   lib/Instrument/IndirFcnTarget.cpp
+  lib/Instrument/DynPtsto.cpp
   )
 
 set(SPECSFS_HEADERS
@@ -125,12 +126,21 @@ add_cpplint_headers(SpecSFS ${SPECSFS_HEADERS})
 set(PROF_INDIR_SOURCES
   lib/Instrument/StaticLibs/IndirFcnTargetLib.cpp
   )
-  
 
 add_library(prof_indir STATIC
   ${PROF_INDIR_SOURCES}
   )
 add_cpplint_target(prof_indir ${PROF_INDIR_SOURCES})
+
+set(PROF_DYNPTSTO_SOURCES
+  lib/Instrument/StaticLibs/DynPtstoLib.cpp
+  )
+  
+
+add_library(prof_ptsto STATIC
+  ${PROF_DYNPTSTO_SOURCES}
+  )
+add_cpplint_target(prof_ptsto ${PROF_DYNPTSTO_SOURCES})
 
 add_subdirectory(test)
 

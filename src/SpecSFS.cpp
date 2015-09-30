@@ -62,6 +62,7 @@ static void error(const std::string &msg) {
 // Constructor
 char SpecSFS::ID = 0;
 SpecSFS::SpecSFS() : ModulePass(ID) { }
+SpecSFS::SpecSFS(char &id) : ModulePass(id) { }
 static llvm::RegisterPass<SpecSFS>
 X("SpecSFS", "Speculative Sparse Flow-sensitive Analysis", false, false);
 // static RegisterAnalysisGroup<AliasAnalysis> Y(X);
@@ -179,7 +180,8 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   // Now, fill in the indirect function calls
   {
     PerfTimerPrinter indir_timer(llvm::dbgs(), "addIndirectCalls");
-    if (addIndirectCalls(cg, cfg, aux, omap)) {
+    const auto &dyn_indir_info = getAnalysis<IndirFunctionInfo>();
+    if (addIndirectCalls(cg, cfg, aux, &dyn_indir_info, omap)) {
       error("AddIndirectCalls failure!");
     }
   }

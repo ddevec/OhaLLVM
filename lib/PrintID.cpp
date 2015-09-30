@@ -44,7 +44,7 @@ class PrintID : public SpecSFS {
 
 char PrintID::ID = 0;
 // Constructor
-PrintID::PrintID() : SpecSFS(), filename_(PrintIDFilename) { }
+PrintID::PrintID() : SpecSFS(ID), filename_(PrintIDFilename) { }
 
 static llvm::RegisterPass<PrintID>
   print_register("print-ids",
@@ -82,7 +82,8 @@ bool PrintID::runOnModule(llvm::Module &M) {
   }
 
   // Now, fill in the indirect function calls
-  if (addIndirectCalls(cg, cfg, aux, omap)) {
+  const auto &dyn_indir_info = getAnalysis<IndirFunctionInfo>();
+  if (addIndirectCalls(cg, cfg, aux, &dyn_indir_info, omap)) {
     abort();
   }
 

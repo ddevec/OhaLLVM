@@ -12,6 +12,7 @@
 #include "include/DUG.h"
 #include "include/ObjectMap.h"
 #include "include/lib/UnusedFunctions.h"
+#include "include/lib/IndirFcnTarget.h"
 
 #include "llvm/Pass.h"
 #include "llvm/Function.h"
@@ -26,6 +27,7 @@ class SpecSFS : public llvm::ModulePass,
  public:
   static char ID;
   SpecSFS();
+  explicit SpecSFS(char &id);
 
   bool runOnModule(llvm::Module &M) override;
 
@@ -83,7 +85,7 @@ class SpecSFS : public llvm::ModulePass,
   // Adds additional indirect call info, given an AUX analysis
   //   (in this case, Andersens analysis)
   bool addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
-      const Andersens &aux, ObjectMap &omap);
+      const Andersens &aux, const IndirFunctionInfo *, ObjectMap &omap);
 
   // Private data {{{
   ObjectMap omap_;
