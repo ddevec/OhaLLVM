@@ -693,11 +693,11 @@ bool DynPtstoLoader::runOnModule(llvm::Module &m) {
   llvm::dbgs() << "Printing loaded ptsto for top-level variables:\n";
   for (auto &pr : valToObjs_) {
     llvm::dbgs() << "Value (" << pr.first << ") is: " <<
-        ValPrint(pr.first) << ":\n";
+        ValPrint(pr.first, omap_) << ":\n";
 
     auto &pts_set = pr.second;
     for (auto obj_id : pts_set) {
-      llvm::dbgs() << "  " << ValPrint(obj_id) << "\n";
+      llvm::dbgs() << "  " << ValPrint(obj_id, omap_) << "\n";
     }
   }
 

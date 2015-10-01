@@ -427,6 +427,22 @@ class DUG {
     }
     //}}}
 
+    // Replacing nodes with constant ptsto nodes {{{
+    void replaceWithConstantNode(DUGid id, const std::set<ObjID> &ptsto_set) {
+      // Replace the node at ID with a constant ptsto node
+      auto &node = getNode(id);
+      // If its a PartNode, we have to propigate the correct in-set...
+      if (llvm::isa<PartNode>(node)) {
+        DUG_.replaceNode<ConstPartNode>(id, node.dest(),
+            node.src(), std::begin(ptsto_set), std::end(ptsto_set));
+      } else {
+        // Its a non-part node, we just treat it as an address of node
+        DUG_.replaceNode<ConstNode>(id, node.dest(),
+            node.src(), std::begin(ptsto_set), std::end(ptsto_set));
+      }
+    }
+    // }}}
+
     // Accessors {{{
     const std::map<ObjID, int32_t> &getStructInfo() const {
       return structInfo_;
@@ -577,6 +593,31 @@ class DUG {
       //}}}
     };
 
+    class ConstNode : public DUGNode {
+      //{{{
+     public:
+        ConstNode(SEG::NodeID node_id, ObjectMap::ObjID dest,
+              ObjectMap::ObjID src, std::set<ObjID>::iterator st,
+              std::set<ObjID>::iterator en) :
+            DUGNode(NodeKind::ConstNode, node_id, dest, src, 0) {
+          // Fill the object set
+          constObjSet_.resize(std::distance(st, en));
+          constObjSet_.insert(std::end(constObjSet_), st, en);
+        }
+
+        // NOTE: Process implemented in "Solve.cpp"
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
+
+        static bool classof(const SEG::Node *node) {
+          return node->getKind() == NodeKind::AllocNode;
+        }
+
+     private:
+        bool run_ = false;
+        std::vector<ObjID> constObjSet_;
+      //}}}
+    };
+
     class CopyNode : public DUGNode {
       //{{{
      public:
@@ -647,6 +688,32 @@ class DUG {
         PtstoGraph in_;
       //}}}
     };
+
+    class ConstPartNode : public PartNode {
+      //{{{
+     public:
+        ConstPartNode(SEG::NodeID node_id, ObjectMap::ObjID dest,
+              ObjectMap::ObjID src, std::set<ObjID>::iterator st,
+              std::set<ObjID>::iterator en) :
+            PartNode(NodeKind::ConstNode, node_id, dest, src, 0) {
+          // Fill the object set
+          constObjSet_.resize(std::distance(st, en));
+          constObjSet_.insert(std::end(constObjSet_), st, en);
+        }
+
+        // NOTE: Process implemented in "Solve.cpp"
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
+
+        static bool classof(const SEG::Node *node) {
+          return node->getKind() == NodeKind::AllocNode;
+        }
+
+     private:
+        bool run_ = false;
+        std::vector<ObjID> constObjSet_;
+      //}}}
+    };
+
 
     class LoadNode : public PartNode {
       //{{{

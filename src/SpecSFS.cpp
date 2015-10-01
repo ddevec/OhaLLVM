@@ -21,6 +21,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/ProfileInfo.h"
 
 
 #include "include/Andersens.h"
@@ -28,6 +29,7 @@
 #include "include/ObjectMap.h"
 #include "include/lib/UnusedFunctions.h"
 #include "include/lib/IndirFcnTarget.h"
+#include "include/lib/DynPtsto.h"
 
 using std::swap;
 
@@ -69,13 +71,21 @@ X("SpecSFS", "Speculative Sparse Flow-sensitive Analysis", false, false);
 
 void SpecSFS::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   usage.setPreservesAll();
+  // For DCE
+  // FIXME: This info is actually provided by ProfileInfo?
   usage.addRequired<UnusedFunctions>();
+  // Because we're and AliasAnalysis
   usage.addRequired<AliasAnalysis>();
+  // For indirect function following
+  // FIXME: Can probably just use DynPtstoLoader...
   usage.addRequired<IndirFunctionInfo>();
+  // For dynamic ptsto removal
+  usage.addRequired<DynPtstoLoader>();
+  usage.addRequired<llvm::ProfileInfo>();
 }
 
 // runOnModule, the primary pass
-bool SpecSFS::runOnModule(llvm::Module &M) {
+bool SpecSFS::runOnModule(llvm::Module &m) {
   // Set up our alias analysis
   // -- This is required for the llvm AliasAnalysis interface
   InitializeAliasAnalysis(this);
@@ -92,7 +102,7 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   {
     PerfTimerPrinter id_timer(llvm::dbgs(), "Identify Objects");
     // Identify all of the objects in the source
-    if (identifyObjects(omap, M)) {
+    if (identifyObjects(omap, m)) {
       error("Identify objects failure!");
     }
   }
@@ -104,7 +114,7 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   //   Those will be populated later, once we have AUX info available.
   {
     PerfTimerPrinter create_timer(llvm::dbgs(), "CreateConstraints");
-    if (createConstraints(cg, cfg, omap, M, unused_fcns)) {
+    if (createConstraints(cg, cfg, omap, m, unused_fcns)) {
       error("CreateConstraints failure!");
     }
   }
@@ -127,9 +137,9 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   // Get AUX info, in this instance we choose Andersens
   {
     PerfTimerPrinter andersens_timer(llvm::dbgs(), "Andersens");
-    if (aux.runOnModule(M)) {
-      // Andersens had better not change M!
-      error("Andersens changes M???");
+    if (aux.runOnModule(m)) {
+      // Andersens had better not change m!
+      error("Andersens changes m???");
     }
   }
 
@@ -193,8 +203,6 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
     cg.unique();
   }
 
-  // The PE graph was updated by addIndirectCalls
-
   if_debug(cfg.getSEG().printDotFile("CFG_indir.dot", omap));
 
   // Now, compute the SSA form for the top-level variables
@@ -218,6 +226,15 @@ bool SpecSFS::runOnModule(llvm::Module &M) {
   {
     PerfTimerPrinter fill_timer(llvm::dbgs(), "fillTopLevel");
     graph.fillTopLevel(cg, omap);
+  }
+
+  // Now that we've filled in the top level constraint graph, we add in dynamic
+  //   info
+  {
+    PerfTimerPrinter dyn_timer(llvm::dbgs(), "Dynamic Ptsto Info");
+    if (addDynPtstoInfo(m, graph, cfg, omap)) {
+      error("DynPtstoInfo addition failure!");
+    }
   }
 
   {

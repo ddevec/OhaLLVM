@@ -12,7 +12,6 @@
 #include "llvm/Function.h"
 #include "llvm/BasicBlock.h"
 #include "llvm/Analysis/BlockFrequencyInfo.h"
-#include "llvm/Analysis/PathProfileInfo.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -26,6 +25,10 @@ class UnusedFunctions : public llvm::ModulePass {
     bool runOnModule(llvm::Module &m) override;
 
     void getAnalysisUsage(llvm::AnalysisUsage &AU) const override;
+
+    bool hasInfo() const {
+      return !allUsed_;
+    }
 
     bool isUsed(const llvm::Function &fcn) const {
       return isUsed(&fcn);
@@ -54,6 +57,10 @@ class UnusedFunctions : public llvm::ModulePass {
       }
 
       return ret;
+    }
+
+    bool isUsed(const llvm::BasicBlock &bb) const {
+      return isUsed(&bb);
     }
 
     bool isUsed(const llvm::BasicBlock *bb) const {

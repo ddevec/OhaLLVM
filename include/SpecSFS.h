@@ -59,6 +59,12 @@ class SpecSFS : public llvm::ModulePass,
   //   Used to compute SSA for top lvl
   CFG::ControlFlowGraph computeSSA(const CFG::ControlFlowGraph &cfg);
 
+  // Takes dynamic pointsto information, as well as hot/cold basic block
+  //   information, and trims the edges of the DUG appropriately
+  bool addDynPtstoInfo(llvm::Module &m, DUG &graph, CFG &cfg,
+      ObjectMap &omap);
+
+
   // Computes partitons based on the conservative address-taken info, the
   //   partitions are based on "access-equivalence"
   // NOTE: ObjectMap is required to convert DUG::ObjID to llvm::Value as

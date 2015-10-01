@@ -37,7 +37,7 @@ class DynPtstoLoader : public SpecSFS {
       return hasInfo_;
     }
 
-    const std::set<ObjectMap::ObjID> &getPtsto(ObjectMap::ObjID &val_id) {
+    const std::set<ObjectMap::ObjID> &getPtsto(ObjectMap::ObjID &val_id) const {
       assert(hasInfo_);
       static std::set<ObjectMap::ObjID> empty_set;
       auto it = valToObjs_.find(val_id);

@@ -848,13 +848,14 @@ extern ObjectMap *g_omap;
 class ValPrint {
   //{{{
  public:
-    explicit ValPrint(ObjectMap::ObjID id) : id_(id) { }
+    explicit ValPrint(ObjectMap::ObjID id) : id_(id), omap_(g_omap) { }
+    ValPrint(ObjectMap::ObjID id, ObjectMap &omap) : id_(id), omap_(&omap) { }
 
     friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
         const ValPrint &pr) {
       // If its not in the map, its probably been added later as an indirect
       // object...
-      auto val = g_omap->valueAtID(pr.id_);
+      auto val = pr.omap_->valueAtID(pr.id_);
 
       if (val != nullptr) {
         if (auto gv = llvm::dyn_cast<const llvm::GlobalValue>(val)) {
@@ -877,6 +878,7 @@ class ValPrint {
 
  private:
     ObjectMap::ObjID id_;
+    ObjectMap *omap_;
   //}}}
 };
 

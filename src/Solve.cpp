@@ -408,3 +408,108 @@ void DUG::GlobalInitNode::process(DUG &dug, TopLevelPtsto &pts_top,
   }
 }
 
+// Constant nodes! currently caused by the cold-path dynamic ptsto optimization
+void DUG::ConstNode::process(DUG &dug, TopLevelPtsto &pts_top,
+    Worklist &work) {
+  // Constant nodes only run once, as they break incoming edges
+  if (!run_) {
+    run_ = true;
+
+    dout("Process const start\n");
+    // Update the top level variables for this alloc
+    PtstoSet &dest_pts = pts_top.at(dest(), offset());
+
+    logout("n " << id() << "\n");
+    logout("t " << 6 << "\n");
+
+    logout("r " << rep() << "\n");
+    logout("s " << src() << "\n");
+    logout("d " << dest() << " " << dest_pts << "\n");
+    logout("f " << offset() << "\n");
+
+    // We clear the dest_pts, and force it to be exactly our pts
+    dest_pts.clear();
+    for (auto obj_id : constObjSet_) {
+      dest_pts.set(obj_id);
+    }
+
+    dout("  pts_top[" << dest() << "] + " << offset() << " is now: "
+        << dest_pts << "\n");
+
+    logout("D " << dest() << " " << dest_pts << "\n");
+
+    // NOTE: We assume we changed dest
+    // Add all top level variables updated to worklist
+    std::for_each(succ_begin(), succ_end(),
+        [&dug, &work](DUG::DUGid succ_id) {
+      auto &nd = dug.getNode(succ_id);
+      dout("  Pushing nd to work: " << nd.id() << "\n");
+      work.push(&nd);
+    });
+  }
+}
+
+// Constant nodes! currently caused by the cold-path dynamic ptsto optimization
+void DUG::ConstPartNode::process(DUG &dug, TopLevelPtsto &pts_top,
+    Worklist &work) {
+  // Constant nodes only run once, as they break incoming edges
+  if (!run_) {
+    run_ = true;
+
+    dout("Process const start\n");
+    // Update the top level variables for this alloc
+    PtstoSet &dest_pts = pts_top.at(dest(), offset());
+
+    logout("n " << id() << "\n");
+    logout("t " << 6 << "\n");
+
+    logout("r " << rep() << "\n");
+    logout("s " << src() << "\n");
+    logout("d " << dest() << " " << dest_pts << "\n");
+    logout("f " << offset() << "\n");
+
+    // We clear the dest_pts, and force it to be exactly our pts
+    dest_pts.clear();
+    for (auto obj_id : constObjSet_) {
+      dest_pts.set(obj_id);
+    }
+
+    dout("  pts_top[" << dest() << "] + " << offset() << " is now: "
+        << dest_pts << "\n");
+
+    logout("D " << dest() << " " << dest_pts << "\n");
+
+    // NOTE: We assume we changed dest
+    // Add all top level variables updated to worklist
+    std::for_each(succ_begin(), succ_end(),
+        [&dug, &work](DUG::DUGid succ_id) {
+      auto &nd = dug.getNode(succ_id);
+      dout("  Pushing nd to work: " << nd.id() << "\n");
+      work.push(&nd);
+    });
+  }
+
+  // FIXME: Should only do this if the input set changes...
+  // We also propigate partition successors
+  std::for_each(std::begin(part_succs_), std::end(part_succs_),
+      [this, &dug, &work]
+      (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
+    auto part_id = part_pr.first;
+    auto dug_id = part_pr.second;
+
+    auto &nd = dug.getNode(dug_id);
+    /*
+    dout("    succ is: " << ValPrint(pr.second) << "\n");
+    dout("    part_to_obj contains: " << "\n");
+    std::for_each(std::begin(part_to_obj), std::end(part_to_obj),
+      [](std::pair<DUG::DUGid, DUG::ObjID> &pr) {
+      dout("      " << ValPrint(pr.second) << "\n");
+    });
+    */
+    bool ch = nd.in().orPart(in_, dug.objToPartMap(), part_id);
+
+    if (ch) {
+      work.push(&nd);
+    }
+  });
+}

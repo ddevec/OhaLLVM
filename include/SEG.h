@@ -85,8 +85,10 @@ enum class NodeKind {
   // DUGNodes
   DUGNode,
   AllocNode,
+  ConstNode,
   PartNode,
   LoadNode,
+  ConstPartNode,
   StoreNode,
   PhiNode,
   GlobalInitNode,
@@ -933,6 +935,29 @@ class SEG {
 
     // Node Manipulation {{{
     // contructs new node of node_type and inserts it into our node list
+    template <typename node_type, typename... va_args>
+    void replaceNode(NodeID node_id, va_args&&... args) {
+      auto old_node = std::move(nodes_[node_id.val()]);
+      // I don't have logic for this... yet
+      assert(old_node->isRep());
+
+      nodes_[node_id.val()] = std::make_unique<node_type>(node_id,
+          std::forward<va_args>(args)...);
+
+      auto &new_node = *nodes_[node_id.val()];
+
+      // Add preds/succs
+      auto &new_preds = new_node.preds();
+      auto &old_preds = old_node->preds();
+      new_preds.insert(std::end(new_preds), std::begin(old_preds),
+          std::end(old_preds));
+
+      auto &new_succs = new_node.succs();
+      auto &old_succs = old_node->succs();
+      new_succs.insert(std::end(new_succs), std::begin(old_succs),
+          std::end(old_succs));
+    }
+
     template <typename node_type>
     void addNode(const node_type &nd) {
       nodes_.emplace_back(new node_type(nd));

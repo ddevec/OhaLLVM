@@ -92,6 +92,8 @@ set(SPECSFS_SOURCES
   src/Partition.cpp
   src/Solve.cpp
 
+  src/DynPtstoOpt.cpp
+
   # Instrumentation passes
   lib/Instrument/IndirFcnTarget.cpp
   lib/Instrument/DynPtsto.cpp
