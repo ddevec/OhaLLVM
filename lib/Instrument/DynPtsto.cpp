@@ -316,15 +316,22 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
       auto fcn = LLVMHelper::getFcnFromCall(ci);
       // Get the arg_pos for the size from the function
       auto size_val = AllocInfo::getMallocSizeArg(m, ci, fcn);
+
+      llvm::Instruction *i8_ptr_val = ci;
+      if (ci->getType() != i8_ptr_type) {
+        i8_ptr_val = new llvm::BitCastInst(ci, i8_ptr_type);
+        i8_ptr_val->insertAfter(ci);
+      }
+
       // Make the call
       std::vector<llvm::Value *> args;
       args.push_back(llvm::ConstantInt::get(i32_type, obj_id.val()));
       args.push_back(size_val);
-      args.push_back(ci);
+      args.push_back(i8_ptr_val);
       auto malloc_inst_call = llvm::CallInst::Create(
           malloc_fcn, args);
 
-      malloc_inst_call->insertAfter(ci);
+      malloc_inst_call->insertAfter(i8_ptr_val);
     }
   }
 
@@ -682,7 +689,8 @@ bool DynPtstoLoader::runOnModule(llvm::Module &m) {
       while (!converter.fail()) {
         auto obj_id = ObjectMap::ObjID(obj_int_val);
 
-        auto ret = obj_set.insert(obj_id);
+        if_debug_enabled(auto ret =)
+          obj_set.insert(obj_id);
         assert(ret.second);
 
         converter >> obj_int_val;
@@ -690,6 +698,7 @@ bool DynPtstoLoader::runOnModule(llvm::Module &m) {
     }
   }
 
+  /*
   llvm::dbgs() << "Printing loaded ptsto for top-level variables:\n";
   for (auto &pr : valToObjs_) {
     llvm::dbgs() << "Value (" << pr.first << ") is: " <<
@@ -700,6 +709,7 @@ bool DynPtstoLoader::runOnModule(llvm::Module &m) {
       llvm::dbgs() << "  " << ValPrint(obj_id, omap_) << "\n";
     }
   }
+  */
 
   return false;
 }

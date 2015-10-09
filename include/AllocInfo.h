@@ -76,7 +76,7 @@ class AllocInfo {
     if (callee->getName() == "fopen" ||
         callee->getName() == "fdopen") {
       // Allocate a new file struct... calc size of file struct...
-      auto file_type = m.getTypeByName("_IO_FILE");
+      auto file_type = m.getTypeByName("struct._IO_FILE");
       return LLVMHelper::calcTypeOffset(m, file_type, ci);
     }
 

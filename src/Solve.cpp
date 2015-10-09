@@ -292,7 +292,7 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
       auto &nd = dug.getNode(dug_id);
 
       dout("  Checking node: " << dug_id << " or: " <<
-          nd.extId() << "\n");
+          nd.id() << "\n");
 
 
       // dout("  before in for nd is: " << nd.in() << "\n");

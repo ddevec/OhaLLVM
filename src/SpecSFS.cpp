@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "llvm/Pass.h"
+#include "llvm/PassSupport.h"
 #include "llvm/Function.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Debug.h"
@@ -62,36 +63,46 @@ static void error(const std::string &msg) {
 /*}}}*/
 
 // Constructor
+SpecSFS::SpecSFS() : llvm::ModulePass(ID) { }
+SpecSFS::SpecSFS(char &id) : llvm::ModulePass(id) { }
 char SpecSFS::ID = 0;
-SpecSFS::SpecSFS() : ModulePass(ID) { }
-SpecSFS::SpecSFS(char &id) : ModulePass(id) { }
-static llvm::RegisterPass<SpecSFS>
-X("SpecSFS", "Speculative Sparse Flow-sensitive Analysis", false, false);
-// static RegisterAnalysisGroup<AliasAnalysis> Y(X);
+namespace llvm {
+  static RegisterPass<SpecSFS>
+      X("SpecSFS", "Speculative Sparse Flow-sensitive Analysis", false, true);
+  RegisterAnalysisGroup<AliasAnalysis> Y(X);
+}  // namespace llvm
+
+using llvm::PassRegistry;
+using llvm::PassInfo;
+using llvm::callDefaultCtor;
+using llvm::AliasAnalysis;
 
 void SpecSFS::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
+  // Because we're an AliasAnalysis
+  AliasAnalysis::getAnalysisUsage(usage);
   usage.setPreservesAll();
   // For DCE
   // FIXME: This info is actually provided by ProfileInfo?
-  usage.addRequired<UnusedFunctions>();
-  // Because we're and AliasAnalysis
-  usage.addRequired<AliasAnalysis>();
+  // usage.addRequired<UnusedFunctions>();
+  // usage.addRequired<AliasAnalysis>();
   // For indirect function following
   // FIXME: Can probably just use DynPtstoLoader...
-  usage.addRequired<IndirFunctionInfo>();
+  // usage.addRequired<IndirFunctionInfo>();
   // For dynamic ptsto removal
-  usage.addRequired<DynPtstoLoader>();
-  usage.addRequired<llvm::ProfileInfo>();
+  // usage.addRequired<DynPtstoLoader>();
+  // usage.addRequired<llvm::ProfileInfo>();
 }
 
 // runOnModule, the primary pass
-bool SpecSFS::runOnModule(llvm::Module &m) {
+// bool SpecSFS::runOnModule(llvm::Module &m) {
+bool SpecSFS::runOnModule(llvm::Module &) {
   // Set up our alias analysis
   // -- This is required for the llvm AliasAnalysis interface
   InitializeAliasAnalysis(this);
 
   // Clear the def-use graph
   // It should already be cleared, but I'm paranoid
+#if 0
   ConstraintGraph cg;
   CFG cfg;
   ObjectMap &omap = omap_;
@@ -355,24 +366,69 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   }
 #endif
 
+#endif
+
+  /*
+  if (alias(Location(nullptr), Location(nullptr)) != MayAlias) {
+    llvm::dbgs() << "?\n";
+  }
+  */
+
   // We do not modify code, ever!
   return false;
 }
 
 llvm::AliasAnalysis::AliasResult SpecSFS::alias(const Location &L1,
                                             const Location &L2) {
+  llvm::dbgs() << "Alias query?\n";
+  llvm::dbgs() << "have l1: " << *L1.Ptr << "!\n";
+  llvm::dbgs() << "have l2: " << *L2.Ptr << "!\n";
   auto &pts1 = pts_top_.at(omap_.getValue(L1.Ptr));
   auto &pts2 = pts_top_.at(omap_.getValue(L2.Ptr));
+
 
   // Check to see if the two pointers are known to not alias.  They don't alias
   // if their points-to sets do not intersect.
   if (!pts1.insersectsIgnoring(pts2, ObjectMap::NullObjectValue)) {
+    llvm::dbgs() << "  no alias!\n";
     return NoAlias;
   }
 
-  // ddevec - FIXME: Changed this because we can't call "alisas" from a non
-  //   "alias analysis"
   return AliasAnalysis::alias(L1, L2);
+}
+
+AliasAnalysis::ModRefResult SpecSFS::getModRefInfo(llvm::ImmutableCallSite CS,
+                                   const llvm::AliasAnalysis::Location &Loc) {
+  return AliasAnalysis::getModRefInfo(CS, Loc);
+}
+
+AliasAnalysis::ModRefResult SpecSFS::getModRefInfo(llvm::ImmutableCallSite CS1,
+                                   llvm::ImmutableCallSite CS2) {
+  return AliasAnalysis::getModRefInfo(CS1, CS2);
+}
+
+/*
+void SpecSFS::getMustAliases(llvm::Value *P, std::vector<llvm::Value*> &RetVals) {
+  return AliasAnalysis::getMustAliases(P, RetVals);
+}
+*/
+
+// Do not use it.
+bool SpecSFS::pointsToConstantMemory(const AliasAnalysis::Location &loc,
+    bool or_local) {
+  return AliasAnalysis::pointsToConstantMemory(loc, or_local);
+}
+
+void SpecSFS::deleteValue(llvm::Value *V) {
+  // FIXME: Should do this
+  assert(0);
+  getAnalysis<AliasAnalysis>().deleteValue(V);
+}
+
+void SpecSFS::copyValue(llvm::Value *From, llvm::Value *To) {
+  // FIXME: Should do this
+  assert(0);
+  getAnalysis<AliasAnalysis>().copyValue(From, To);
 }
 
 

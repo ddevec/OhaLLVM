@@ -941,8 +941,12 @@ class SEG {
       // I don't have logic for this... yet
       assert(old_node->isRep());
 
+      /*
       nodes_[node_id.val()] = std::make_unique<node_type>(node_id,
           std::forward<va_args>(args)...);
+      */
+      nodes_[node_id.val()] = std::unique_ptr<node_type>(new node_type(node_id,
+          std::forward<va_args>(args)...));
 
       auto &new_node = *nodes_[node_id.val()];
 

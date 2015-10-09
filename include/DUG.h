@@ -452,6 +452,15 @@ class DUG {
       return DUG_.getNode<DUGNode>(nodeMap_.at(oid));
     }
 
+    DUGNode *tryGetNode(ObjectMap::ObjID oid) {
+      auto it = nodeMap_.find(oid);
+      if (it != std::end(nodeMap_)) {
+        return &DUG_.getNode<DUGNode>(it->second);
+      } else {
+        return nullptr;
+      }
+    }
+
     DUGNode &getNode(ObjectMap::ObjID oid) {
       return DUG_.getNode<DUGNode>(nodeMap_.at(oid));
     }
@@ -601,7 +610,7 @@ class DUG {
               std::set<ObjID>::iterator en) :
             DUGNode(NodeKind::ConstNode, node_id, dest, src, 0) {
           // Fill the object set
-          constObjSet_.resize(std::distance(st, en));
+          // constObjSet_.reserve(std::distance(st, en));
           constObjSet_.insert(std::end(constObjSet_), st, en);
         }
 
@@ -609,7 +618,7 @@ class DUG {
         void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
 
         static bool classof(const SEG::Node *node) {
-          return node->getKind() == NodeKind::AllocNode;
+          return node->getKind() == NodeKind::PartNode;
         }
 
      private:
@@ -695,9 +704,9 @@ class DUG {
         ConstPartNode(SEG::NodeID node_id, ObjectMap::ObjID dest,
               ObjectMap::ObjID src, std::set<ObjID>::iterator st,
               std::set<ObjID>::iterator en) :
-            PartNode(NodeKind::ConstNode, node_id, dest, src, 0) {
+            PartNode(NodeKind::ConstPartNode, node_id, dest, src, 0) {
           // Fill the object set
-          constObjSet_.resize(std::distance(st, en));
+          // constObjSet_.resize(std::distance(st, en));
           constObjSet_.insert(std::end(constObjSet_), st, en);
         }
 
@@ -705,7 +714,7 @@ class DUG {
         void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
 
         static bool classof(const SEG::Node *node) {
-          return node->getKind() == NodeKind::AllocNode;
+          return node->getKind() == NodeKind::ConstPartNode;
         }
 
      private:

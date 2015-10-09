@@ -29,7 +29,7 @@ class SpecSFS : public llvm::ModulePass,
   SpecSFS();
   explicit SpecSFS(char &id);
 
-  bool runOnModule(llvm::Module &M) override;
+  virtual bool runOnModule(llvm::Module &M);
 
   void getAnalysisUsage(llvm::AnalysisUsage &usage) const;
 
@@ -40,8 +40,33 @@ class SpecSFS : public llvm::ModulePass,
     return this;
   }
 
-  AliasAnalysis::AliasResult alias(const AliasAnalysis::Location &L1,
+  const char *getPassName() const override {
+    return "SpecSFS";
+  }
+
+  /*
+  AliasAnalysis::AliasResult alias(const llvm::Value *v1, unsigned v1size,
+      const llvm::Value *v2, unsigned v2size) override;
+      */
+
+  virtual AliasAnalysis::AliasResult alias(const AliasAnalysis::Location &L1,
       const AliasAnalysis::Location &L2);
+
+  virtual AliasAnalysis::ModRefResult getModRefInfo(llvm::ImmutableCallSite CS,
+                             const llvm::AliasAnalysis::Location &Loc);
+  virtual AliasAnalysis::ModRefResult getModRefInfo(llvm::ImmutableCallSite CS1,
+                                     llvm::ImmutableCallSite CS2);
+  /*
+  void getMustAliases(llvm::Value *P,
+      std::vector<llvm::Value*> &RetVals);
+  */
+  // Do not use it.
+  bool pointsToConstantMemory(const AliasAnalysis::Location &Loc,
+      bool OrLocal = false);
+
+  virtual void deleteValue(llvm::Value *V);
+
+  virtual void copyValue(llvm::Value *From, llvm::Value *To);
 
  private:
   // The functions which do the primary (high-level) work of SFS

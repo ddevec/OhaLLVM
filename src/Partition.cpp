@@ -107,7 +107,8 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
         ValPrint(node.src()) << "\n");
     } else {
       dout("node_id is: " << node.id() << "\n");
-      assert(llvm::isa<DUG::LoadNode>(node));
+      assert(llvm::isa<DUG::LoadNode>(node) ||
+          llvm::isa<DUG::ConstPartNode>(node));
 
       // val is src for gv and loads
       val_id = node.src();
@@ -330,7 +331,8 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
 
         // Okay, now that we have the CFGid, update its info:
         // If this is a load:
-        if (llvm::isa<DUG::LoadNode>(node)) {
+        if (llvm::isa<DUG::LoadNode>(node) ||
+            llvm::isa<DUG::ConstPartNode>(node)) {
           auto cfg_id = ssa.getCFGid(node.rep());
 
           // Ooops, I aliased a variable... shame on me
@@ -497,7 +499,8 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
           dout("  ld size is: " <<
             std::distance(ssa_node.uses_begin(), ssa_node.uses_end())
             << "\n");
-          assert(llvm::isa<DUG::LoadNode>(graph.getNode(dug_id)));
+          assert(llvm::isa<DUG::LoadNode>(graph.getNode(dug_id)) ||
+                 llvm::isa<DUG::ConstPartNode>(graph.getNode(dug_id)));
         // There may also be none (in this case its an phi node)
         } else {
           dug_id = graph.addPhi();
