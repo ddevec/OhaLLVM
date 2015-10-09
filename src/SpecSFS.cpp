@@ -79,30 +79,28 @@ using llvm::AliasAnalysis;
 
 void SpecSFS::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   // Because we're an AliasAnalysis
-  AliasAnalysis::getAnalysisUsage(usage);
+  // AliasAnalysis::getAnalysisUsage(usage);
+  usage.addRequired<llvm::AliasAnalysis>();
   usage.setPreservesAll();
   // For DCE
   // FIXME: This info is actually provided by ProfileInfo?
-  // usage.addRequired<UnusedFunctions>();
-  // usage.addRequired<AliasAnalysis>();
+  usage.addRequired<UnusedFunctions>();
   // For indirect function following
   // FIXME: Can probably just use DynPtstoLoader...
-  // usage.addRequired<IndirFunctionInfo>();
+  usage.addRequired<IndirFunctionInfo>();
   // For dynamic ptsto removal
-  // usage.addRequired<DynPtstoLoader>();
-  // usage.addRequired<llvm::ProfileInfo>();
+  usage.addRequired<DynPtstoLoader>();
+  usage.addRequired<llvm::ProfileInfo>();
 }
 
 // runOnModule, the primary pass
-// bool SpecSFS::runOnModule(llvm::Module &m) {
-bool SpecSFS::runOnModule(llvm::Module &) {
+bool SpecSFS::runOnModule(llvm::Module &m) {
   // Set up our alias analysis
   // -- This is required for the llvm AliasAnalysis interface
   InitializeAliasAnalysis(this);
 
   // Clear the def-use graph
   // It should already be cleared, but I'm paranoid
-#if 0
   ConstraintGraph cg;
   CFG cfg;
   ObjectMap &omap = omap_;
@@ -366,8 +364,6 @@ bool SpecSFS::runOnModule(llvm::Module &) {
   }
 #endif
 
-#endif
-
   /*
   if (alias(Location(nullptr), Location(nullptr)) != MayAlias) {
     llvm::dbgs() << "?\n";
@@ -380,7 +376,6 @@ bool SpecSFS::runOnModule(llvm::Module &) {
 
 llvm::AliasAnalysis::AliasResult SpecSFS::alias(const Location &L1,
                                             const Location &L2) {
-  llvm::dbgs() << "Alias query?\n";
   llvm::dbgs() << "have l1: " << *L1.Ptr << "!\n";
   llvm::dbgs() << "have l2: " << *L2.Ptr << "!\n";
   auto &pts1 = pts_top_.at(omap_.getValue(L1.Ptr));
@@ -421,13 +416,18 @@ bool SpecSFS::pointsToConstantMemory(const AliasAnalysis::Location &loc,
 
 void SpecSFS::deleteValue(llvm::Value *V) {
   // FIXME: Should do this
-  assert(0);
+  // Really, I'm just going to ignore it...
+  auto v_id = omap_.getValue(V);
+  pts_top_.remove(v_id);
   getAnalysis<AliasAnalysis>().deleteValue(V);
 }
 
 void SpecSFS::copyValue(llvm::Value *From, llvm::Value *To) {
   // FIXME: Should do this
-  assert(0);
+  auto from_id = omap_.getValue(From);
+  auto to_id = omap_.getValue(To);
+  pts_top_.copy(from_id, to_id);
+
   getAnalysis<AliasAnalysis>().copyValue(From, To);
 }
 

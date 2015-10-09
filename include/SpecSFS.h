@@ -35,7 +35,8 @@ class SpecSFS : public llvm::ModulePass,
 
   virtual void *getAdjustedAnalysisPointer(llvm::AnalysisID PI) {
     if (PI == &AliasAnalysis::ID) {
-      return reinterpret_cast<llvm::AliasAnalysis *>(this);
+      // return (llvm::AliasAnalysis *)this;
+      return dynamic_cast<llvm::AliasAnalysis *>(this);
     }
     return this;
   }

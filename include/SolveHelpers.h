@@ -343,6 +343,16 @@ class TopLevelPtsto {
       return at(id, 0);
     }
 
+    void copy(ObjID src_id, ObjID dest_id) {
+      assert(data_.find(dest_id) == std::end(data_));
+      data_[dest_id] = data_.at(src_id);
+    }
+
+    void remove(ObjID id) {
+      assert(data_.find(id) != std::end(data_));
+      data_.erase(id);
+    }
+
     typedef std::map<ObjID, std::vector<PtstoSet>>::iterator iterator;
     typedef std::map<ObjID, std::vector<PtstoSet>>::const_iterator
       const_iterator;
