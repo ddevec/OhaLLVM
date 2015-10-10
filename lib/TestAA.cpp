@@ -60,7 +60,7 @@ class TestAA : public llvm::ModulePass {
     if (aa.alias(llvm::AliasAnalysis::Location(first_ptr, 1),
          llvm::AliasAnalysis::Location(second_ptr, 1)) ==
         llvm::AliasAnalysis::MayAlias) {
-      llvm::dbgs() << "may alias?\n";
+      llvm::dbgs() << "may alias!!\n";
     }
 
     return false;

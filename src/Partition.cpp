@@ -267,29 +267,33 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
   // Map to track which partitions use each DUG node
   std::map<DUG::DUGid, std::vector<DUG::PartID>> node_to_partition;
 
+  // Okay, now clear out any r, p, or c info for the nodes in that graph
+  auto ssa_seg = ssa.getSEG().clone<CFG::Node>();
+  std::for_each(std::begin(ssa_seg), std::end(ssa_seg),
+      [] (CFG::ControlFlowGraph::node_iter_type &pnode) {
+    auto &node = llvm::cast<CFG::Node>(*pnode);
+
+    node.clearM();
+    node.clearR();
+    node.clearC();
+
+    node.clearDefs();
+    node.clearUses();
+    node.clearGlobalInits();
+
+    // SEG assumes succs are clear when it starts...
+    node.succs().clear();
+  });
+
   // For each partition, calculate the SSA of any nodes in that partiton
   std::for_each(graph.part_cbegin(), graph.part_cend(),
-      [this, &graph, &ssa, &node_to_partition, &omap]
+      [this, &graph, &ssa, &ssa_seg, &node_to_partition, &omap]
       (const std::pair<const DUG::PartID, std::vector<ObjectMap::ObjID>> &pr) {
     std::map<CFG::CFGid, DUG::DUGid> cfg_node_rep;
 
     // Create a clone of the ControlFlowGraph for this partition's ssa
     CFG::ControlFlowGraph part_graph =
-      ssa.getSEG().clone<CFG::Node>();
-
-    // Okay, now clear out any r, p, or c info for the nodes in that graph
-    std::for_each(std::begin(part_graph), std::end(part_graph),
-        [&part_graph](CFG::ControlFlowGraph::node_iter_type &pnode) {
-      auto &node = llvm::cast<CFG::Node>(*pnode);
-
-      node.clearM();
-      node.clearR();
-      node.clearC();
-
-      node.clearDefs();
-      node.clearUses();
-      node.clearGlobalInits();
-    });
+      ssa_seg.clone<CFG::Node>();
 
     // Now calculate and fill in the info for each object
     //   in this partition
@@ -441,11 +445,11 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
 
       /* -- ddevec - Dot file debugging... I'm disabling due to the insane number
        * of files/time it takes
+      */
       std::string part_file("part_ssa");
       part_file += std::to_string(part_id.val());
       part_file += ".dot";
       part_ssa.printDotFile(part_file, *g_omap);
-      */
 
       // Here we group the partSSA info, indicating which DUG nodes are affected
       //   by this partition

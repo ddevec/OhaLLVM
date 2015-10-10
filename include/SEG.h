@@ -162,6 +162,103 @@ class SEG {
         }
         //}}}
 
+       // Inertnal classes {{{
+        class EdgeSet {
+          //{{{
+         public:
+            EdgeSet() = default;
+
+            void insert(NodeID id) {
+              nodes_.push_back(id);
+            }
+
+            void insert(const EdgeSet &rhs) {
+              nodes_.insert(std::end(nodes_),
+                  std::begin(rhs.nodes_), std::end(rhs.nodes_));
+            }
+
+            void erase(NodeID id) {
+              auto it = std::find(std::begin(nodes_), std::end(nodes_), id);
+              if (it != std::end(nodes_)) {
+                *it = nodes_.back();
+                nodes_.pop_back();
+              }
+            }
+
+            void clear() {
+              nodes_.clear();
+            }
+
+            bool has(NodeID id) const {
+              return (std::find(std::begin(nodes_), std::end(nodes_), id) !=
+                  std::end(nodes_));
+            }
+
+            bool empty() const {
+              return nodes_.empty();
+            }
+
+            int32_t size() const {
+              return nodes_.size();
+            }
+
+            void unique(SEG &seg) {
+              // Convert all ids to rep ids:
+              std::vector<NodeID> new_nodes;
+              for (auto id : nodes_) {
+                id = seg.getRep(id);
+
+                // Ignore invalid/deleted nodes
+                if (id == NodeID::invalid()) {
+                  continue;
+                }
+
+                new_nodes.push_back(id);
+              }
+
+              nodes_ = std::move(new_nodes);
+              std::sort(std::begin(nodes_), std::end(nodes_));
+              auto it = std::unique(std::begin(nodes_), std::end(nodes_));
+              nodes_.erase(it, std::end(nodes_));
+            }
+
+            bool operator==(const EdgeSet &rhs) const {
+              return (nodes_ == rhs.nodes_);
+            }
+
+            typedef std::vector<NodeID>::iterator iterator;
+            typedef std::vector<NodeID>::const_iterator const_iterator;
+
+            iterator begin() {
+              return std::begin(nodes_);
+            }
+
+            iterator end() {
+              return std::end(nodes_);
+            }
+
+            const_iterator begin() const {
+              return std::begin(nodes_);
+            }
+
+            const_iterator end() const {
+              return std::end(nodes_);
+            }
+
+            const_iterator cbegin() const {
+              return std::begin(nodes_);
+            }
+
+            const_iterator cend() const {
+              return std::end(nodes_);
+            }
+
+         private:
+            std::vector<NodeID> nodes_;
+          //}}}
+        };
+        //}}}
+
         // Accessors {{{
         /*
         struct hasher {
@@ -175,19 +272,19 @@ class SEG {
           return kind_;
         }
 
-        std::vector<NodeID> &preds() {
+        EdgeSet &preds() {
           return preds_;
         }
 
-        const std::vector<NodeID> &preds() const {
+        const EdgeSet &preds() const {
           return preds_;
         }
 
-        std::vector<NodeID> &succs() {
+        EdgeSet &succs() {
           return succs_;
         }
 
-        const std::vector<NodeID> &succs() const {
+        const EdgeSet &succs() const {
           return succs_;
         }
 
@@ -203,80 +300,25 @@ class SEG {
         //}}}
 
         // Modifiers {{{
-        bool listAddUnique(SEG &graph, std::vector<NodeID> &list, NodeID id) {
-          // Actually don't add if a succ exists...
-          auto rep_id = graph.getRep(id);
-          for (auto succ_id : list) {
-            if (rep_id == graph.getRep(succ_id)) {
-              return false;
-            }
-          }
-
-          list.push_back(id);
-          return true;
+        void unique(SEG &seg) {
+          preds().unique(seg);
+          succs().unique(seg);
         }
 
-        bool addSuccSafe(SEG &, NodeID id) {
-          succs().push_back(id);
-          return true;
+        void addSucc(SEG &, NodeID id) {
+          succs().insert(id);
         }
 
-        bool addSucc(SEG &graph, NodeID id) {
-          return listAddUnique(graph, succs(), id);
+        void addPred(SEG &, NodeID id) {
+          preds().insert(id);
         }
 
-        void uniqueList(SEG &graph, std::vector<NodeID> &list) {
-          // Convert to all reps
-          std::for_each(std::begin(list), std::end(list),
-              [&graph] (NodeID &id) {
-            auto rep = graph.getRep(id);
-            assert(&graph.getNode(rep) != nullptr);
-            id = rep;
-          });
-
-          // Make reps unique
-          std::sort(std::begin(list), std::end(list));
-          auto it = std::unique(std::begin(list), std::end(list));
-          list.erase(it, std::end(list));
+        void removeSucc(SEG &, NodeID id) {
+          succs().erase(id);
         }
 
-        void removeDuplicatePreds(SEG &graph) {
-          // First update all edges to be reps:
-          uniqueList(graph, preds());
-        }
-
-        void removeDuplicateSuccs(SEG &graph) {
-          uniqueList(graph, succs());
-        }
-
-        bool addPred(SEG &graph, NodeID id) {
-          return listAddUnique(graph, preds(), id);
-        }
-
-        bool addPredSafe(SEG &, NodeID id) {
-          succs().push_back(id);
-          return true;
-        }
-
-
-        void removeFromList(SEG &graph, NodeID id, std::vector<NodeID> &list) {
-          auto rep_id = graph.getRep(id);
-          list.erase(std::remove_if(std::begin(list), std::end(list),
-                [&rep_id, &graph] (NodeID list_id) {
-              return (graph.getRep(list_id) == rep_id);
-            }), std::end(list));
-          if_debug_enabled(
-              for (auto elm : list) {
-                assert(graph.getRep(elm) != rep_id);
-              });
-        }
-
-        void removeSucc(SEG &graph, NodeID id) {
-          removeFromList(graph, id, succs());
-        }
-
-        void removePred(SEG &graph, NodeID id) {
-          removeFromList(graph, id, preds());
+        void removePred(SEG &, NodeID id) {
+          preds().erase(id);
         }
         //}}}
 
@@ -315,57 +357,18 @@ class SEG {
         //}}}
 
         // Actual unite functionality {{{
-        virtual void unite(SEG &graph, Node &n) {
+        virtual void unite(SEG &, Node &n) {
           assert(operator!=(n));
           // Retarget all edges pointing towards n
-          auto &preds = n.preds();
-          std::for_each(std::begin(preds), std::end(preds),
-              [this, &graph, &n](NodeID pred_id) {
-            pred_id = graph.getRep(pred_id);
-
-            auto pred_edge = std::make_pair(pred_id, n.id());
-            // Create a new edge which points to me
-            auto new_edge = std::make_pair(pred_id, id());
-
-            // properly handle ptr to self
-            if (pred_id == n.id()) {
-              new_edge.first = new_edge.second;
-            }
-
-            // Only retarget the edge (add it to our edge set), if the new edge
-            //   isn't a pointer to self, (unless the old edge was a
-            //   pointer to self)
-            if (pred_edge.first == pred_edge.second ||
-                  new_edge.first != new_edge.second) {
-              graph.addEdge(new_edge.first, new_edge.second);
-            }
-          });
+          preds().insert(n.preds());
 
           // And all edges from n
-          // std::set<NodeID> succs;
-          // succs.insert(std::begin(n.succs()), std::end(n.succs()));
-          auto &succs = n.succs();
-          std::for_each(std::begin(succs), std::end(succs),
-              [this, &graph, &n](NodeID succ_id) {
-            succ_id = graph.getRep(succ_id);
-            auto pred_edge = std::make_pair(n.id(), succ_id);
-            auto new_edge = std::make_pair(id(), succ_id);
-
-            if (succ_id == n.id()) {
-              new_edge.second = new_edge.first;
-            }
-
-            // If the old edge wasn't a pointer to self, and the new edge is a
-            // pointer to self, don't retarget it, just remove it
-            if (pred_edge.first == pred_edge.second ||
-                  new_edge.first != new_edge.second) {
-              graph.addEdge(new_edge.first, new_edge.second);
-            }
-          });
+          succs().insert(n.succs());
 
           // We have to clear the node's reps, so they aren't deleted,
           //   because we just merged them!
-          n.rep_ = id();
+          n.setRep(id());
+          assert(n.rep_ != NodeID::invalid());
           n.preds().clear();
           n.succs().clear();
         }
@@ -402,8 +405,10 @@ class SEG {
      protected:
         // Protected data {{{
         // We hold references to our pred and successor nodes
-        std::vector<NodeID> preds_;
-        std::vector<NodeID> succs_;
+        // std::vector<NodeID> preds_;
+        // std::vector<NodeID> succs_;
+        EdgeSet preds_;
+        EdgeSet succs_;
         //}}}
       //}}}
     };
@@ -770,16 +775,19 @@ class SEG {
             // For cycles...
             mark.insert(node.id());
 
-            auto &succs = node.succs();
-            std::for_each(std::begin(succs), std::end(succs),
-                [this, &graph, &mark, reverse, print](NodeID succ_id) {
-              visit(graph, mark, graph.getNode(succ_id), reverse);
+            auto &preds = node.preds();
+            std::for_each(std::begin(preds), std::end(preds),
+                [this, &graph, &mark, reverse, print](NodeID pred_id) {
+              auto pnode = graph.tryGetNode(pred_id);
+              if (pnode != nullptr) {
+                visit(graph, mark, *pnode, reverse);
+              }
             });
 
             if (reverse) {
-              L_->push_back(node.id());
-            } else {
               L_->push_front(node.id());
+            } else {
+              L_->push_back(node.id());
             }
           }
         }
@@ -872,15 +880,27 @@ class SEG {
     //}}}
 
     // Edge Manipulation {{{
-    // Adds edge of edge_type between two nodes
-    // NOTE: We do not support deletion of directional edges...
-    //    OR merging of nodes with directional edges..
-    bool addDirectionalEdge(NodeID src, NodeID dest) {
-      auto &src_node = getNode(src);
-      return src_node.addSuccSafe(*this, dest);
+    bool addSucc(NodeID nd_id, NodeID succ_id) {
+      // Ensure that a node exists for each edge point..
+      auto &nd = getNode(nd_id);
+
+      // Add succ/pred info for src/dest
+      nd.addSucc(*this, succ_id);
+
+      return true;
     }
 
-    bool addEdge(NodeID src, NodeID dest) {
+    bool addPred(NodeID nd_id, NodeID pred_id) {
+      // Ensure that a node exists for each edge point..
+      auto &nd = getNode(nd_id);
+
+      // Add succ/pred info for src/dest
+      nd.addPred(*this, pred_id);
+
+      return true;
+    }
+
+    bool addBidirEdge(NodeID src, NodeID dest) {
       // Ensure that a node exists for each edge point..
       auto &src_node = getNode(src);
       auto &dest_node = getNode(dest);
@@ -892,7 +912,21 @@ class SEG {
       return true;
     }
 
-    void removeEdge(NodeID src_id, NodeID dest_id) {
+    void removePred(NodeID nd_id, NodeID pred_id) {
+      auto &nd = getNode(nd_id);
+
+      // Remove the pointer from dest
+      nd.removePred(*this, pred_id);
+    }
+
+    void removeSucc(NodeID nd_id, NodeID succ_id) {
+      auto &nd = getNode(nd_id);
+
+      // Remove the pointer from dest
+      nd.removeSucc(*this, succ_id);
+    }
+
+    void removeBidirEdge(NodeID src_id, NodeID dest_id) {
       auto &src = getNode(src_id);
       auto &dest = getNode(dest_id);
 
@@ -903,32 +937,11 @@ class SEG {
       dest.removePred(*this, src_id);
     }
 
-    void retargetEdge(const std::pair<NodeID, NodeID> &orig,
-        const std::pair<NodeID, NodeID> &new_target) {
-      // Update edge src/dest
-
-      // Fix up for equivalence between multiple edges?
-      auto &src = getNode(orig.first);
-      auto &dest = getNode(orig.second);
-
-      // Actually add the edge to the new source and dest
-      src.removeSucc(*this, orig.second);
-      dest.removePred(*this, orig.first);
-
-      auto &new_src = getNode(new_target.first);
-      auto &new_dest = getNode(new_target.second);
-
-      new_src.addSucc(*this, new_target.second);
-      new_dest.addPred(*this, new_target.first);
-    }
-
-    void cleanEdges() {
-      for (auto &pnode : nodes_) {
-        if (pnode != nullptr) {
-          pnode->removeDuplicateSuccs(*this);
-          pnode->removeDuplicatePreds(*this);
-        }
-      }
+    void cleanGraph() {
+      std::for_each(begin(), end(),
+          [this] (node_iter_type &pnode) {
+        pnode->unique(*this);
+      });
     }
 
     //}}}
@@ -937,14 +950,13 @@ class SEG {
     // contructs new node of node_type and inserts it into our node list
     template <typename node_type, typename... va_args>
     void replaceNode(NodeID node_id, va_args&&... args) {
-      auto old_node = std::move(nodes_[node_id.val()]);
+      auto &old_node = nodes_[node_id.val()];
       // I don't have logic for this... yet
       assert(old_node->isRep());
 
-      /*
-      nodes_[node_id.val()] = std::make_unique<node_type>(node_id,
-          std::forward<va_args>(args)...);
-      */
+      Node::EdgeSet old_preds = std::move(old_node->preds());
+      Node::EdgeSet old_succs = std::move(old_node->succs());
+
       nodes_[node_id.val()] = std::unique_ptr<node_type>(new node_type(node_id,
           std::forward<va_args>(args)...));
 
@@ -952,14 +964,10 @@ class SEG {
 
       // Add preds/succs
       auto &new_preds = new_node.preds();
-      auto &old_preds = old_node->preds();
-      new_preds.insert(std::end(new_preds), std::begin(old_preds),
-          std::end(old_preds));
+      new_preds = std::move(old_preds);
 
       auto &new_succs = new_node.succs();
-      auto &old_succs = old_node->succs();
-      new_succs.insert(std::end(new_succs), std::begin(old_succs),
-          std::end(old_succs));
+      new_succs = std::move(old_succs);
     }
 
     template <typename node_type>
@@ -976,8 +984,10 @@ class SEG {
       return node_id;
     }
 
-    void checkNode() {
-      assert(!nodes_.at(6)->isRep());
+    void tryRemoveNode(NodeID id) {
+      if (tryGetNode(id) != nullptr) {
+        removeNode(id);
+      }
     }
 
     void removeNode(NodeID id) {
@@ -990,8 +1000,10 @@ class SEG {
       preds.insert(std::begin(node.preds()), std::end(node.preds()));
       std::for_each(std::begin(preds), std::end(preds),
           [this, &id](NodeID pred_id) {
-        auto &pred_node = getNode(pred_id);
-        pred_node.removeSucc(*this, id);
+        auto pred_node = tryGetNode(pred_id);
+        if (pred_node != nullptr) {
+          pred_node->removeSucc(*this, id);
+        }
       });
 
       // Remove all edges from this node
@@ -1000,8 +1012,10 @@ class SEG {
       std::for_each(std::begin(succs), std::end(succs),
           [this, &id](NodeID succ_id) {
         // Don't do pointer to self... that was already done
-        auto &succ_node = getNode(succ_id);
-        succ_node.removePred(*this, id);
+        auto succ_node = tryGetNode(succ_id);
+        if (succ_node != nullptr) {
+          succ_node->removePred(*this, id);
+        }
       });
 
 
@@ -1027,6 +1041,10 @@ class SEG {
         return NodeID::invalid();
       }
 
+      if (nd->rep() == NodeID::invalid()) {
+        return NodeID::invalid();
+      }
+
       if (!nd->isRep()) {
         ret = getRep(nd->rep());
       }
@@ -1038,6 +1056,10 @@ class SEG {
       auto ret = id;
       auto &nd = nodes_.at(id.val());
       if (nd == nullptr) {
+        return NodeID::invalid();
+      }
+
+      if (nd->rep() == NodeID::invalid()) {
         return NodeID::invalid();
       }
 
@@ -1220,17 +1242,22 @@ class SEG {
 
       auto &node = getNode(id);
       assert(node.isRep());
-      for (auto succ_id : node.succs()) {
+      for (auto pred_id : node.preds()) {
         // Update to rep...
-        succ_id = getRep(succ_id);
-        assert(succ_id != NodeID::invalid());
-        auto &succ_data = scc_data.at(succ_id.val());
+        pred_id = getRep(pred_id);
 
-        if (succ_data.index() == SCCData::invalidIndex) {
-          sccStrongconnect(scc_data, succ_id, index, st, ret);
-          data.setLowlink(std::min(data.lowlink(), succ_data.lowlink()));
-        } else if (succ_data.onStack()) {
-          data.setLowlink(std::min(data.lowlink(), succ_data.index()));
+        // We have a node which has been merged/removed, ignore it
+        if (pred_id == NodeID::invalid()) {
+          continue;
+        }
+
+        auto &pred_data = scc_data.at(pred_id.val());
+
+        if (pred_data.index() == SCCData::invalidIndex) {
+          sccStrongconnect(scc_data, pred_id, index, st, ret);
+          data.setLowlink(std::min(data.lowlink(), pred_data.lowlink()));
+        } else if (pred_data.onStack()) {
+          data.setLowlink(std::min(data.lowlink(), pred_data.index()));
         }
       }
 
@@ -1250,6 +1277,7 @@ class SEG {
           scc_data.at(grp.id().val()).setOnStack(false);
 
           // Unite all of the SCCs with the one we just made
+          // Uhh, may have to think about this...
           rep.unite(ret, grp);
         }
       }
@@ -1351,21 +1379,17 @@ SEG SEG::clone() const {
     auto src_id = pnode->id();
     for (auto dest_id : pnode->succs()) {
       dest_id = ret.getRep(dest_id);
-      ret.addEdge(src_id, dest_id);
+      ret.addSucc(src_id, dest_id);
+    }
+
+    for (auto dest_id : pnode->preds()) {
+      dest_id = ret.getRep(dest_id);
+      ret.addPred(src_id, dest_id);
     }
   });
 
   return std::move(ret);
 }
-//}}}
-
-// Private helpers {{{
-// SCC visit {{{
-// Use Tarjan's method to calculate SCCs for this graph
-// SCC wrapper
-
-//}}}
-//}}}
 //}}}
 
 #endif  // INCLUDE_SEG_H_

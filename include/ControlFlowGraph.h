@@ -320,11 +320,11 @@ class CFG {
 
     // Setters {{{
     void cleanup() {
-      CFG_.cleanEdges();
+      CFG_.cleanGraph();
     }
 
-    void addEdge(CFGid node_id1, CFGid node_id2) {
-      CFG_.addEdge(node_id1, node_id2);
+    void addPred(CFGid node_id, CFGid pred_id) {
+      CFG_.addPred(node_id, pred_id);
     }
 
     void addCallsite(CFGid call_id, ConstraintGraph::ObjID fcn_id, CFGid ret_id) {

@@ -357,6 +357,15 @@ class TopLevelPtsto {
     typedef std::map<ObjID, std::vector<PtstoSet>>::const_iterator
       const_iterator;
 
+    iterator find(ObjID id) {
+      return data_.find(id);
+    }
+
+    const_iterator find(ObjID id) const {
+      return data_.find(id);
+    }
+
+
     iterator begin() {
       return std::begin(data_);
     }
@@ -434,38 +443,32 @@ class PtstoGraph {
       return data_.at(id);
     }
 
+    const PtstoSet &at(ObjID id) const {
+      return data_.at(id);
+    }
+
     bool operator|=(PtstoGraph &rhs) {
       // Oh goody...
       bool ret = false;
-      std::for_each(std::begin(rhs.data_), std::end(rhs.data_),
-          [this, &ret]
-          (std::pair<const ObjID, PtstoSet> &pr) {
-        auto &rhs_ptsset = pr.second;
-        auto &lhs_ptsset = data_.at(pr.first);
+      for (auto obj_id : rhs.change_) {
+        auto &rhs_ptsset = rhs.at(obj_id);
+        auto &lhs_ptsset = at(obj_id);
 
-        ret |= (lhs_ptsset |= rhs_ptsset);
-      });
+        bool loop_ch = (lhs_ptsset |= rhs_ptsset);
+        if (loop_ch) {
+          change_.insert(obj_id);
+        }
+      }
 
       return ret;
     }
 
     bool assign(ObjID elm, const PtstoSet &ptsset) {
-      return data_.at(elm).assign(ptsset);
-    }
+      bool ret = data_.at(elm).assign(ptsset);
 
-    bool orPart(const PtstoSet &rhs,
-        std::map<ObjID, __PartID> &part_map, __PartID part_id) {
-      bool ret = false;
-      std::for_each(std::begin(data_), std::end(data_),
-          [this, &ret, &rhs, &part_id, &part_map]
-          (std::pair<const ObjID, PtstoSet> &pr) {
-        auto obj_id = pr.first;
-
-        if (part_id == part_map.at(obj_id)) {
-          auto &lhs_ptsset = pr.second;
-          ret |= (lhs_ptsset |= rhs);
-        }
-      });
+      if (ret) {
+        change_.insert(elm);
+      }
 
       return ret;
     }
@@ -476,6 +479,10 @@ class PtstoGraph {
       auto &lhs_ptsset = data_.at(elm);
       ret |= (lhs_ptsset |= rhs);
 
+      if (ret) {
+        change_.insert(elm);
+      }
+
       return ret;
     }
 
@@ -483,17 +490,19 @@ class PtstoGraph {
         ObjID exception) {
       bool ret = false;
 
-      std::for_each(std::begin(data_), std::end(data_),
-          [this, &ret, &rhs, &exception]
-          (std::pair<const ObjID, PtstoSet> &pr) {
-        auto obj_id = pr.first;
+      for (ObjID obj_id : rhs.change_) {
         if (obj_id != exception) {
-          auto &lhs_ptsset = pr.second;
-          auto &rhs_ptsset = rhs.data_.at(obj_id);
+          auto &lhs_ptsset = at(obj_id);
+          auto &rhs_ptsset = rhs.at(obj_id);
 
-          ret |= (lhs_ptsset |= rhs_ptsset);
+          bool loop_ch = (lhs_ptsset |= rhs_ptsset);
+
+          if (loop_ch) {
+            ret = true;
+            change_.insert(obj_id);
+          }
         }
-      });
+      }
 
       return ret;
     }
@@ -501,19 +510,32 @@ class PtstoGraph {
     bool orPart(PtstoGraph &rhs,
         std::map<ObjID, __PartID> &part_map, __PartID part_id) {
       bool ret = false;
-      std::for_each(std::begin(data_), std::end(data_),
-          [this, &ret, &rhs, &part_id, &part_map]
-          (std::pair<const ObjID, PtstoSet> &pr) {
-        auto obj_id = pr.first;
-        if (part_id == part_map.at(obj_id)) {
-          auto &lhs_ptsset = pr.second;
-          auto &rhs_ptsset = rhs.data_.at(obj_id);
 
-          ret |= (lhs_ptsset |= rhs_ptsset);
+      for (ObjID obj_id : rhs.change_) {
+        if (part_map.at(obj_id) != part_id) {
+          continue;
         }
-      });
+
+        auto &rhs_ptsset = rhs.at(obj_id);
+        auto &lhs_ptsset = at(obj_id);
+
+        bool loop_ch = (lhs_ptsset |= rhs_ptsset);
+        if (loop_ch) {
+          ret = true;
+          change_.insert(obj_id);
+        }
+      }
 
       return ret;
+    }
+
+    bool hasChanged() {
+      change_.unique();
+      return !change_.empty();
+    }
+
+    void resetChanged() {
+      change_.clear();
     }
 
     typedef std::map<ObjID, PtstoSet>::iterator iterator;
@@ -562,6 +584,67 @@ class PtstoGraph {
     }
 
  private:
+    class ChangeSet {
+      //{{{
+     public:
+        ChangeSet() = default;
+
+        void insert(ObjID id) {
+          change_.push_back(id);
+        }
+
+        void unique() {
+          std::sort(std::begin(change_), std::end(change_));
+          auto it = std::unique(std::begin(change_), std::end(change_));
+          change_.erase(it, std::end(change_));
+        }
+
+        bool empty() const {
+          return change_.empty();
+        }
+
+        bool has(ObjID id) {
+          return std::binary_search(std::begin(change_), std::end(change_),
+              id);
+        }
+
+        void clear() {
+          change_.clear();
+        }
+
+        typedef std::vector<ObjID>::iterator iterator;
+        typedef std::vector<ObjID>::const_iterator const_iterator;
+
+        const_iterator begin() const {
+          return std::begin(change_);
+        }
+
+        const_iterator end() const {
+          return std::end(change_);
+        }
+
+        const_iterator cbegin() const {
+          return std::begin(change_);
+        }
+
+        const_iterator cend() const {
+          return std::end(change_);
+        }
+
+        iterator begin() {
+          return std::begin(change_);
+        }
+
+        iterator end() {
+          return std::end(change_);
+        }
+
+     private:
+        std::vector<ObjID> change_;
+      //}}}
+    };
+
+    ChangeSet change_;
     std::map<ObjID, PtstoSet> data_;
   //}}}
 };

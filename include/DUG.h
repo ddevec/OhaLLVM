@@ -366,7 +366,7 @@ class DUG {
                   node.id() << "\n");
               */
               // O(log(n))
-              DUG_.addDirectionalEdge(dest_id, node.id());
+              DUG_.addSucc(dest_id, node.id());
             }
           });
 
@@ -385,7 +385,7 @@ class DUG {
               // Don't add an edge to yourself!
               if (pr.second != node.id()) {
                 // O(log(n))
-                DUG_.addDirectionalEdge(pr.second, node.id());
+                DUG_.addSucc(pr.second, node.id());
               }
             });
           }
@@ -413,7 +413,7 @@ class DUG {
     void addEdge(DUGid src, DUGid dest, PartID part) {
       // Okay, add a named edge from src to dest
       if (part == PartID::invalid()) {
-        DUG_.addEdge(src, dest);
+        DUG_.addSucc(src, dest);
       } else {
         auto &pn = DUG_.getNode<PartNode>(src);
 

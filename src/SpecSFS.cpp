@@ -4,7 +4,7 @@
 
 
 // Enable debugging prints for this file
-// #define SPECSFS_DEBUG
+#define SPECSFS_DEBUG
 // #define SPECSFS_LOGDEBUG
 
 #include "include/SpecSFS.h"
@@ -219,6 +219,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   CFG::ControlFlowGraph ssa;
   {
     PerfTimerPrinter ssa_timer(llvm::dbgs(), "computeSSA");
+    cfg.getSEG().cleanGraph();
     ssa = std::move(computeSSA(cfg.getSEG()));
   }
 
@@ -376,16 +377,24 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
 
 llvm::AliasAnalysis::AliasResult SpecSFS::alias(const Location &L1,
                                             const Location &L2) {
-  llvm::dbgs() << "have l1: " << *L1.Ptr << "!\n";
-  llvm::dbgs() << "have l2: " << *L2.Ptr << "!\n";
-  auto &pts1 = pts_top_.at(omap_.getValue(L1.Ptr));
-  auto &pts2 = pts_top_.at(omap_.getValue(L2.Ptr));
+  auto pts1_it = pts_top_.find(omap_.getValue(L1.Ptr));
+  auto pts2_it = pts_top_.find(omap_.getValue(L2.Ptr));
 
+  if (pts1_it == std::end(pts_top_)) {
+    return AliasAnalysis::alias(L1, L2);
+  }
+
+  if (pts2_it == std::end(pts_top_)) {
+    return AliasAnalysis::alias(L1, L2);
+  }
+
+  auto &pts1 = pts1_it->second;
+  auto &pts2 = pts2_it->second;
 
   // Check to see if the two pointers are known to not alias.  They don't alias
   // if their points-to sets do not intersect.
-  if (!pts1.insersectsIgnoring(pts2, ObjectMap::NullObjectValue)) {
-    llvm::dbgs() << "  no alias!\n";
+  if (!pts1.front().insersectsIgnoring(pts2.front(),
+        ObjectMap::NullObjectValue)) {
     return NoAlias;
   }
 
@@ -418,6 +427,7 @@ void SpecSFS::deleteValue(llvm::Value *V) {
   // FIXME: Should do this
   // Really, I'm just going to ignore it...
   auto v_id = omap_.getValue(V);
+  llvm::dbgs() << "Deleting value: " << v_id << "\n";
   pts_top_.remove(v_id);
   getAnalysis<AliasAnalysis>().deleteValue(V);
 }

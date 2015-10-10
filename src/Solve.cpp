@@ -2,7 +2,7 @@
  * Copyright (C) 2015 David Devecsery
  */
 
-// #define SPECSFS_DEBUG
+#define SPECSFS_DEBUG
 // #define SPECSFS_LOGDEBUG
 
 #include <algorithm>
@@ -178,30 +178,29 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   // Okay... if our in-set has changed since last time we were visited (I assume
   //    it has...)
   // We need to update the ptsto of all of our part_successors
-  // FIXME: Only do this for changed info?
+
   dout("  Load dest is: " << dest() << "\n");
   dout("  Load src is: " << src() << "\n");
-  std::for_each(std::begin(part_succs_), std::end(part_succs_),
-      [this, &dug, &work]
-      (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
-    auto part_id = part_pr.first;
-    auto dug_id = part_pr.second;
+  // If our input set has changed, we alert our succs
+  if (in().hasChanged()) {
+    std::for_each(std::begin(part_succs_), std::end(part_succs_),
+        [this, &dug, &work]
+        (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
+      auto part_id = part_pr.first;
+      auto dug_id = part_pr.second;
 
-    auto &nd = dug.getNode(dug_id);
-    /*
-    dout("    succ is: " << ValPrint(pr.second) << "\n");
-    dout("    part_to_obj contains: " << "\n");
-    std::for_each(std::begin(part_to_obj), std::end(part_to_obj),
-      [](std::pair<DUG::DUGid, DUG::ObjID> &pr) {
-      dout("      " << ValPrint(pr.second) << "\n");
+      auto &nd = dug.getNode(dug_id);
+
+      bool ch = nd.in().orPart(in_, dug.objToPartMap(), part_id);
+
+      if (ch) {
+        work.push(&nd);
+      }
     });
-    */
-    bool ch = nd.in().orPart(in_, dug.objToPartMap(), part_id);
 
-    if (ch) {
-      work.push(&nd);
-    }
-  });
+    // Clear our changed info
+    in().resetChanged();
+  }
 
   if (changed) {
     std::for_each(succ_begin(), succ_end(),
@@ -278,7 +277,7 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   logout("O " << out_ << "\n");
 
   // If something changed, update all successors
-  if (change) {
+  if (out_.hasChanged()) {
     dout("  Have change on node with src: " <<
       src() << ", dest: " <<
       dest() << "\n");
@@ -291,16 +290,17 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
       auto dug_id = part_pr.second;
       auto &nd = dug.getNode(dug_id);
 
-      dout("  Checking node: " << dug_id << " or: " <<
-          nd.id() << "\n");
+      dout("  part_id is: " << part_id << "\n");
+
+      dout("  Checking node: " << dug_id << "\n");
 
 
-      // dout("  before in for nd is: " << nd.in() << "\n");
+      dout("  before in for nd is: " << nd.in() << "\n");
 
       // Update the input set of the successor node
       bool c = nd.in().orPart(out_, dug.objToPartMap(), part_id);
 
-      // dout("  after in for nd is: " << nd.in() << "\n");
+      dout("  after in for nd is: " << nd.in() << "\n");
 
       if (c) {
         dout("    Pushing nd to work: " << nd.id() << "\n");
@@ -308,6 +308,8 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
         work.push(&nd);
       }
     });
+
+    out_.resetChanged();
   }
 }
 
@@ -323,21 +325,25 @@ void DUG::PhiNode::process(DUG &dug, TopLevelPtsto &, Worklist &work) {
 
   logout("r " << rep() << "\n");
   logout("i " << in() << "\n");
-  std::for_each(std::begin(part_succs_), std::end(part_succs_),
-      [this, &work, &dug]
-      (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
-    auto dug_id = part_pr.second;
-    bool change = false;
+  if (in().hasChanged()) {
+    std::for_each(std::begin(part_succs_), std::end(part_succs_),
+        [this, &work, &dug]
+        (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
+      auto dug_id = part_pr.second;
+      bool change = false;
 
-    auto &nd = dug.getNode(dug_id);
+      auto &nd = dug.getNode(dug_id);
 
-    // FIXME?? Does this need to be a part_or?
-    change = (nd.in() |= in());
-    if (change) {
-      dout("  Pushing nd to work: " << nd.id() << "\n");
-      work.push(&nd);
-    }
-  });
+      // FIXME?? Does this need to be a part_or?
+      change = (nd.in() |= in());
+      if (change) {
+        dout("  Pushing nd to work: " << nd.id() << "\n");
+        work.push(&nd);
+      }
+    });
+
+    in().resetChanged();
+  }
 }
 
 void DUG::GlobalInitNode::process(DUG &dug, TopLevelPtsto &pts_top,
@@ -375,27 +381,30 @@ void DUG::GlobalInitNode::process(DUG &dug, TopLevelPtsto &pts_top,
 
     // If we updated the set, wake all of our successors
     // For each successor partition
-    std::for_each(std::begin(part_succs_), std::end(part_succs_),
-        [this, &work, &dug, &dest_pts]
-        (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
-      auto part_id = part_pr.first;
-      auto dug_id = part_pr.second;
-      auto &nd = dug.getNode(dug_id);
-      bool c = false;
+    if (in().hasChanged()) {
+      std::for_each(std::begin(part_succs_), std::end(part_succs_),
+          [this, &work, &dug, &dest_pts]
+          (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
+        auto part_id = part_pr.first;
+        auto dug_id = part_pr.second;
+        auto &nd = dug.getNode(dug_id);
+        bool c = false;
 
-      dout("nd.in is: " << nd.in() << "\n");
+        dout("nd.in is: " << nd.in() << "\n");
 
-      // This is a strong update, right?  We should be able to just set it...
-      // c = nd.in().orPart(dest_pts, dug.objToPartMap(), part_id);
-      c = nd.in().orPart(in(), dug.objToPartMap(), part_id);
+        // This is a strong update, right?  We should be able to just set it...
+        c = nd.in().orPart(in(), dug.objToPartMap(), part_id);
 
-      dout("nd.in is now: " << nd.in() << "\n");
+        dout("nd.in is now: " << nd.in() << "\n");
 
-      if (c) {
-        dout("  Pushing part nd to work: " << nd.id() << "\n");
-        work.push(&nd);
-      }
-    });
+        if (c) {
+          dout("  Pushing part nd to work: " << nd.id() << "\n");
+          work.push(&nd);
+        }
+      });
+
+      in().resetChanged();
+    }
   }
 
   if (change) {

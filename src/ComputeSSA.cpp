@@ -19,7 +19,7 @@
 // Ramalingams {{{
 // Transforms {{{
 // Combine all SCCs in Xp in G
-void T4(CFG::ControlFlowGraph &G, const CFG::ControlFlowGraph &Xp) {
+static void T4(CFG::ControlFlowGraph &G, const CFG::ControlFlowGraph &Xp) {
   // For each SCC in Xp combine the nodes in G
   dout("Running T4\n");
   // Do this by iterating G
@@ -38,18 +38,21 @@ void T4(CFG::ControlFlowGraph &G, const CFG::ControlFlowGraph &Xp) {
       if (xp_rep.id() != nd.id()) {
         // Get the G node that should be rep, and unite the two
         auto &g_rep = G.getNode(xp_rep.id());
+
+        // Remove the edge from rep to nd, as we're about to unite them
+        G.removePred(nd.id(), xp_rep.id());
+
         g_rep.unite(G, nd);
       }
     }
   });
 
-  G.cleanEdges();
   dout("Finished T4\n");
 }
 
 // Now, for each P-node in G1 (output from T4) with precisely 1 predecessor,
 //   we combine that node with its predecessor
-void T2(CFG::ControlFlowGraph &G, CFG::ControlFlowGraph &Xp) {
+static void T2(CFG::ControlFlowGraph &G, CFG::ControlFlowGraph &Xp) {
   // Visit Xp in topological order
   dout("Running T2\n");
   std::for_each(Xp.topo_begin(), Xp.topo_end(),
@@ -58,18 +61,21 @@ void T2(CFG::ControlFlowGraph &G, CFG::ControlFlowGraph &Xp) {
     auto &xp_node = Xp.getNode(xp_id);
     auto &w_node = G.getNode<CFG::Node>(xp_node.id());
     // llvm::dbgs() << "preds().size() is: " << w_node.preds().size() << "\n";
+    // NOTE: because we cleaned the edges, we can rely on w_node.preds().size()
+    //   since we've removed duplicates from our edge set
     if (w_node.preds().size() == 1) {
       auto &pred_id = *std::begin(w_node.preds());
       auto &pred_node = G.getNode<CFG::Node>(pred_id);
 
       // We don't unite if we're our own predecessor
       if (w_node != pred_node) {
+        // Remove the edge from pred to w before we unite
+        G.removePred(pred_node.id(), w_node.id());
         pred_node.unite(G, w_node);
       }
     }
   });
 
-  G.cleanEdges();
   dout("Finished T2\n");
 }
 
@@ -88,7 +94,7 @@ void T7(CFG::ControlFlowGraph &G) {
 
           std::for_each(std::begin(preds), std::end(preds),
               [&G, &node](CFG::NodeID pred_id) {
-            G.removeEdge(pred_id, node.id());
+            G.removePred(node.id(), pred_id);
           });
         }
       }
@@ -100,7 +106,7 @@ void T7(CFG::ControlFlowGraph &G) {
 // don't effect any r-nodes (nodes that we do care about)
 // To do this we do a reverse topological visit of the graph from each R node,
 // and mark all visited nodes as needed.  We then remove any unmarked nodes.
-void T6(CFG::ControlFlowGraph &G) {
+static void T6(CFG::ControlFlowGraph &G) {
   std::set<CFG::NodeID> visited;
   // For each R node
   dout("Running T6\n");
@@ -110,12 +116,6 @@ void T6(CFG::ControlFlowGraph &G) {
     // Only deal with marked non-rep nodes
     // Mark the reverse topolocial sort of each r-node
     // Note, we don't need to visit visited r nodes
-    /*
-    llvm::dbgs() << "Checking node " << node.id() << ": ";
-    extern ObjectMap &g_omap;
-    node.print_label(llvm::dbgs(), g_omap);
-    llvm::dbgs() << "\n";
-    */
     if (node.r() &&
         visited.find(node.id()) == std::end(visited)) {
       // Do a topological search in reverse
@@ -127,34 +127,32 @@ void T6(CFG::ControlFlowGraph &G) {
           G.topo_rend(node.id()),
           [&G, &visited](CFG::NodeID visit_id) {
         visited.insert(visit_id);
-        // Add this node to visited...
-        // llvm::dbgs() << "  Visiting node: " << visit_id << "\n";
       });
     }
   });
 
   // Figure out which nodes are unused
-  std::vector<CFG::NodeID> remove_list;
+  std::set<CFG::NodeID> remove_set;
   std::for_each(std::begin(G), std::end(G),
-      [&G, &visited, &remove_list]
+      [&G, &visited, &remove_set]
       (CFG::ControlFlowGraph::node_iter_type &pnode) {
     CFG::NodeID id = pnode->id();
     if (visited.find(id) == std::end(visited)) {
-      remove_list.push_back(id);
+      remove_set.insert(id);
     }
   });
 
   // Remove any nodes not marked as needed
-  std::for_each(std::begin(remove_list), std::end(remove_list),
+  std::for_each(std::begin(remove_set), std::end(remove_set),
       [&G](CFG::NodeID rm_id) {
     // llvm::dbgs() << "Removing node: " << rm_id << "\n";
-    G.removeNode(rm_id);
+    G.tryRemoveNode(rm_id);
   });
   dout("Finished T6\n");
 }
 
 // merge all up-nodes with exactly one successor with their successor
-void T5(CFG::ControlFlowGraph &G) {
+static void T5(CFG::ControlFlowGraph &G) {
   dout("Running T5\n");
 
   // Get a topological ordering of all up-nodes
@@ -186,10 +184,6 @@ void T5(CFG::ControlFlowGraph &G) {
     // llvm::dbgs() << "Removing node: " << id << "\n";
     Gup.removeNode(id);
   });
-
-
-  // Need to clean edges after removing... its ugly
-  Gup.cleanEdges();
 
   // Now, visit each up-node in G in a topological order with repsect to the
   //     up-nodes -- We use Gup for this
@@ -227,11 +221,12 @@ void T5(CFG::ControlFlowGraph &G) {
 
     // we don't merge with ourself
     if (unite_node != succ_node) {
+      // Remove the edge before we unite
+      G.removeBidirEdge(succ_node.id(), unite_node.id());
       succ_node.unite(G, unite_node);
     }
   });
 
-  G.cleanEdges();
   dout("Finished T5\n");
 }
 //}}}
@@ -242,7 +237,6 @@ void Ramalingam(CFG::ControlFlowGraph &G) {
   if_debug(G.printDotFile("G.dot", *g_omap));
 
   dout("Creating Gp\n");
-  G.cleanEdges();
   CFG::ControlFlowGraph Gp = G.clone<CFG::Node>();
 
   if_debug(Gp.printDotFile("Gp_orig.dot", *g_omap));
@@ -259,7 +253,10 @@ void Ramalingam(CFG::ControlFlowGraph &G) {
     }
   });
 
-  Gp.cleanEdges();
+  // Make the remove list unique
+  std::sort(std::begin(remove_list), std::end(remove_list));
+  auto it = std::unique(std::begin(remove_list), std::end(remove_list));
+  remove_list.erase(it, std::end(remove_list));
 
   dout("  removing remove list\n");
   // Remove all non-preserving nodes from Gp
@@ -275,9 +272,7 @@ void Ramalingam(CFG::ControlFlowGraph &G) {
   // We must clean edges before creating the SCC...
   dout("  Creating SCC\n");
   Gp.createSCC();
-  Gp.cleanEdges();
   dout("Gp Done\n");
-  G.cleanEdges();
 
   if_debug(Gp.printDotFile("Xp.dot", *g_omap));
 
@@ -286,6 +281,9 @@ void Ramalingam(CFG::ControlFlowGraph &G) {
   T4(G, Gp);
 
   if_debug(G.printDotFile("G4.dot", *g_omap));
+
+  // Similar to sfs's rm_undef -- but no removal of r nodes
+  G.cleanGraph();
 
   // T2 -- If a node is a p-node and has precisely one predecessor, it may be
   // merged with that predecessor
@@ -299,13 +297,16 @@ void Ramalingam(CFG::ControlFlowGraph &G) {
   // r-nodes).  The set of nodes which the dataflow solution is not required is
   // a u-node, and preserving u-nodes are up-nodes
 
+  // NOTE: We actually don't do T7, that is accounted for when we identify
+  // objects (the alloc nodes are C nodes, which have no incoming edges)
+
   // For T7 we will add yet an additional class of nodes, the c-node.  If
   // a node is a m (modifying) node, but the modification function is a
   // constant, it is refered to as a c-node.
 
   // T7 -- If the c-node transformation is to delete the incoming edges, then we
   // delete the edges from the graph.
-  T7(G);
+  // T7(G);
 
   if_debug(G.printDotFile("G7.dot", *g_omap));
 
@@ -316,6 +317,17 @@ void Ramalingam(CFG::ControlFlowGraph &G) {
   T6(G);
 
   if_debug(G.printDotFile("G6.dot", *g_omap));
+
+  // NOTE: T5 requires succ edges, we'll add them now:
+  std::for_each(std::begin(G), std::end(G),
+      [&G] (CFG::ControlFlowGraph::node_iter_type &pnode) {
+    auto &preds = pnode->preds();
+    auto succ_id = pnode->id();
+    std::for_each(std::begin(preds), std::end(preds),
+        [&G, &succ_id] (CFG::CFGid pred_id) {
+      G.addSucc(pred_id, succ_id);
+    });
+  });
 
   // T5 -- merges any up-node with exactly one predecessor with its predecessor
   T5(G);

@@ -135,13 +135,13 @@ static void identifyAUXFcnCallRetInfo(CFG &cfg,
         //   instances of DCE
         if (cfg.hasFunctionStart(fcn_id)) {
           auto fcn_start_id = cfg.getFunctionStart(fcn_id);
-          cfg.addEdge(call_id, fcn_start_id);
+          cfg.addPred(fcn_start_id, call_id);
 
           // Some functions (like "error" or "abort" don't return)
           if (cfg.hasFunctionReturn(fcn_id)) {
             // Add edge from fcn ret node->ret
             auto fcn_ret_id = cfg.getFunctionReturn(fcn_id);
-            cfg.addEdge(fcn_ret_id, ret_id);
+            cfg.addPred(ret_id, fcn_ret_id);
           }
         }
       }
@@ -168,12 +168,12 @@ static void identifyAUXFcnCallRetInfo(CFG &cfg,
         cfg.addIndirFcn(pair.first, fcn_id);
 
         auto fcn_start_id = cfg.getFunctionStart(fcn_id);
-        cfg.addEdge(call_id, fcn_start_id);
+        cfg.addPred(fcn_start_id, call_id);
 
         if (cfg.hasFunctionReturn(fcn_id)) {
           // Add edge from fcn ret node->ret
           auto fcn_ret_id = cfg.getFunctionReturn(fcn_id);
-          cfg.addEdge(fcn_ret_id, ret_id);
+          cfg.addPred(ret_id, fcn_ret_id);
         }
       }
 
@@ -229,7 +229,7 @@ void addCFGStore(CFG &graph, CFG::CFGid *store_id,
     CFG::CFGid next_id = graph.nextNode();
     dout("store cfg_id: " << next_id << "\n");
 
-    graph.addEdge(*store_id, next_id);
+    graph.addPred(next_id, *store_id);
 
     // Advance the id
     *store_id = next_id;
@@ -276,7 +276,7 @@ void addCFGCallsite(CFG &cfg, ObjectMap &omap,
     llvm::CallSite CS(ci);
     if (llvm::isa<llvm::InlineAsm>(CS.getCalledValue())) {
       llvm::dbgs() << "WARNING: ignoring inline asm: " << *ci << "\n";
-      cfg.addEdge(call_id, next_id);
+      cfg.addPred(next_id, call_id);
     } else {
       dout("Adding INDIRECT call to: " << *ci << "\n");
       ConstraintGraph::ObjID obj_id = omap.getValue(ci);
@@ -447,8 +447,8 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
           cg.add(ConstraintType::Store, store_id, load_dest,
             store_gep_dest);
 
-          cfg.addEdge(*base_id, node_id);
-          cfg.addEdge(node_id, merge_id);
+          cfg.addPred(node_id, *base_id);
+          cfg.addPred(merge_id, node_id);
 
           // Create a load at this id
           dout("Adding load: " << load_dest << " and store: " <<
@@ -1359,7 +1359,7 @@ static void processBlock(const UnusedFunctions &unused_fcns,
 
   if (seen_it != std::end(seen)) {
     // Add an edge from my parent to me
-    cfg.addEdge(parent_id, seen_it->second);
+    cfg.addPred(seen_it->second, parent_id);
     return;
   }
 
@@ -1373,7 +1373,7 @@ static void processBlock(const UnusedFunctions &unused_fcns,
   seen.emplace(&BB, next_id);
   // Add an edge from our parent, if we have one
   if (parent_id.valid()) {
-    cfg.addEdge(parent_id, next_id);
+    cfg.addPred(next_id, parent_id);
   // Or if we don't have a parent denote that we should get edges from calls
   } else {
     dout("Adding CFGFunctionStart for: " << omap.getObject(BB.getParent()) <<
@@ -1383,8 +1383,8 @@ static void processBlock(const UnusedFunctions &unused_fcns,
     // If this is main, we add an edge from glbl_init to it
     if (BB.getParent()->getName() == "main") {
       // cfg.addEdge(CFG::CFGArgvBegin, CFG::ArgvEnd);
-      cfg.addEdge(CFG::CFGArgvEnd, next_id);
-      cfg.addEdge(CFG::CFGInit, next_id);
+      cfg.addPred(next_id, CFG::CFGArgvEnd);
+      cfg.addPred(next_id, CFG::CFGInit);
     }
 
     cfg.addFunctionStart(omap.getFunction(BB.getParent()), next_id);
@@ -1406,7 +1406,7 @@ static void processBlock(const UnusedFunctions &unused_fcns,
           if (block_has_call) {
             // Get a new "anon" cfg node for the ret node
             CFG::CFGid ret_id = cfg.nextNode();
-            cfg.addEdge(next_id, ret_id);
+            cfg.addPred(ret_id, next_id);
             next_id = ret_id;
           // Otherwise, we consider the entry node as the return node
           }
@@ -1777,11 +1777,11 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
 
               auto node_id = cfg.nextNode();
 
-              cfg.addEdge(CFG::CFGArgvBegin, node_id);
+              cfg.addPred(node_id, CFG::CFGArgvBegin);
 
               addCFGStore(cfg, &node_id, st_id);
 
-              cfg.addEdge(node_id, CFG::CFGArgvEnd);
+              cfg.addPred(CFG::CFGArgvEnd, node_id);
             }
           });
         }
@@ -1874,8 +1874,8 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
       CFG::CFGid aux_ret_id = pr.second;
 
       // Now add edges
-      cfg.addEdge(call_id, aux_call_id);
-      cfg.addEdge(aux_ret_id, ret_id);
+      cfg.addPred(aux_call_id, call_id);
+      cfg.addPred(ret_id, aux_ret_id);
     }
 
     bool is_ext = false;
@@ -1965,7 +1965,7 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
 
     if (is_ext) {
       // Add edge through this point due to inserted constraint?
-      cfg.addEdge(call_id, ret_id);
+      cfg.addPred(ret_id, call_id);
     }
   });
 
@@ -1989,16 +1989,16 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
       if (cfg.hasFunctionStart(fcn_id)) {
         CFG::CFGid fcn_call_id =
           cfg.getFunctionStart(fcn_id);
-        cfg.addEdge(call_id, fcn_call_id);
+        cfg.addPred(fcn_call_id, call_id);
 
         // Not all functions have returns... (noreturn functions)... yeah
         if (cfg.hasFunctionReturn(fcn_id)) {
           CFG::CFGid fcn_ret_id = cfg.getFunctionReturn(fcn_id);
 
-          cfg.addEdge(fcn_ret_id, ret_id);
+          cfg.addPred(ret_id, fcn_ret_id);
         }
       } else {
-        cfg.addEdge(call_id, ret_id);
+        cfg.addPred(ret_id, call_id);
       }
 
 
