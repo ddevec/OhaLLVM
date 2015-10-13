@@ -42,7 +42,8 @@ class DUGNode : public SEG::Node {
         node->getKind() < NodeKind::DUGNodeEnd;
     }
 
-    virtual void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) = 0;
+    virtual void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
+        const std::vector<uint32_t> &priority) = 0;
 
     virtual PtstoGraph &in() {
       static PtstoGraph bad;
@@ -74,6 +75,7 @@ class DUGNode : public SEG::Node {
     bool strong() const {
       return strong_;
     }
+
     //}}}
 
  protected:
@@ -168,7 +170,7 @@ class DUG {
           }
 
           // O(1)
-          auto &cons = llvm::cast<Constraint>(*pcons);
+          auto &cons = cast<Constraint>(*pcons);
           // Insert the node into the seg
           auto dest = cons.dest();
           auto src = cons.src();
@@ -211,7 +213,7 @@ class DUG {
               //   with an addressof operator)
               // Make a phony dest for this store:
               {
-                auto &stcons = llvm::cast<NodeConstraint>(cons);
+                auto &stcons = cast<NodeConstraint>(cons);
                 dout("  node is Store\n");
                 auto st_id = stcons.nodeId();
                 dout("  adding for store: (" << st_id << ") "
@@ -226,7 +228,7 @@ class DUG {
               break;
             case ConstraintType::Load:
               {
-                auto &ldcons = llvm::cast<NodeConstraint>(cons);
+                auto &ldcons = cast<NodeConstraint>(cons);
                 dout("  node is Load\n");
                 auto ld_id = ldcons.nodeId();
                 dout("  Actual load_id is: (" << ld_id << ") " <<
@@ -248,7 +250,7 @@ class DUG {
               break;
             case ConstraintType::GlobalInit:
               {
-                auto &glblcons = llvm::cast<NodeConstraint>(cons);
+                auto &glblcons = cast<NodeConstraint>(cons);
                 dout("  node is GlobalInit\n");
 
                 auto glbl_id = glblcons.nodeId();
@@ -270,7 +272,7 @@ class DUG {
               break;
             case ConstraintType::Copy:
               {
-                if (auto ncons = llvm::dyn_cast<NodeConstraint>(&cons)) {
+                if (auto ncons = dyn_cast<NodeConstraint>(&cons)) {
                   dout("  node is Copy\n");
                   node_id =
                     DUG_.addNode<CopyNode>(ncons->nodeId(), dest, src, offs);
@@ -315,7 +317,7 @@ class DUG {
             [this, &strongCons] (SEG::node_iter_type &upnode) {
           auto pnode = upnode.get();
 
-          if (auto pst = llvm::dyn_cast<DUG::StoreNode>(pnode)) {
+          if (auto pst = dyn_cast<DUG::StoreNode>(pnode)) {
             if (strongCons[pst->src()]) {
               pst->setStrong();
             }
@@ -335,7 +337,7 @@ class DUG {
         PerfTimerPrinter edge_discovery_timer(llvm::dbgs(), "Edge Discovery");
         std::for_each(std::begin(DUG_), std::end(DUG_),
             [this, &dest_to_node] (SEG::node_iter_type &upnode) {
-          auto &node = llvm::cast<DUGNode>(*upnode);
+          auto &node = cast<DUGNode>(*upnode);
           dest_to_node.emplace(node.dest(), node.id());
         });
       }
@@ -349,7 +351,7 @@ class DUG {
             [this, &dest_to_node] (SEG::node_iter_type &upnode) {
           auto pnode = upnode.get();
 
-          auto &node = llvm::cast<DUGNode>(*pnode);
+          auto &node = cast<DUGNode>(*pnode);
 
           // Add an incoming edge from src
           // O(log(n))
@@ -446,6 +448,10 @@ class DUG {
     // Accessors {{{
     const std::map<ObjID, int32_t> &getStructInfo() const {
       return structInfo_;
+    }
+
+    size_t getNumNodes() const {
+      return DUG_.getNumNodes();
     }
 
     const DUGNode &getNode(ObjectMap::ObjID oid) const {
@@ -594,7 +600,8 @@ class DUG {
         }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
+            const std::vector<uint32_t> &priority) override;
 
         static bool classof(const SEG::Node *node) {
           return node->getKind() == NodeKind::AllocNode;
@@ -615,7 +622,8 @@ class DUG {
         }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
+            const std::vector<uint32_t> &priority) override;
 
         static bool classof(const SEG::Node *node) {
           return node->getKind() == NodeKind::PartNode;
@@ -641,7 +649,8 @@ class DUG {
           realDest_(dest) { }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
+            const std::vector<uint32_t> &priority) override;
 
         static bool classof(const SEG::Node *node) {
           return node->getKind() == NodeKind::CopyNode;
@@ -711,7 +720,8 @@ class DUG {
         }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
+            const std::vector<uint32_t> &priority) override;
 
         static bool classof(const SEG::Node *node) {
           return node->getKind() == NodeKind::ConstPartNode;
@@ -733,7 +743,8 @@ class DUG {
             realDest_(dest) { }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
+            const std::vector<uint32_t> &priority) override;
 
         static bool classof(const SEG::Node *node) {
           return node->getKind() == NodeKind::LoadNode;
@@ -761,7 +772,8 @@ class DUG {
           realDest_(dest) { }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
+            const std::vector<uint32_t> &priority) override;
 
         static bool classof(const SEG::Node *node) {
           return node->getKind() == NodeKind::StoreNode;
@@ -799,7 +811,8 @@ class DUG {
           realDest_(dest) { }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
+            const std::vector<uint32_t> &priority) override;
 
         static bool classof(const SEG::Node *node) {
           return node->getKind() == NodeKind::GlobalInitNode;
@@ -826,7 +839,8 @@ class DUG {
           : PartNode(NodeKind::PhiNode, node_id, id, id, offset) { }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl) override;
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
+            const std::vector<uint32_t> &priority) override;
 
         static bool classof(const SEG::Node *node) {
           return node->getKind() == NodeKind::PhiNode;

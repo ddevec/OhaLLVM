@@ -6,6 +6,7 @@
 #define INCLUDE_SOLVEHELPERS_H_
 
 #include <algorithm>
+#include <limits>
 #include <map>
 #include <queue>
 #include <set>
@@ -55,27 +56,96 @@ class DUGNode;
 struct part_id { };
 typedef ID<part_id, int32_t> __PartID;
 
-// FIXME: Build a better (read - priority) work queue
+// Lowest priority dual queue work queue -- what sfs uses
 class Worklist {
   //{{{
  public:
-    DUGNode *pop() {
+    DUGNode *pop(uint32_t &prio) {
+      // Try getting our next heap
+      if (heap_.empty()) {
+        heap_.swap(nextHeap_);
+      }
+
+      if (heap_.empty()) {
+        return nullptr;
+      }
+
+      auto &entry = heap_.front();
+      // Must do this before popping the heap...
+      auto ret = entry.node();
+      prio = entry.prio();
+
+      // Only okay to pop the heap after I'm done with entry...
+      std::pop_heap(std::begin(heap_), std::end(heap_));
+      heap_.pop_back();
+
+      return ret;
+    }
+
+    void push(DUGNode *node, uint32_t prio) {
+      nextHeap_.emplace_back(node, prio);
+      std::push_heap(std::begin(nextHeap_), std::end(nextHeap_));
+    }
+
+ private:
+    class HeapEntry {
+      //{{{
+     public:
+        HeapEntry(DUGNode *node, uint32_t prio) :
+          node_(node), prio_(prio) { }
+
+        DUGNode *node() const {
+          return node_;
+        }
+
+        int32_t prio() const {
+          return prio_;
+        }
+
+        bool operator<(const HeapEntry &rhs) const {
+          // We want a min heap, so invert the < operator to >
+          if (prio() == rhs.prio()) {
+            return reinterpret_cast<intptr_t>(node()) <
+              reinterpret_cast<intptr_t>(rhs.node());
+          }
+
+          return prio() > rhs.prio();
+        }
+
+     private:
+        DUGNode *node_;
+        uint32_t prio_;
+      //}}}
+    };
+
+    std::vector<HeapEntry> heap_;
+    std::vector<HeapEntry> nextHeap_;
+  //}}}
+};
+/*
+class Worklist {
+  //{{{
+ public:
+    DUGNode *pop(uint32_t &fake_prio) {
       if (q_.empty()) {
         return nullptr;
       }
       auto ret = q_.front();
       q_.pop();
+      fake_prio = std::numeric_limits<uint32_t>::max();
       return ret;
     }
 
-    void push(DUGNode *pnd) {
+    void push(DUGNode *pnd, uint32_t) {
       q_.push(pnd);
     }
+
 
  private:
     std::queue<DUGNode *> q_;
   //}}}
 };
+*/
 
 // FIXME: BDDs
 class PtstoSet {
@@ -87,7 +157,7 @@ class PtstoSet {
     }
 
     bool assign(const PtstoSet &rhs) {
-      bool ret = (ptsto_ == rhs.ptsto_);
+      bool ret = (ptsto_ != rhs.ptsto_);
 
       ptsto_.clear();
       ptsto_ |= rhs.ptsto_;
@@ -116,9 +186,15 @@ class PtstoSet {
         auto or_offs = offs;
         // If this isn't a structure, don't treat it with an offset
         auto it = struct_set.find(ObjectMap::ObjID(val));
-        if (it == std::end(struct_set) || it->second <= or_offs) {
+        if (it == std::end(struct_set)) {
           or_offs = 0;
+        } else {
+          dout("  struct_size is: " << it->second << "\n");
+          if (it->second <= or_offs) {
+            or_offs = 0;
+          }
         }
+
         ret |= ptsto_.test_and_set(val + or_offs);
       });
 

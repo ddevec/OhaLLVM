@@ -12,10 +12,20 @@ function(list_prefix var prefix)
 
 endfunction(list_prefix)
 
-function(add_cpplint_headers TARGET_NAME)
+function(add_lint_command TARGET_NAME)
 
-  set(lint_names "")
-  list_prefix(lint_names ${PROJECT_SOURCE_DIR}/include ${ARGN})
+#  foreach(fil ${ARGN})
+#    add_custom_command(TARGET ${TARGET_NAME} 
+#      COMMAND "/home/ddevec/prefix/bin/cpplint.py" 
+#      ARGS    "--counting=detailed"
+#              "--extensions=cpp,h"
+#              "--linelength=80"
+#              "--filter=-readability/function"
+#              ${fil}
+#      DEPENDS ${fil}
+#      COMMENT "Linting ${TARGET_NAME}"
+#      VERBATIM)
+#  endforeach(fil)
 
   add_custom_command(TARGET ${TARGET_NAME} 
     PRE_LINK
@@ -27,6 +37,14 @@ function(add_cpplint_headers TARGET_NAME)
             ${lint_names}
     COMMENT "Linting ${TARGET_NAME}"
     VERBATIM)
+endfunction(add_lint_command)
+
+function(add_cpplint_headers TARGET_NAME)
+
+  set(lint_names "")
+  list_prefix(lint_names ${PROJECT_SOURCE_DIR}/include ${ARGN})
+
+  add_lint_command(${TARGET_NAME} ${lint_names})
 
 endfunction(add_cpplint_headers)
 
@@ -35,16 +53,7 @@ function(add_cpplint_target TARGET_NAME)
   set(lint_names "")
   list_prefix(lint_names ${CMAKE_CURRENT_SOURCE_DIR} ${ARGN})
 
-  add_custom_command(TARGET ${TARGET_NAME} 
-    PRE_LINK
-    COMMAND "/home/ddevec/prefix/bin/cpplint.py" 
-    ARGS    "--counting=detailed"
-            "--extensions=cpp,h"
-            "--linelength=80"
-            "--filter=-readability/function"
-            ${lint_names}
-    COMMENT "Linting ${TARGET_NAME}"
-    VERBATIM)
+  add_lint_command(${TARGET_NAME} ${lint_names})
 
 endfunction(add_cpplint_target)
 
@@ -62,7 +71,8 @@ list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
 
 #FIXME... Shouldn't do this with full release
 #set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-ggdb3 -O1")
-set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-g -O4 -DNDEBUG -DSPECSFS_NODEBUG")
+#set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-g -O4 -DNDEBUG -DSPECSFS_NODEBUG")
+set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-g -O4")
 set(CMAKE_CXX_FLAGS_RELEASE "-O4 -DNDEBUG -DSPECSFS_NODEBUG")
 #set(CMAKE_CXX_FLAGS_DEBUG "-O1 -g3")
 set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g")
@@ -149,6 +159,5 @@ add_library(prof_ptsto STATIC
 add_cpplint_target(prof_ptsto ${PROF_DYNPTSTO_SOURCES})
 
 add_subdirectory(test)
-
-#add_subdirectory(lib)
+add_subdirectory(unit_test)
 

@@ -2,8 +2,8 @@
  * Copyright (C) 2015 David Devecsery
  */
 
-#define SPECSFS_DEBUG
-// #define SPECSFS_LOGDEBUG
+// #define SPECSFS_DEBUG
+#define SPECSFS_LOGDEBUG
 
 #include <algorithm>
 #include <utility>
@@ -14,11 +14,16 @@
 #include "include/SolveHelpers.h"
 #include "include/Debug.h"
 
+int32_t dbg_dugnodeid(DUGNode *node) {
+  return node->id().val();
+}
+
 bool SpecSFS::solve(DUG &dug, ObjectMap &) {
-  Worklist work;
   // Add allocs to worklist -- The ptstoset for the alloc will be updated on
   //   solve evaluation
   std::vector<ObjectMap::ObjID> dests;
+  std::vector<uint32_t> priority;
+  Worklist work;
 
   logout("SOLVE\n");
 
@@ -26,10 +31,11 @@ bool SpecSFS::solve(DUG &dug, ObjectMap &) {
       [this, &work, &dests]
       (DUG::node_iter_type &pnd) {
     auto pnode = pnd.get();
-    DUGNode &node = llvm::cast<DUGNode>(*pnode);
+    DUGNode &node = cast<DUGNode>(*pnode);
 
     if (llvm::isa<DUG::AllocNode>(pnode)) {
-      work.push(&node);
+      // Add allocs as 0 priority entries to our heap
+      work.push(&node, 0);
     }
 
     dests.push_back(node.dest());
@@ -40,12 +46,28 @@ bool SpecSFS::solve(DUG &dug, ObjectMap &) {
   auto dest_it = std::unique(std::begin(dests), std::end(dests));
   dests.erase(dest_it, std::end(dests));
 
+  // Assign a 0 prio entry for each node
+  priority.assign(dug.getNumNodes(), 0);
   TopLevelPtsto pts_top(dests);
 
   // Solve the graph
-  while (auto pnd = work.pop()) {
+  int32_t vtime = 1;
+  uint32_t prio;
+  while (auto pnd = work.pop(prio)) {
+    // Don't process the node if we've processed it this round
+    dout("node: " << pnd->id() << ":  Comparing prio " << prio << " < " <<
+        priority[pnd->id().val()] << "\n");
+    if (prio < priority[pnd->id().val()]) {
+      continue;
+    }
+
+    dout("node: " << pnd->id() << ":  assigning priority to: " << vtime <<
+        "\n");
+    priority[pnd->id().val()] = vtime;
+    vtime++;
+
     dout("Processing node: " << pnd->id() << "\n");
-    pnd->process(dug, pts_top, work);
+    pnd->process(dug, pts_top, work, priority);
   }
 
   // Data is held in pts_top
@@ -56,7 +78,8 @@ bool SpecSFS::solve(DUG &dug, ObjectMap &) {
   return false;
 }
 
-void DUG::AllocNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
+void DUG::AllocNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
+    const std::vector<uint32_t> &priority) {
   dout("Process alloc start\n");
   // Update the top level variables for this alloc
   PtstoSet &dest_pts = pts_top.at(dest(), offset());
@@ -78,15 +101,16 @@ void DUG::AllocNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   // Add all top level variables updated to worklist
   if (change) {
     std::for_each(succ_begin(), succ_end(),
-        [&dug, &work](DUG::DUGid succ_id) {
+        [&dug, &work, &priority](DUG::DUGid succ_id) {
       auto &nd = dug.getNode(succ_id);
       dout("  Pushing nd to work: " << nd.id() << "\n");
-      work.push(&nd);
+      work.push(&nd, priority[nd.id().val()]);
     });
   }
 }
 
-void DUG::CopyNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
+void DUG::CopyNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
+    const std::vector<uint32_t> &priority) {
   dout("Process copy start\n");
 
   // Update the top level variables for this copy
@@ -116,15 +140,16 @@ void DUG::CopyNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   // Add all updated successors to worklist
   if (change) {
     std::for_each(succ_begin(), succ_end(),
-        [&dug, &work](DUG::DUGid succ_id) {
+        [&dug, &work, &priority](DUG::DUGid succ_id) {
       auto &nd = dug.getNode(succ_id);
       dout("  Pushing nd to work: " << nd.id() << "\n");
-      work.push(&nd);
+      work.push(&nd, priority[nd.id().val()]);
     });
   }
 }
 
-void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
+void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
+    const std::vector<uint32_t> &priority) {
   dout("Process load start\n");
   // add a ptsto from src to the values contained in our partition set from the
   //    top level varaible dest
@@ -184,7 +209,7 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   // If our input set has changed, we alert our succs
   if (in().hasChanged()) {
     std::for_each(std::begin(part_succs_), std::end(part_succs_),
-        [this, &dug, &work]
+        [this, &dug, &work, &priority]
         (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
       auto part_id = part_pr.first;
       auto dug_id = part_pr.second;
@@ -194,7 +219,7 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
       bool ch = nd.in().orPart(in_, dug.objToPartMap(), part_id);
 
       if (ch) {
-        work.push(&nd);
+        work.push(&nd, priority[nd.id().val()]);
       }
     });
 
@@ -204,15 +229,16 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
 
   if (changed) {
     std::for_each(succ_begin(), succ_end(),
-        [&dug, &work](DUG::DUGid succ_id) {
+        [&dug, &work, &priority](DUG::DUGid succ_id) {
       auto &nd = dug.getNode(succ_id);
       dout("  Pushing nd to work: " << nd.id() << "\n");
-      work.push(&nd);
+      work.push(&nd, priority[nd.id().val()]);
     });
   }
 }
 
-void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
+void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
+    const std::vector<uint32_t> &priority) {
   dout("Process store start\n");
   dout("Store is: " << rep() << "\n");
   // if strong && concrete
@@ -284,7 +310,7 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
     // FIXME: Only do this for changed info?
     // For each successor partition of this store
     std::for_each(std::begin(part_succs_), std::end(part_succs_),
-        [this, &work, &dug]
+        [this, &work, &dug, &priority]
         (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
       auto part_id = part_pr.first;
       auto dug_id = part_pr.second;
@@ -303,9 +329,10 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
       dout("  after in for nd is: " << nd.in() << "\n");
 
       if (c) {
-        dout("    Pushing nd to work: " << nd.id() << "\n");
+        dout("    Pushing nd to work: " << nd.id() << " (with prio: " <<
+            priority[nd.id().val()] << ")\n");
         // Propigate info?
-        work.push(&nd);
+        work.push(&nd, priority[nd.id().val()]);
       }
     });
 
@@ -313,7 +340,8 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work) {
   }
 }
 
-void DUG::PhiNode::process(DUG &dug, TopLevelPtsto &, Worklist &work) {
+void DUG::PhiNode::process(DUG &dug, TopLevelPtsto &, Worklist &work,
+    const std::vector<uint32_t> &priority) {
   dout("Process PHI start\n");
   // For all successors:
   //   succ.IN |= IN
@@ -327,7 +355,7 @@ void DUG::PhiNode::process(DUG &dug, TopLevelPtsto &, Worklist &work) {
   logout("i " << in() << "\n");
   if (in().hasChanged()) {
     std::for_each(std::begin(part_succs_), std::end(part_succs_),
-        [this, &work, &dug]
+        [this, &work, &dug, &priority]
         (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
       auto dug_id = part_pr.second;
       bool change = false;
@@ -338,7 +366,7 @@ void DUG::PhiNode::process(DUG &dug, TopLevelPtsto &, Worklist &work) {
       change = (nd.in() |= in());
       if (change) {
         dout("  Pushing nd to work: " << nd.id() << "\n");
-        work.push(&nd);
+        work.push(&nd, priority[nd.id().val()]);
       }
     });
 
@@ -347,10 +375,10 @@ void DUG::PhiNode::process(DUG &dug, TopLevelPtsto &, Worklist &work) {
 }
 
 void DUG::GlobalInitNode::process(DUG &dug, TopLevelPtsto &pts_top,
-    Worklist &work) {
+    Worklist &work, const std::vector<uint32_t> &priority) {
   dout("Process GlobalInit\n");
 
-  bool change = first_;
+  bool change = false;
   if (first_) {
     first_ = false;
     dout("Adding " << src() << " to top " << dest() << "\n");
@@ -377,13 +405,15 @@ void DUG::GlobalInitNode::process(DUG &dug, TopLevelPtsto &pts_top,
     assert(dest_pts.size() == 1);
     change |= in().assign(*std::begin(dest_pts), src_pts);
 
+    dout("new in is: " << in() << "\n");
+
     logout("I " << in() << "\n");
 
     // If we updated the set, wake all of our successors
     // For each successor partition
     if (in().hasChanged()) {
       std::for_each(std::begin(part_succs_), std::end(part_succs_),
-          [this, &work, &dug, &dest_pts]
+          [this, &work, &dug, &dest_pts, &priority]
           (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
         auto part_id = part_pr.first;
         auto dug_id = part_pr.second;
@@ -399,27 +429,27 @@ void DUG::GlobalInitNode::process(DUG &dug, TopLevelPtsto &pts_top,
 
         if (c) {
           dout("  Pushing part nd to work: " << nd.id() << "\n");
-          work.push(&nd);
+          work.push(&nd, priority[nd.id().val()]);
         }
       });
 
       in().resetChanged();
     }
-  }
 
-  if (change) {
-    std::for_each(succ_begin(), succ_end(),
-        [&dug, &work](DUG::DUGid succ_id) {
-      auto &nd = dug.getNode(succ_id);
-      dout("  Pushing non-part nd to work: " << nd.id() << "\n");
-      work.push(&nd);
-    });
+    if (change) {
+      std::for_each(succ_begin(), succ_end(),
+          [&dug, &work, &priority](DUG::DUGid succ_id) {
+        auto &nd = dug.getNode(succ_id);
+        dout("  Pushing non-part nd to work: " << nd.id() << "\n");
+        work.push(&nd, priority[nd.id().val()]);
+      });
+    }
   }
 }
 
 // Constant nodes! currently caused by the cold-path dynamic ptsto optimization
 void DUG::ConstNode::process(DUG &dug, TopLevelPtsto &pts_top,
-    Worklist &work) {
+    Worklist &work, const std::vector<uint32_t> &priority) {
   // Constant nodes only run once, as they break incoming edges
   if (!run_) {
     run_ = true;
@@ -450,17 +480,17 @@ void DUG::ConstNode::process(DUG &dug, TopLevelPtsto &pts_top,
     // NOTE: We assume we changed dest
     // Add all top level variables updated to worklist
     std::for_each(succ_begin(), succ_end(),
-        [&dug, &work](DUG::DUGid succ_id) {
+        [&dug, &work, &priority](DUG::DUGid succ_id) {
       auto &nd = dug.getNode(succ_id);
       dout("  Pushing nd to work: " << nd.id() << "\n");
-      work.push(&nd);
+      work.push(&nd, priority[nd.id().val()]);
     });
   }
 }
 
 // Constant nodes! currently caused by the cold-path dynamic ptsto optimization
 void DUG::ConstPartNode::process(DUG &dug, TopLevelPtsto &pts_top,
-    Worklist &work) {
+    Worklist &work, const std::vector<uint32_t> &priority) {
   // Constant nodes only run once, as they break incoming edges
   if (!run_) {
     run_ = true;
@@ -491,17 +521,18 @@ void DUG::ConstPartNode::process(DUG &dug, TopLevelPtsto &pts_top,
     // NOTE: We assume we changed dest
     // Add all top level variables updated to worklist
     std::for_each(succ_begin(), succ_end(),
-        [&dug, &work](DUG::DUGid succ_id) {
+        [&dug, &work, &priority]
+        (DUG::DUGid succ_id) {
       auto &nd = dug.getNode(succ_id);
       dout("  Pushing nd to work: " << nd.id() << "\n");
-      work.push(&nd);
+      work.push(&nd, priority[nd.id().val()]);
     });
   }
 
   // FIXME: Should only do this if the input set changes...
   // We also propigate partition successors
   std::for_each(std::begin(part_succs_), std::end(part_succs_),
-      [this, &dug, &work]
+      [this, &dug, &work, &priority]
       (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
     auto part_id = part_pr.first;
     auto dug_id = part_pr.second;
@@ -518,7 +549,7 @@ void DUG::ConstPartNode::process(DUG &dug, TopLevelPtsto &pts_top,
     bool ch = nd.in().orPart(in_, dug.objToPartMap(), part_id);
 
     if (ch) {
-      work.push(&nd);
+      work.push(&nd, priority[nd.id().val()]);
     }
   });
 }

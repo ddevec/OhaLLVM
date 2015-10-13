@@ -99,9 +99,9 @@ ObjectMap::ObjID ObjectMap::__const_node_helper(const llvm::Constant *C,
   if (llvm::isa<const llvm::ConstantPointerNull>(C) ||
       llvm::isa<const llvm::UndefValue>(C)) {
     return nullv;
-  } else if (auto GV = llvm::dyn_cast<llvm::GlobalValue>(C)) {
+  } else if (auto GV = dyn_cast<llvm::GlobalValue>(C)) {
     return (this->*diff)(GV);
-  } else if (auto CE = llvm::dyn_cast<llvm::ConstantExpr>(C)) {
+  } else if (auto CE = dyn_cast<llvm::ConstantExpr>(C)) {
     switch (CE->getOpcode()) {
       case llvm::Instruction::GetElementPtr:
         {

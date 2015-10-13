@@ -21,6 +21,8 @@
 #include "llvm/Support/raw_os_ostream.h"
 
 // DUG Static variable(s) {{{
+const CFG::CFGid CFG::CFGGlobalInit =
+  CFG::CFGid(static_cast<int32_t>(CFG::CFGEnum::CFGGlobalInit));
 const CFG::CFGid CFG::CFGInit =
   CFG::CFGid(static_cast<int32_t>(CFG::CFGEnum::CFGInit));
 const CFG::CFGid CFG::CFGArgvBegin =

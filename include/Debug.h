@@ -8,11 +8,79 @@
 
 #include <cstdint>
 
+#include <iostream>
+#include <fstream>
 #include <string>
 
+#ifndef SPECSFS_IS_TEST
 #include "llvm/Module.h"
-#include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/raw_os_ostream.h"
 #include "llvm/Support/Debug.h"
+#endif
+
+
+// Used to remove llvm dependencies on unit tests
+#ifdef SPECSFS_IS_TEST
+#  define if_unit_test(X) X
+#  define if_unit_test_else(X, Y) X
+#  define if_not_unit_test(X)
+#  define dbg std::cerr
+#  define dbg_type std::ostream
+#  define dbg_ostream std::ofstream
+#  define unreachable(X) abort()
+
+template<typename target_type, typename base_type>
+target_type &cast(base_type &b) {
+  return *static_cast<target_type *>(&b);
+}
+
+template<typename target_type, typename base_type>
+const target_type &cast(const base_type &b) {
+  return *static_cast<const target_type *>(&b);
+}
+
+template<typename target_type, typename base_type>
+target_type *cast(base_type *b) {
+  return static_cast<target_type *>(b);
+}
+
+template<typename target_type, typename base_type>
+const target_type *cast(const base_type *b) {
+  return static_cast<const target_type *>(b);
+}
+
+template<typename target_type, typename base_type>
+target_type &dyn_cast(base_type &b) {
+  return *static_cast<target_type *>(&b);
+}
+
+template<typename target_type, typename base_type>
+const target_type &dyn_cast(const base_type &b) {
+  return *static_cast<target_type *>(&b);
+}
+
+template<typename target_type, typename base_type>
+target_type *dyn_cast(base_type *b) {
+  return static_cast<target_type *>(b);
+}
+
+template<typename target_type, typename base_type>
+const target_type *dyn_cast(const base_type *b) {
+  return static_cast<const target_type *>(b);
+}
+
+#else
+#  define if_unit_test(X)
+#  define if_unit_test_else(X, Y) Y
+#  define if_not_unit_test(X) X
+#  define dbg llvm::dbgs()
+#  define dbg_type llvm::raw_ostream
+#  define dbg_ostream llvm::raw_os_ostream
+#  define unreachable(X) llvm_unreachable(X)
+
+#define cast llvm::cast
+#define dyn_cast llvm::dyn_cast
+#endif
 
 __attribute__((unused))
 static void print_trace(void) {
@@ -24,47 +92,13 @@ static void print_trace(void) {
   size = backtrace(array, 10);
   strings = backtrace_symbols(array, size);
 
-  llvm::dbgs() << "BACKTRACE:\n";
+  dbg << "BACKTRACE:\n";
   for (i = 0; i < size; i++) {
-    llvm::dbgs() << "\t" << strings[i] << "\n";
+    dbg << "\t" << strings[i] << "\n";
   }
 
   free(strings);
 }
-
-class null_ostream : public llvm::raw_ostream {
-  //{{{
- public:
-    ~null_ostream() {
-      flush();
-    }
-
-    // Singleton instance
-    static null_ostream &nullstream();
-
-    friend null_ostream &operator<<(null_ostream &o, int) {
-      return o;
-    }
-
-    friend null_ostream &operator<<(null_ostream &o,
-        const llvm::Value *) {
-      return o;
-    }
-
-    friend null_ostream &operator<<(null_ostream &o,
-        std::string &) {
-      return o;
-    }
-
- private:
-    static null_ostream nullstream_;
-
-    virtual void write_impl(const char *, size_t) { }
-
-    virtual uint64_t current_pos() const { return 0; }
-  //}}}
-};
-
 
 // TODOs  NOLINT
 #define DO_PRAGMA(x) _Pragma (#x)
@@ -89,7 +123,7 @@ class null_ostream : public llvm::raw_ostream {
 #  if defined(SPECSFS_DEBUG)
 #    error "SPECSFS_LOGDEBUG and SPECSFS_DEBUG should not be defined together"
 #  endif
-#  define logout(X) (llvm::dbgs() << X)
+#  define logout(X) (dbg << X)
 #else
 #  define logout(X)
 #endif
@@ -112,7 +146,7 @@ class null_ostream : public llvm::raw_ostream {
 
 // printing
 #if defined(SPECSFS_DEBUG) && !defined(SPECSFS_NODEBUG)
-#  define dout(X) (llvm::dbgs() << X)
+#  define dout(X) (dbg << X)
 #else
 #  define dout(X)
 #endif

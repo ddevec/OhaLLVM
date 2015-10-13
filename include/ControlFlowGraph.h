@@ -19,12 +19,16 @@ class CFG {
 
     // Constant CFGid values {{{
     enum class CFGEnum : int32_t {
-      CFGInit = 0,
-      CFGArgvBegin = 1,
-      CFGArgvEnd = 2,
+      CFGGlobalInit = 0,
+      CFGInit = 1,
+      CFGArgvBegin = 2,
+      CFGArgvEnd = 3,
       eLastEnumValue
     };
 
+    // Goes in the graph before CFGInit, used to store globals before we reach
+    // code execution
+    static const SEG::NodeID CFGGlobalInit;
     static const SEG::NodeID CFGInit;
     static const SEG::NodeID CFGArgvBegin;
     static const SEG::NodeID CFGArgvEnd;
@@ -43,8 +47,11 @@ class CFG {
         Node(SEG::NodeID node_id) :
           SEG::Node(NodeKind::CFGNode, node_id) { }
 
+
+#ifndef SPECSFS_IS_TEST
         Node(SEG::NodeID node_id, const llvm::BasicBlock *bb) :
           SEG::Node(NodeKind::CFGNode, node_id), bb_(bb) { }
+#endif
 
         // No Copy/move {{{
         Node(const Node &) = default;
@@ -78,14 +85,19 @@ class CFG {
         //}}}
 
         // Print support {{{
-        void print_label(llvm::raw_ostream &ofil,
+        void print_label(dbg_ostream &ofil,
             const ObjectMap &) const override {
-          if (bb_ == nullptr) {
+          // Cant have BB dependencies in my unit tests
+          if_unit_test_else(
+            // If unit test
             ofil << SEG::Node::id() << " : {";
-          } else {
-            ofil << SEG::Node::id() << "(" << bb_->getName() << ")" <<
-                " : {";
-          }
+            ,  // If not unit test
+            if (bb_ == nullptr) {
+              ofil << SEG::Node::id() << " : {";
+            } else {
+              ofil << SEG::Node::id() << "(" << bb_->getName() << ")" <<
+                  " : {";
+            });
 
           ofil << " } : m: " << m_ << " r: " << r_ << " c: " << c_;
         }
@@ -119,7 +131,7 @@ class CFG {
 
         // Unite {{{
         void unite(SEG &graph, SEG::Node &n) override {
-          auto &node = llvm::cast<Node>(n);
+          auto &node = cast<Node>(n);
 
           m_ |= node.m_;
           r_ |= node.r_;
@@ -152,12 +164,12 @@ class CFG {
 
         void debug_defs() const {
           if_debug(
-            llvm::dbgs() << "  defs.size is: " << defs_.size() << "\n";
-            llvm::dbgs() << "  defs are:";
+            dbg << "  defs.size is: " << defs_.size() << "\n";
+            dbg << "  defs are:";
             for (auto id : defs_) {
-              llvm::dbgs() << " " << id;
+              dbg << " " << id;
             }
-            llvm::dbgs() << "\n");
+            dbg << "\n");
         }
 
         bool removeUse(ObjectMap::ObjID use_id) {
@@ -170,7 +182,7 @@ class CFG {
         bool addUse(ObjectMap::ObjID use_id) {
           // Don't allow double adds... for now
           /*
-          llvm::dbgs() << "Adding use: " << use_id << " to node: " << id() <<
+          dbg << "Adding use: " << use_id << " to node: " << id() <<
             "\n";
           */
           auto ret = uses_.insert(use_id);
@@ -200,12 +212,12 @@ class CFG {
 
         void debug_uses() const {
           if_debug(
-            llvm::dbgs() << "  Uses.size is: " << uses_.size() << "\n";
-            llvm::dbgs() << "  Uses are:";
+            dbg << "  Uses.size is: " << uses_.size() << "\n";
+            dbg << "  Uses are:";
             for (auto id : uses_) {
-              llvm::dbgs() << " " << id;
+              dbg << " " << id;
             }
-            llvm::dbgs() << "\n");
+            dbg << "\n");
         }
         //}}}
 
@@ -276,7 +288,7 @@ class CFG {
 
      private:
       // Debug Variables {{{
-      const llvm::BasicBlock *bb_ = nullptr;
+      if_not_unit_test(const llvm::BasicBlock *bb_ = nullptr;)
       //}}}
 
       // Private variables {{{
@@ -327,40 +339,40 @@ class CFG {
       CFG_.addPred(node_id, pred_id);
     }
 
-    void addCallsite(CFGid call_id, ConstraintGraph::ObjID fcn_id, CFGid ret_id) {
+    void addCallsite(CFGid call_id, ObjectMap::ObjID fcn_id, CFGid ret_id) {
       cfgDirCallsites_[call_id].push_back(fcn_id);
       cfgCallSuccessors_[call_id] = ret_id;
     }
 
-    void addIndirectCall(CFGid call_id, ConstraintGraph::ObjID obj_id,
+    void addIndirectCall(CFGid call_id, ObjectMap::ObjID obj_id,
         CFGid ret_id) {
       indirectCalls_.emplace_back(obj_id, call_id);
       cfgCallSuccessors_[call_id] = ret_id;
     }
 
-    void addFunctionStart(ConstraintGraph::ObjID fcn_id, CFGid id) {
+    void addFunctionStart(ObjectMap::ObjID fcn_id, CFGid id) {
       cfgFunctionEntries_[fcn_id] = id;
     }
 
-    void addFunctionReturn(ConstraintGraph::ObjID fcn_id, CFGid id) {
+    void addFunctionReturn(ObjectMap::ObjID fcn_id, CFGid id) {
       cfgFunctionReturns_[fcn_id] = id;
     }
 
-    void addCallRetInfo(ConstraintGraph::ObjID fcn_id, CFGid call_id, CFGid ret_id) {
+    void addCallRetInfo(ObjectMap::ObjID fcn_id, CFGid call_id, CFGid ret_id) {
       cfgFcnToCallRet_[fcn_id].emplace_back(call_id, ret_id);
     }
 
-    void addIndirFcn(ConstraintGraph::ObjID call_id, ConstraintGraph::ObjID fcn_id) {
+    void addIndirFcn(ObjectMap::ObjID call_id, ObjectMap::ObjID fcn_id) {
       indirFcns_[call_id].push_back(fcn_id);
     }
 
-    void addUnusedFunction(ConstraintGraph::ObjID fcn_id,
+    void addUnusedFunction(ObjectMap::ObjID fcn_id,
         std::vector<ConstraintGraph::ConsID> ids) {
       unusedFunctions_.emplace(std::piecewise_construct,
           std::make_tuple(fcn_id), std::make_tuple(std::move(ids)));
     }
 
-    bool removeUnusedFunction(ConstraintGraph &cg, ConstraintGraph::ObjID fcn_id);
+    bool removeUnusedFunction(ConstraintGraph &cg, ObjectMap::ObjID fcn_id);
 
     void setSEG(ControlFlowGraph seg) {
       CFG_ = std::move(seg);
@@ -377,23 +389,23 @@ class CFG {
     }
 
     const std::vector<std::pair<CFGid, CFGid>> &
-    getCallRetInfo(ConstraintGraph::ObjID fcn_id) const {
+    getCallRetInfo(ObjectMap::ObjID fcn_id) const {
       return cfgFcnToCallRet_.at(fcn_id);
     }
 
-    bool hasFunctionStart(ConstraintGraph::ObjID fcn_id) const {
+    bool hasFunctionStart(ObjectMap::ObjID fcn_id) const {
       return cfgFunctionEntries_.find(fcn_id) != std::end(cfgFunctionEntries_);
     }
 
-    CFGid getFunctionStart(ConstraintGraph::ObjID fcn_id) const {
+    CFGid getFunctionStart(ObjectMap::ObjID fcn_id) const {
       return cfgFunctionEntries_.at(fcn_id);
     }
 
-    bool hasFunctionReturn(ConstraintGraph::ObjID fcn_id) const {
+    bool hasFunctionReturn(ObjectMap::ObjID fcn_id) const {
       return cfgFunctionReturns_.find(fcn_id) != std::end(cfgFunctionReturns_);
     }
 
-    CFGid getFunctionReturn(ConstraintGraph::ObjID fcn_id) const {
+    CFGid getFunctionReturn(ObjectMap::ObjID fcn_id) const {
       return cfgFunctionReturns_.at(fcn_id);
     }
 
@@ -401,12 +413,12 @@ class CFG {
       return cfgCallSuccessors_.at(call_id);
     }
 
-    bool haveIndirFcn(ConstraintGraph::ObjID call_id) const {
+    bool haveIndirFcn(ObjectMap::ObjID call_id) const {
       return indirFcns_.find(call_id) != std::end(indirFcns_);
     }
 
-    const std::vector<ConstraintGraph::ObjID>
-        &getIndirFcns(ConstraintGraph::ObjID call_id) const {
+    const std::vector<ObjectMap::ObjID>
+        &getIndirFcns(ObjectMap::ObjID call_id) const {
       return indirFcns_.at(call_id);
     }
 
@@ -471,9 +483,11 @@ class CFG {
       return CFG_.addNode<Node>();
     }
 
+#ifndef SPECSFS_IS_TEST
     CFGid nextNode(const llvm::BasicBlock *bb) {
       return CFG_.addNode<Node>(bb);
     }
+#endif
     //}}}
 
     // Iterators {{{

@@ -26,10 +26,8 @@
 
 #include "include/Debug.h"
 #include "include/util.h"
-#include "include/ObjectMap.h"
 
-#include "llvm/Function.h"
-#include "llvm/Support/raw_os_ostream.h"
+class ObjectMap;
 
 // Static functions used by SEG DOT printing {{{
 template<typename idT>
@@ -60,11 +58,11 @@ static std::string idToString(idT id) {
   return ret;
 }
 
-static void printDotHeader(llvm::raw_ostream &ofil) {
+static void printDotHeader(dbg_ostream &ofil) {
   ofil << "digraph graphname {\n";
 }
 
-static void printDotFooter(llvm::raw_ostream &ofil) {
+static void printDotFooter(dbg_ostream &ofil) {
   // We use endl here, so the file will force flush
   ofil << "}" << "\n";
 }
@@ -352,18 +350,38 @@ class SEG {
         //}}}
 
         // Dot print support {{{
-        virtual void print_label(llvm::raw_ostream &,
+        virtual void print_label(dbg_ostream &,
             const ObjectMap &) const { }
         //}}}
 
         // Actual unite functionality {{{
-        virtual void unite(SEG &, Node &n) {
+        virtual void unite(SEG &seg, Node &n) {
           assert(operator!=(n));
           // Retarget all edges pointing towards n
-          preds().insert(n.preds());
+          // preds().insert(n.preds());
+          // Make sure to handle pointers to self though...
+          auto my_rep = seg.getRep(id());
+          for (auto dest_id : n.preds()) {
+            dest_id = seg.getRep(dest_id);
+
+            // Don't add any edges from them that pointed to me
+            if (dest_id != my_rep &&
+                dest_id != NodeID::invalid()) {
+              preds().insert(dest_id);
+            }
+          }
 
           // And all edges from n
           succs().insert(n.succs());
+          for (auto dest_id : n.succs()) {
+            dest_id = seg.getRep(dest_id);
+
+            // Don't add any edges from them that pointed to me
+            if (dest_id != my_rep &&
+                dest_id != NodeID::invalid()) {
+              succs().insert(dest_id);
+            }
+          }
 
           // We have to clear the node's reps, so they aren't deleted,
           //   because we just merged them!
@@ -1080,11 +1098,11 @@ class SEG {
 
       auto &pnd = nodes_.at(rep.val());
 
-      return llvm::cast<node_type>(pnd.get());
+      return cast<node_type>(pnd.get());
     }
 
     template <typename node_type = Node>
-    node_type *tryGetNode(NodeID id) const {
+    const node_type *tryGetNode(NodeID id) const {
       auto rep = getRep(id);
       if (rep == NodeID::invalid()) {
         return nullptr;
@@ -1092,7 +1110,7 @@ class SEG {
 
       auto &pnd = nodes_.at(rep.val());
 
-      return llvm::cast<node_type>(pnd.get());
+      return cast<node_type>(pnd.get());
     }
 
     template <typename node_type = Node>
@@ -1104,7 +1122,7 @@ class SEG {
 
       assert(pnd->id() == rep);
 
-      return llvm::cast<node_type>(*pnd);
+      return cast<node_type>(*pnd);
     }
 
     template <typename node_type = Node>
@@ -1116,7 +1134,8 @@ class SEG {
 
       assert(pnd->id() == rep);
 
-      return llvm::cast<node_type>(*pnd);
+
+      return cast<node_type>(*pnd);
     }
 
     void createSCC() {
@@ -1138,9 +1157,14 @@ class SEG {
 
     // Debug functions {{{
     void printDotFile(const std::string &filename,
-        const ObjectMap &omap) const {
+        const ObjectMap &omap) {
+      cleanGraph();
+#ifndef SPECSFS_IS_TEST
       std::ofstream ostm(filename, std::ofstream::out);
-      llvm::raw_os_ostream ofil(ostm);
+      dbg_ostream ofil(ostm);
+#else
+      std::ofstream ofil(filename, std::ofstream::out);
+#endif
       printDotHeader(ofil);
       std::for_each(begin(), end(),
           [&ofil, &omap]
@@ -1157,9 +1181,9 @@ class SEG {
           [this, &ofil, &omap]
           (const node_iter_type &pnode) {
         if (pnode != nullptr) {
-          auto src = pnode->id();
-          for (auto dest_id : pnode->succs()) {
-            std::string idNode1 = idToString(src);
+          auto dest_id = pnode->id();
+          for (auto src_id : pnode->preds()) {
+            std::string idNode1 = idToString(src_id);
             std::string idNode2 = idToString(dest_id);
 
             ofil << "  " << idNode1 << " -> " << idNode2 <<
@@ -1231,6 +1255,10 @@ class SEG {
 
     void sccStrongconnect(std::vector<SCCData> &scc_data,
         NodeID id, int &index, std::stack<NodeID> &st, SEG &ret) const {
+      // dbg << "Strongconnect\n";
+      // dbg << "  visit: " << id << "\n";
+      // dbg << "  index: " << index << "\n";
+      // dbg << "  lowlink: " << index << "\n";
       SCCData &data = scc_data.at(id.val());
       data.setIndex(index);
       data.setLowlink(index);
@@ -1251,13 +1279,23 @@ class SEG {
           continue;
         }
 
+        // dbg << "   checking pred: " << pred_id << "\n";
+
         auto &pred_data = scc_data.at(pred_id.val());
 
         if (pred_data.index() == SCCData::invalidIndex) {
           sccStrongconnect(scc_data, pred_id, index, st, ret);
           data.setLowlink(std::min(data.lowlink(), pred_data.lowlink()));
+          /*
+          dbg << "    invalid Updating lowlink for " << id <<
+            " to: " << data.lowlink() << "\n";
+          */
         } else if (pred_data.onStack()) {
           data.setLowlink(std::min(data.lowlink(), pred_data.index()));
+          /*
+          dbg << "    stack Updating lowlink for " << id <<
+            " to: " << data.lowlink() << "\n";
+          */
         }
       }
 
@@ -1266,18 +1304,24 @@ class SEG {
         // Copy node into scc, as our scc root
         auto &rep = ret.getNode(node.id());
 
+
         while (true) {
           auto &grp = ret.getNode(st.top());
           st.pop();
+
+          // Must clear on-stack status!!!
+          scc_data.at(grp.id().val()).setOnStack(false);
 
           if (grp == rep) {
             break;
           }
 
-          scc_data.at(grp.id().val()).setOnStack(false);
+          /*
+          dbg << "  Merging: " << rep.id() << ", " << grp.id()
+            << "\n";
+          */
 
           // Unite all of the SCCs with the one we just made
-          // Uhh, may have to think about this...
           rep.unite(ret, grp);
         }
       }
@@ -1303,7 +1347,7 @@ class SEGEdge {
     }
 
     // By default print nothing
-    virtual void print_label(llvm::raw_ostream &,
+    virtual void print_label(dbg_ostream &,
         const ObjectMap &) const { }
 
     EdgeKind getKind() const {
@@ -1366,7 +1410,7 @@ SEG SEG::clone() const {
       [this, &ret]
       (const node_iter_type &pnode) {
     if (pnode != nullptr) {
-      auto &my_node = llvm::cast<node_type>(*pnode);
+      auto &my_node = cast<node_type>(*pnode);
       ret.addNode(my_node);
     } else {
       ret.nodes_.emplace_back(nullptr);

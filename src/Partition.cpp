@@ -42,10 +42,10 @@ getSrcDestValue(ObjectMap::ObjID obj_id, const ObjectMap &omap,
 
     src = omap.valueAtID(nd.src());
     dest = omap.valueAtID(nd.dest());
-  } else if (auto pld = llvm::dyn_cast<const llvm::LoadInst>(src)) {
+  } else if (auto pld = dyn_cast<const llvm::LoadInst>(src)) {
     src = pld->getPointerOperand();
     dest = src;
-  } else if (auto pst = llvm::dyn_cast<const llvm::StoreInst>(src)) {
+  } else if (auto pst = dyn_cast<const llvm::StoreInst>(src)) {
     src = pst->getOperand(0);
     dest = pst->getOperand(1);
   } else {
@@ -271,7 +271,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
   auto ssa_seg = ssa.getSEG().clone<CFG::Node>();
   std::for_each(std::begin(ssa_seg), std::end(ssa_seg),
       [] (CFG::ControlFlowGraph::node_iter_type &pnode) {
-    auto &node = llvm::cast<CFG::Node>(*pnode);
+    auto &node = cast<CFG::Node>(*pnode);
 
     node.clearM();
     node.clearR();
@@ -349,7 +349,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
           // FIXME:
           // MAHHHH this is the wrong type of ID... so I'm forcing it... because
           //   I'm ticked off!
-          dout("Adding use to node: " << node.extId() << "\n");
+          dout("Adding use to node: " << node.id() << "\n");
           node.addUse(ObjectMap::ObjID(dug_id.val()));
 
           // Denote that this DUG node is part of this partition
@@ -378,7 +378,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
           // FIXME:
           // MAHHHH this is the wrong type of ID... so I'm forcing it... because
           //   I'm ticked off!
-          dout("Adding def to node: " << node.extId() << "\n");
+          dout("Adding def to node: " << node.id() << "\n");
           node.addDef(ObjectMap::ObjID(dug_id.val()));
 
           node_to_partition[dug_id].push_back(part_id);
@@ -459,7 +459,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
         delayed_edges;
       std::for_each(part_ssa.topo_begin(), part_ssa.topo_end(),
           [&graph, &part_ssa, &cfg_node_rep,
-              &delayed_edges, &part_id]
+              &delayed_edges, &part_id, &node_to_partition]
           (const CFG::NodeID node_id) {
         auto &ssa_node = part_ssa.getNode<CFG::Node>(node_id);
 
@@ -508,6 +508,8 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
         // There may also be none (in this case its an phi node)
         } else {
           dug_id = graph.addPhi();
+          // Add the phi node to the partition
+          node_to_partition[dug_id].push_back(part_id);
           dout("  Got phi of: " << dug_id << "\n");
           assert(llvm::isa<DUG::PhiNode>(graph.getNode(dug_id)));
         }
@@ -572,11 +574,15 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
 
         // Assert says if this node is a phi node, it must have at least
         //   one pred
+        // NOTE: Ramalingam's algorithm can create a phi node with no
+        //   predecessors!
+        /*
         assert(
             // Is not a phi
             !(!have_ld && !have_st && !have_glbl) ||
             // If it is a phi, it must have at least one pred
             !preds.empty());
+        */
 
         // Put an edge from each pred in G to the part leader
         std::for_each(std::begin(preds), std::end(preds),
@@ -585,8 +591,8 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
             (const CFG::NodeID pred_id) {
           auto pred_node_id = pred_id;
 
-          auto pred_cfg_id = part_ssa.getNode<CFG::Node>(pred_node_id).id()
-          dout("    have pred_node_id of: " << pred_node_id << "\n");
+          auto pred_cfg_id = part_ssa.getNode<CFG::Node>(pred_node_id).id();
+          dout("    have pred_node_id of: " << pred_cfg_id << "\n");
 
           // NOTE: if we were not doing a topo order we may have to evaluate the
           //   pred here
@@ -656,7 +662,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
   std::for_each(node_to_partition.cbegin(), node_to_partition.cend(),
       [&graph, &omap]
       (const std::pair<const DUG::DUGid, std::vector<DUG::PartID>> &pr) {
-    auto &part_node = llvm::cast<DUG::PartNode>(graph.getNode(pr.first));
+    auto &part_node = cast<DUG::PartNode>(graph.getNode(pr.first));
     auto &parts = pr.second;
     std::vector<ObjectMap::ObjID> vars;
 

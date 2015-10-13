@@ -160,7 +160,7 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
           alloca_list.push_back(&inst);
         }
       // Possible alloc/dealloc
-      } else if (auto ci = llvm::dyn_cast<llvm::CallInst>(&inst)) {
+      } else if (auto ci = dyn_cast<llvm::CallInst>(&inst)) {
         auto fcn = LLVMHelper::getFcnFromCall(ci);
 
         // FIXME: Use andersens results on nullptr???
@@ -241,7 +241,7 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
     auto alloc_fcn = m.getFunction(AllocaInstName);
     // Then, call for each alloc
     for (auto val : alloca_list) {
-      auto ai = llvm::cast<llvm::AllocaInst>(val);
+      auto ai = cast<llvm::AllocaInst>(val);
       // The id is the objid from the omap
       auto obj_id = omap.getObject(val);
 
@@ -290,7 +290,7 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
     // Get the external funciton
     // For each free:
     for (auto val : free_list) {
-      auto ci = llvm::cast<llvm::CallInst>(val);
+      auto ci = cast<llvm::CallInst>(val);
 
       // Get the function
       auto fcn = LLVMHelper::getFcnFromCall(ci);
@@ -308,7 +308,7 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
     auto malloc_fcn = m.getFunction(MallocInstName);
     // For each malloc:
     for (auto val : malloc_list) {
-      auto ci = llvm::cast<llvm::CallInst>(val);
+      auto ci = cast<llvm::CallInst>(val);
       // Get the obj from the return value
       auto obj_id = omap.getObject(val);
 

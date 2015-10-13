@@ -399,14 +399,14 @@ class Andersens : public llvm::ModulePass,
 
   virtual void *getAdjustedAnalysisPointer(llvm::AnalysisID PI) {
     if (PI == &AliasAnalysis::ID) {
-      return reinterpret_cast<llvm::AliasAnalysis *>(this);
+      return static_cast<llvm::AliasAnalysis *>(this);
     }
     return this;
   }
 
 
   static bool isMallocCall(const llvm::Value *V) {
-    const llvm::CallInst *CI = llvm::dyn_cast<llvm::CallInst>(V);
+    const llvm::CallInst *CI = dyn_cast<llvm::CallInst>(V);
     if (!CI) {
       return false;
     }
@@ -522,7 +522,7 @@ class Andersens : public llvm::ModulePass,
   /// getNode - Return the node corresponding to the specified pointer scalar.
   ///
   unsigned getNode(llvm::Value *V) const {
-    if (llvm::Constant *C = llvm::dyn_cast<llvm::Constant>(V))
+    if (llvm::Constant *C = dyn_cast<llvm::Constant>(V))
       if (!llvm::isa<llvm::GlobalValue>(C))
         return getNodeForConstantPointer(C);
 

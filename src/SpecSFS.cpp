@@ -281,10 +281,10 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
 
     if (top_val == nullptr) {
       llvm::dbgs() << "Value is (id): " << pr.first << "\n";
-    } else if (auto gv = llvm::dyn_cast<llvm::GlobalValue>(top_val)) {
+    } else if (auto gv = dyn_cast<llvm::GlobalValue>(top_val)) {
       llvm::dbgs() << "Value (" << pr.first << ") is: " <<
           gv->getName() << "\n";
-    } else if (auto fcn = llvm::dyn_cast<llvm::Function>(top_val)) {
+    } else if (auto fcn = dyn_cast<llvm::Function>(top_val)) {
       llvm::dbgs() << "Value (" << pr.first <<") is: " <<
           fcn->getName() << "\n";
     } else {
@@ -304,9 +304,9 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
 
         if (loc_val == nullptr) {
           llvm::dbgs() << "    Value is (id): " << obj_id << "\n";
-        } else if (auto gv = llvm::dyn_cast<llvm::GlobalValue>(loc_val)) {
+        } else if (auto gv = dyn_cast<llvm::GlobalValue>(loc_val)) {
           llvm::dbgs() << "    " << obj_id << ": " << gv->getName() << "\n";
-        } else if (auto fcn = llvm::dyn_cast<llvm::Function>(loc_val)) {
+        } else if (auto fcn = dyn_cast<llvm::Function>(loc_val)) {
           llvm::dbgs() << "    " << obj_id << ": " << fcn->getName() << "\n";
         } else {
           llvm::dbgs() << "    " << obj_id << ": " << *loc_val << "\n";
@@ -390,6 +390,11 @@ llvm::AliasAnalysis::AliasResult SpecSFS::alias(const Location &L1,
 
   auto &pts1 = pts1_it->second;
   auto &pts2 = pts2_it->second;
+
+  // If either of the sets point to nothing, no alias
+  if (pts1.empty() || pts2.empty()) {
+    return NoAlias;
+  }
 
   // Check to see if the two pointers are known to not alias.  They don't alias
   // if their points-to sets do not intersect.

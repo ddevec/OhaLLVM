@@ -13,8 +13,11 @@
 #include <utility>
 #include <vector>
 
+#include "include/Debug.h"
 #include "include/util.h"
 
+// Don't use llvm includes in unit tests
+#ifndef SPECSFS_IS_TEST
 #include "llvm/Constants.h"
 #include "llvm/DerivedTypes.h"
 #include "llvm/Function.h"
@@ -25,6 +28,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/GetElementPtrTypeIterator.h"
+#endif
 
 class ObjectMap {
   //{{{
@@ -73,6 +77,14 @@ class ObjectMap {
     static const ObjID ErrnoObject;
     //}}}
 
+    static constexpr ObjID getOffsID(ObjID id, int32_t offs) {
+      return ObjID(id.val() + offs);
+    }
+
+#ifdef SPECSFS_IS_TEST
+};
+#else
+
     // Internal classes {{{
     class StructInfo {
       //{{{
@@ -87,7 +99,7 @@ class ObjectMap {
             bool strong = true;
 
             // If this is an array, strip away the outer typing
-            while (auto at = llvm::dyn_cast<llvm::ArrayType>(element_type)) {
+            while (auto at = dyn_cast<llvm::ArrayType>(element_type)) {
               strong = false;
               element_type = at->getContainedType(0);
             }
@@ -95,7 +107,7 @@ class ObjectMap {
             offsets_.emplace_back(field_count);
 
             if (auto struct_type =
-                llvm::dyn_cast<llvm::StructType>(element_type)) {
+                dyn_cast<llvm::StructType>(element_type)) {
               auto &struct_info = omap.getStructInfo(struct_type);
               sizes_.insert(std::end(sizes_), struct_info.sizes_begin(),
                 struct_info.sizes_end());
@@ -360,7 +372,7 @@ class ObjectMap {
 
     ObjID getValue(const llvm::Value *val) {
       // Check for a constant first
-      if (auto C = llvm::dyn_cast<const llvm::Constant>(val)) {
+      if (auto C = dyn_cast<const llvm::Constant>(val)) {
         if (!llvm::isa<llvm::GlobalValue>(C)) {
           return getConstValue(C);
         }
@@ -377,11 +389,11 @@ class ObjectMap {
 
 
     ObjID getFunction(const llvm::Function *fcn) const {
-      return valToID_.at(llvm::cast<const llvm::Value>(fcn));
+      return valToID_.at(cast<const llvm::Value>(fcn));
     }
 
     const llvm::Function *getFunction(ObjID id) const {
-      return llvm::cast<const llvm::Function>(idToVal_.at(id));
+      return cast<const llvm::Function>(idToVal_.at(id));
     }
 
     // Allocated object id
@@ -395,10 +407,6 @@ class ObjectMap {
       return (id == NullObjectValue || id == UniversalValue ||
           id == IntValue ||
           (idToObj_.find(id) != std::end(idToObj_)));
-    }
-
-    static constexpr ObjID getOffsID(ObjID id, int32_t offs) {
-      return ObjID(id.val() + offs);
     }
 
     ObjID getReturn(const llvm::Value *val) const {
@@ -458,7 +466,7 @@ class ObjectMap {
     }
 
     const StructInfo &getStructInfo(const llvm::StructType *type) {
-      auto st_type = llvm::cast<llvm::StructType>(type);
+      auto st_type = cast<llvm::StructType>(type);
 
       auto struct_info_it = structInfo_.find(st_type);
 
@@ -631,11 +639,11 @@ class ObjectMap {
       ObjID ret_id;
 
       // Strip away array references:
-      while (auto at = llvm::dyn_cast<llvm::ArrayType>(type)) {
+      while (auto at = dyn_cast<llvm::ArrayType>(type)) {
         type = at->getElementType();
       }
 
-      if (auto st = llvm::dyn_cast<llvm::StructType>(type)) {
+      if (auto st = dyn_cast<llvm::StructType>(type)) {
         // id is the first field of the struct
         // Fill out the struct:
         auto &struct_info = getStructInfo(st);
@@ -737,7 +745,7 @@ __attribute__((unused))
 static const llvm::Type *getTypeOfVal(llvm::Value *val) {
   auto ret = val->getType();
 
-  if (auto ce = llvm::dyn_cast<llvm::ConstantExpr>(val)) {
+  if (auto ce = dyn_cast<llvm::ConstantExpr>(val)) {
     if (ce->getOpcode() == llvm::Instruction::BitCast) {
       // Also strip away pointer type
       ret = ce->getOperand(0)->getType();
@@ -758,11 +766,11 @@ static const llvm::Type *findLargestType(ObjectMap &omap,
   bool found = false;
   int32_t max_size = 0;
 
-  while (auto at = llvm::dyn_cast<llvm::ArrayType>(biggest_type)) {
+  while (auto at = dyn_cast<llvm::ArrayType>(biggest_type)) {
     biggest_type = at->getElementType();
   }
 
-  if (auto st = llvm::dyn_cast<llvm::StructType>(biggest_type)) {
+  if (auto st = dyn_cast<llvm::StructType>(biggest_type)) {
     max_size = omap.getStructInfo(st).size();
   }
 
@@ -770,23 +778,23 @@ static const llvm::Type *findLargestType(ObjectMap &omap,
   std::for_each(ins.use_begin(), ins.use_end(),
       [&max_size, &found, &biggest_type, &omap]
       (const llvm::User *use) {
-    auto cast = llvm::dyn_cast<llvm::CastInst>(use);
+    auto cast_inst = dyn_cast<llvm::CastInst>(use);
 
-    if (cast && llvm::isa<llvm::PointerType>(cast->getType())) {
+    if (cast_inst && llvm::isa<llvm::PointerType>(cast_inst->getType())) {
       found = true;
 
       // this is the type were casting to
-      auto cast_type = cast->getType()->getContainedType(0);
+      auto cast_type = cast_inst->getType()->getContainedType(0);
 
       int32_t size = 0;
 
       // strip off array qualifiers
-      while (auto at = llvm::dyn_cast<llvm::ArrayType>(cast_type)) {
+      while (auto at = dyn_cast<llvm::ArrayType>(cast_type)) {
         cast_type = at->getElementType();
       }
 
       // if we're casting to a strucutre
-      if (auto st = llvm::dyn_cast<llvm::StructType>(cast_type)) {
+      if (auto st = dyn_cast<llvm::StructType>(cast_type)) {
         size = omap.getStructInfo(st).size();
       }
 
@@ -817,18 +825,18 @@ static int32_t getGEPOffs(ObjectMap &omap, const llvm::User &gep) {
         en = llvm::gep_type_end(gep);
       gi != en; ++gi) {
     auto type = *gi;
-    auto struct_type = llvm::dyn_cast<llvm::StructType>(type);
+    auto struct_type = dyn_cast<llvm::StructType>(type);
     // If it isn't a struct field, don't add subfield offsets
     if (struct_type == nullptr) {
       continue;
     }
 
-    auto &si = omap.getStructInfo(llvm::cast<llvm::StructType>(type));
+    auto &si = omap.getStructInfo(cast<llvm::StructType>(type));
 
     auto operand = gi.getOperand();
 
     // Get the offset from this const value
-    auto cons_op = llvm::dyn_cast<llvm::ConstantInt>(operand);
+    auto cons_op = dyn_cast<llvm::ConstantInt>(operand);
     assert(cons_op);
     uint32_t idx = cons_op ? cons_op->getZExtValue() : 0;
 
@@ -858,9 +866,9 @@ class ValPrint {
       auto val = pr.omap_->valueAtID(pr.id_);
 
       if (val != nullptr) {
-        if (auto gv = llvm::dyn_cast<const llvm::GlobalValue>(val)) {
+        if (auto gv = dyn_cast<const llvm::GlobalValue>(val)) {
           o << gv->getName();
-        } else if (auto fcn = llvm::dyn_cast<const llvm::Function>(val)) {
+        } else if (auto fcn = dyn_cast<const llvm::Function>(val)) {
           o << fcn->getName();
         } else {
           o << *val;
@@ -881,5 +889,25 @@ class ValPrint {
     ObjectMap *omap_;
   //}}}
 };
+
+#endif  // SPECSFS_IS_TEST
+
+#ifdef SPECSFS_IS_TEST
+class ValPrint {
+  //{{{
+ public:
+    explicit ValPrint(ObjectMap::ObjID id) : id_(id) { }
+
+    friend dbg_type &operator<<(dbg_type &o,
+        const ValPrint &pr) {
+      o << pr.id_;
+      return o;
+    }
+
+ private:
+    ObjectMap::ObjID id_;
+  //}}}
+};
+#endif
 
 #endif  // INCLUDE_OBJECTMAP_H_

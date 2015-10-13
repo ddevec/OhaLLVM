@@ -5,6 +5,8 @@
 #ifndef INCLUDE_LLVMHELPER_H_
 #define INCLUDE_LLVMHELPER_H_
 
+#include "include/Debug.h"
+
 #include "llvm/BasicBlock.h"
 #include "llvm/Constants.h"
 #include "llvm/DerivedTypes.h"
@@ -28,11 +30,11 @@ class LLVMHelper {
         auto callee = cs.getCalledValue();
 
         if (!llvm::isa<llvm::InlineAsm>(callee)) {
-          auto ce = llvm::dyn_cast<llvm::ConstantExpr>(callee);
+          auto ce = dyn_cast<llvm::ConstantExpr>(callee);
 
           if (ce) {
             if (ce->getOpcode() == llvm::Instruction::BitCast) {
-              fcn = llvm::dyn_cast<llvm::Function>(ce->getOperand(0));
+              fcn = dyn_cast<llvm::Function>(ce->getOperand(0));
             }
           }
         }
@@ -48,7 +50,7 @@ class LLVMHelper {
 
       auto i64_type = llvm::IntegerType::get(m.getContext(), 64);
 
-      while (auto at = llvm::dyn_cast<llvm::ArrayType>(type)) {
+      while (auto at = dyn_cast<llvm::ArrayType>(type)) {
         at_size *= at->getNumElements();
         type = at->getContainedType(0);
         is_array = true;

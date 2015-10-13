@@ -111,7 +111,7 @@ class Constraint {
     //}}}
 
     // Print helper {{{
-    void print_label(llvm::raw_ostream &ofil, const ObjectMap &) const {
+    void print_label(dbg_ostream &ofil, const ObjectMap &) const {
       switch (type()) {
         case ConstraintType::Copy:
           ofil << "copy";
@@ -126,7 +126,7 @@ class Constraint {
           ofil << "store";
           break;
         default:
-          llvm_unreachable("Constraint with unexpected type!");
+          unreachable("Constraint with unexpected type!");
           ofil << "BLEH";
       }
     }
@@ -186,7 +186,7 @@ class NodeConstraint : public Constraint {
     }
 
     bool operator<(const Constraint &cons) const override {
-      auto ld_cons = llvm::cast<NodeConstraint>(cons);
+      auto ld_cons = cast<NodeConstraint>(cons);
 
       if (nodeId() != ld_cons.nodeId()) {
         return nodeId() < ld_cons.nodeId();
@@ -224,21 +224,21 @@ class ConstraintGraph {
 
     ConsID add(ConstraintType type, ObjID d, ObjID s, int o) {
       /*
-      llvm::dbgs() << "Adding edge: (" << s << ", " << d <<
+      dbg << "Adding edge: (" << s << ", " << d <<
         ") with type: " << static_cast<int32_t>(type) << "\n";
         */
       assert(!(type == ConstraintType::Copy &&
           s == ObjectMap::UniversalValue &&
           d == ObjectMap::NullValue));
       constraints_.emplace_back(new Constraint(s, d, type, o));
-      // llvm::dbgs() << "Creating constriant: " << (constraints_.size()-1) << "\n";
+      // dbg << "Creating constriant: " << (constraints_.size()-1) << "\n";
       return ConsID(constraints_.size()-1);
     }
 
     ConsID add(ConstraintType type, ObjID nd, ObjID s, ObjID d) {
       constraints_.emplace_back(new NodeConstraint(type, s, d, nd));
 
-      // llvm::dbgs() << "Creating constriant: " << (constraints_.size()-1) << "\n";
+      // dbg << "Creating constriant: " << (constraints_.size()-1) << "\n";
       return ConsID(constraints_.size()-1);
     }
 

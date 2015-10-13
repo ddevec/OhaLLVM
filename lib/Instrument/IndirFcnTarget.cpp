@@ -120,7 +120,7 @@ bool InstrIndirCalls::runOnModule(llvm::Module &m) {
         [&m, &insert_list]
         (const llvm::Instruction &inst) {
       // Okay, lets get to work..
-      if (auto cci = llvm::dyn_cast<llvm::CallInst>(&inst)) {
+      if (auto cci = dyn_cast<llvm::CallInst>(&inst)) {
         auto ci = const_cast<llvm::CallInst *>(cci);
         auto fcn = LLVMHelper::getFcnFromCall(ci);
 
@@ -131,7 +131,7 @@ bool InstrIndirCalls::runOnModule(llvm::Module &m) {
     });
 
     for (auto v : insert_list) {
-      auto ci = llvm::cast<llvm::CallInst>(v);
+      auto ci = cast<llvm::CallInst>(v);
       llvm::CallSite cs(ci);
       // TODO(ddevec): Also check if there is a unique target
       //   from andersens?
@@ -148,7 +148,7 @@ bool InstrIndirCalls::runOnModule(llvm::Module &m) {
         args,
         "",
         ci);
-      llvm::dbgs() << "id: " << fcn_id << " -> " << *ci << "\n";
+      // llvm::dbgs() << "id: " << fcn_id << " -> " << *ci << "\n";
       fcn_id++;
     }
   }
@@ -290,7 +290,7 @@ bool IndirFunctionInfo::runOnModule(llvm::Module &m) {
         [&m, &insert_list]
         (const llvm::Instruction &inst) {
       // Okay, lets get to work..
-      if (auto cci = llvm::dyn_cast<llvm::CallInst>(&inst)) {
+      if (auto cci = dyn_cast<llvm::CallInst>(&inst)) {
         auto ci = const_cast<llvm::CallInst *>(cci);
 
         auto fcn = LLVMHelper::getFcnFromCall(ci);
@@ -322,7 +322,7 @@ bool IndirFunctionInfo::runOnModule(llvm::Module &m) {
 
       auto it = callToTarget_.find(call);
       if (it == std::end(callToTarget_)) {
-        llvm::dbgs() << "Adding call to targets: " << *call << "\n";
+        // llvm::dbgs() << "Adding call to targets: " << *call << "\n";
         auto ret =
           callToTarget_.emplace(std::piecewise_construct, std::make_tuple(call),
               std::make_tuple());
@@ -337,7 +337,7 @@ bool IndirFunctionInfo::runOnModule(llvm::Module &m) {
       int32_t fcn_id;
       converter >> fcn_id;
       while (!converter.fail()) {
-        auto fcn = llvm::cast<llvm::Function>(id_to_fcn[fcn_id]);
+        auto fcn = cast<llvm::Function>(id_to_fcn[fcn_id]);
 
         fcn_vec.push_back(fcn);
         converter >> fcn_id;
