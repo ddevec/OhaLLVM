@@ -3,7 +3,7 @@
  *
  * NOTE: Components stolen from Andersens.cpp
  */
-// #define SPECSFS_DEBUG
+#define SPECSFS_DEBUG
 
 #include <cassert>
 #include <cstdint>
@@ -636,6 +636,11 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
     }
   }
 
+  // Don't worry about debug declare...
+  if (F->getName() == "llvm.dbg.declare") {
+    return true;
+  }
+
   llvm::dbgs() << "!!! Unknown external call: " << F->getName() << "\n";
   return false;
 }
@@ -647,25 +652,19 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
 static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
     ObjectMap &omap, ObjectMap::ObjID dest, const llvm::Constant *C) {
   int32_t offset = 0;
+  dbg << "In glbl init cons\n";
+  dbg << "glbl init cons dest: (" << dest << ") " <<
+    ValPrint(dest) << "\n";
   // Simple case, single initializer
   if (C->getType()->isSingleValueType()) {
     if (llvm::isa<llvm::PointerType>(C->getType())) {
-      llvm::dbgs() << "FIXME: Ignoring global init constraint, because "
-        "Andersen's doesn't include it, and it causes my analysis to break\n";
-      llvm::dbgs() << "   To resolve this I should make Andersen's include "
-        "the constraint\n";
-      // NOTE: This is just to make us match Andersens... the "Correct" code is
-      // below
-      // auto dest_val = omap.valueAtID(dest);
-      // auto dest_obj = omap.getObject(dest_val);
       auto glbl_id = omap.createPhonyID();
-      // cg.add(ConstraintType::GlobalInit, glbl_id, dest_obj, dest);
-      dout("Adding global init for: " << ValPrint(dest) << "\n");
-      cg.add(ConstraintType::GlobalInit, glbl_id, omap.getConstValue(C), dest);
-      /*
-      cg.add(ConstraintType::GlobalInit, glbl_id,
-          omap.getConstValue(C), dest);
-      */
+      auto const_id = omap.getConstValue(C);
+      dbg << "Adding global init " << glbl_id << " for: (" << dest << ") " <<
+          ValPrint(dest) << " to (" << const_id << ") " << ValPrint(const_id)
+          << "\n";
+      cg.add(ConstraintType::GlobalInit, glbl_id, const_id, dest);
+
       cfg.addGlobalInit(glbl_id);
 
       offset = 1;
@@ -673,15 +672,13 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
 
   // Initialized to null value
   } else if (C->isNullValue()) {
-    dout("Glbl init on: " << ValPrint(dest) << "\n");
+    dbg << "Glbl init on: (" << dest << ") " << ValPrint(dest) << "\n";
     if (llvm::isa<llvm::StructType>(C->getType())) {
-      llvm::dbgs() << "FIXME: Ignoring zero init on struct type for now...\n";
+      // NOTE: We ignore this, because null values don't point to anything...
       offset = 1;
     } else {
+      // NOTE: We ignore this, because null values don't point to anything...
       // auto glbl_id = omap.createPhonyID();
-      dout("Adding NULL global init for: " << ValPrint(dest) << "\n");
-      llvm::dbgs() << "FIXME: Ignoring zero init on non-struct to be consistent"
-        " with andersens";
       /*
       cg.add(ConstraintType::GlobalInit, glbl_id, ObjectMap::NullValue, dest);
       cfg.addGlobalInit(glbl_id);
@@ -696,13 +693,11 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
         llvm::isa<llvm::ConstantStruct>(C) ||
         llvm::isa<llvm::ConstantDataSequential>(C));
 
-    dout("Adding STRUCT global init for: " << ValPrint(dest) << "\n");
+    dbg << "Adding STRUCT global init for: (" << dest << ") " <<
+      ValPrint(dest) << "\n";
     // For each field of the initializer, add a constraint for the field
     // This is done differently for structs than for array
     if (auto cs = dyn_cast<llvm::ConstantStruct>(C)) {
-      llvm::dbgs() << "FIXME: Missing ptsto set for ConstantStruct"
-        " Initializer\n";
-      /* BROKEN
       std::for_each(cs->op_begin(), cs->op_end(),
           [&offset, &cg, &cfg, &cs, &omap, &dest]
           (const llvm::Use &field) {
@@ -710,7 +705,6 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
         offset += addGlobalInitializerConstraints(cg, cfg, omap,
           omap.getOffsID(dest, offset), field_cons);
       });
-      */
     } else {
       std::for_each(C->op_begin(), C->op_end(),
           [&offset, &cg, &cfg, &cs, &omap, &dest]
@@ -1514,7 +1508,7 @@ bool SpecSFS::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
     M.findUsedStructTypes(struct_types);
     std::for_each(std::begin(struct_types), std::end(struct_types),
         [&omap] (llvm::StructType *st) {
-      dout("Have structtype: " << st << "\n");
+      dout("Have structtype: " << st->getName() << "\n");
       omap.addStructInfo(st);
     });
   }
@@ -1528,6 +1522,9 @@ bool SpecSFS::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
     // for staic/heap allocations
     assert(llvm::isa<llvm::PointerType>(glbl.getType()));
     auto type = glbl.getType()->getContainedType(0);
+
+    // llvm::dbgs() << "adding global: " << glbl << " to omap!\n";
+
     omap.addValues(type, &glbl);
     omap.addObjects(type, &glbl);
   });
@@ -1667,13 +1664,15 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
     auto val_id = omap.getValue(&glbl);
     auto obj_id = omap.getObject(&glbl);
 
-    dout("Adding glbl constraint for: " << glbl << "\n");
+    dout("Adding glbl constraint for: " << glbl <<
+     "(thats val: " << val_id << ", obj: " << obj_id << ")\n");
 
     addGlobalConstraintForType(ConstraintType::AddressOf, cg, omap,
       type, val_id, obj_id, true);
 
     // If its a global w/ an initalizer
     if (glbl.hasDefinitiveInitializer()) {
+      dout("Adding glbl initializer for: " << glbl << "\n");
       addGlobalInitializerConstraints(cg, cfg, omap, val_id,
         glbl.getInitializer());
 
@@ -1686,25 +1685,12 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
     // Doesn't have initializer
     } else {
       if (glbl.hasInitializer() &&
-          llvm::isa<llvm::ConstantAggregateZero>(glbl.getInitializer())) {
+          llvm::isa<llvm::ConstantPointerNull>(glbl.getInitializer())) {
         dout("Global Zero Initializer: " << glbl.getName() << "\n");
-        llvm::dbgs() << "FIXME: Ignoring zero initializer: Andersen's assumes"
-          << " its a univeral value, and that breaks struct stuff, so I'm "
-          " (unsoundly) ignoring\n";
-        /*
-        cg.add(ConstraintType::Copy, omap.getValue(&glbl),
-            ObjectMap::NullValue);
-        */
+        // We don't add any ptsto constraints for null value here, because null
+        //   value points to nothing...
       } else {
-        /*
-        llvm::dbgs() << "Warning, skipping global init for unknown global "
-          "initializer, to be consistent with andersens...\n";
-        */
         dout("NO GLOBAL INITIALIZER: " << glbl.getName() << "\n");
-        /*
-        cg.add(ConstraintType::Copy, omap.getObject(&glbl),
-            ObjectMap::UniversalValue);
-        */
         cg.add(ConstraintType::Copy, omap.getValue(&glbl),
             ObjectMap::UniversalValue);
 

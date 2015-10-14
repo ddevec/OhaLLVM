@@ -2,7 +2,7 @@
  * Copyright (C) 2015 David Devecsery
  */
 
-// #define SPECSFS_DEBUG
+#define SPECSFS_DEBUG
 
 #include <algorithm>
 #include <functional>
@@ -106,7 +106,7 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
       dout("    src: " << node.src() << " : " <<
         ValPrint(node.src()) << "\n");
     } else {
-      dout("node_id is: " << node.id() << "\n");
+      dout("    node_id is: " << node.id() << "\n");
       assert(llvm::isa<DUG::LoadNode>(node) ||
           llvm::isa<DUG::ConstPartNode>(node));
 
@@ -185,7 +185,7 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
 
   // Now, for each relevant DUGid, create an AE mapping
   std::for_each(AE.cbegin(), AE.cend(),
-      [&AE, &rev_part_map, &equiv_map, &part_id_generator]
+      [&AE, &omap, &rev_part_map, &equiv_map, &part_id_generator]
       (const std::pair<const ObjectMap::ObjID, Bitmap> &pr) {
     auto equiv_it = equiv_map.find(pr.second);
 
@@ -200,6 +200,15 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
 
     auto part_id = equiv_it->second;
 
+    auto field_pr = omap.findObjAliases(pr.first);
+
+    if (field_pr.first) {
+      auto &field_vec = field_pr.second;
+      std::for_each(std::begin(field_vec), std::end(field_vec),
+          [&rev_part_map, &part_id] (ObjectMap::ObjID id) {
+        rev_part_map[part_id].emplace_back(id);
+      });
+    }
     // Set the object for this part into pr.first
     rev_part_map[part_id].emplace_back(pr.first);
   });
@@ -224,6 +233,7 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
       // Check to see if this is an internal alias I introduced...
       //    An example of this would be structure fields
       //    Or allocations from indirect pointers
+      /*
       auto field_pr = omap.findObjAliases(obj_id);
 
       // If so, add each field to the part map
@@ -234,6 +244,7 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
           part_map[id] = pr.first;
         });
       }
+      */
 
       // Now, just add the obj
       part_map[obj_id] = pr.first;
@@ -537,6 +548,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, const CFG &ssa,
               return;
             }
 
+            // When any store is updated, all stores must be updated.... meh
             dout("  --Adding rep-st edge {" << dug_id << " -(" <<
                 part_id << ")-> " << st_id << "}\n");
             graph.addEdge(dug_id, st_id, part_id);

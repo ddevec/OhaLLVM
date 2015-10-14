@@ -645,6 +645,7 @@ void DynPtstoLoader::setupSpecSFSids(llvm::Module &M) {
   const UnusedFunctions &unused_fcns =
       getAnalysis<UnusedFunctions>();
 
+  ObjectMap::replaceDbgOmap(omap);
   if (createConstraints(cg, cfg, omap, M, unused_fcns)) {
     abort();
   }

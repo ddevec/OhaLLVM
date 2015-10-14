@@ -50,16 +50,16 @@ class ObjectMap {
 
     enum class ObjEnum : int32_t {
       eNullValue = 0,
-      eNullObjectValue,
-      eIntValue,
-      eUniversalValue,
-      eAggregateValue,
-      ePthreadSpecificValue,
-      eArgvValue,
-      eArgvObjectValue,
-      eLocaleObject,
-      eCTypeObject,
-      eErrnoObject,
+      eNullObjectValue = 1,
+      eIntValue = 2,
+      eUniversalValue = 3,
+      eAggregateValue = 4,
+      ePthreadSpecificValue = 5,
+      eArgvValue = 6,
+      eArgvObjectValue = 7,
+      eLocaleObject = 8,
+      eCTypeObject = 9,
+      eErrnoObject = 10,
       eNumDefaultObjs
     } DefaultObjs;
 
@@ -84,6 +84,7 @@ class ObjectMap {
 #ifdef SPECSFS_IS_TEST
 };
 #else
+    static void replaceDbgOmap(ObjectMap &omap);
 
     // Internal classes {{{
     class StructInfo {

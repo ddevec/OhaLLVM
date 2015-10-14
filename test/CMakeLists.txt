@@ -186,5 +186,9 @@ create_test(test_echo_break
     test_echo_break.c
   )
 
+create_test(glbl_const_init
+    glbl_const_init.c
+  )
+
 add_subdirectory(dce)
 

@@ -298,13 +298,8 @@ class DUG {
           auto &nd = DUG_.getNode<DUGNode>(node_id);
           nodeMap_.emplace(nd.rep(), node_id);
 
-          dout("Adding node to DUG for obj_id: " << dest << ": " <<
-              ValPrint(dest) << "\n");
           // logout("s " << src << "\n");
           // logout("d " << dest << "\n");
-
-          dout("  node src_obj_id: " << src << ": " <<
-              ValPrint(src) << "\n");
           consid++;
         });
       }

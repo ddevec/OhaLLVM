@@ -56,10 +56,10 @@ ObjectMap::ObjectMap() {
       i++) {
     mapping_.push_back(nullptr);
   }
+}
 
-  if (g_omap == nullptr) {
-    g_omap = this;
-  }
+void ObjectMap::replaceDbgOmap(ObjectMap &omap) {
+  g_omap = &omap;
 }
 
 std::pair<ObjectMap::Type, const llvm::Value *>

@@ -108,6 +108,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   const UnusedFunctions &unused_fcns =
       getAnalysis<UnusedFunctions>();
 
+  ObjectMap::replaceDbgOmap(omap);
   {
     PerfTimerPrinter id_timer(llvm::dbgs(), "Identify Objects");
     // Identify all of the objects in the source
@@ -155,7 +156,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   {
     // Converting from aux_id to obj_ids
     // For each pointer value we care about:
-    dout("Filling aux_to_obj:\n");
+    // dout("Filling aux_to_obj:\n");
     auto &aux_val_nodes = aux.getObjectMap();
 
     special_aux_.emplace(ObjectMap::NullValue, Andersens::NullPtr);
@@ -189,8 +190,10 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
       // auto obj_id = omap.getValue(pr.first);
       auto aux_val_id = pr.second;
 
+      /*
       dout("  " << aux_val_id << "->" << obj_id <<
         "\n");
+      */
       assert(aux_to_obj_.find(aux_val_id) == std::end(aux_to_obj_));
       aux_to_obj_.emplace(aux_val_id, obj_id);
     });

@@ -2,8 +2,8 @@
  * Copyright (C) 2015 David Devecsery
  */
 
-// #define SPECSFS_DEBUG
-#define SPECSFS_LOGDEBUG
+#define SPECSFS_DEBUG
+// #define SPECSFS_LOGDEBUG
 
 #include <algorithm>
 #include <utility>
@@ -55,14 +55,18 @@ bool SpecSFS::solve(DUG &dug, ObjectMap &) {
   uint32_t prio;
   while (auto pnd = work.pop(prio)) {
     // Don't process the node if we've processed it this round
+    /*
     dout("node: " << pnd->id() << ":  Comparing prio " << prio << " < " <<
         priority[pnd->id().val()] << "\n");
+    */
     if (prio < priority[pnd->id().val()]) {
       continue;
     }
 
+    /*
     dout("node: " << pnd->id() << ":  assigning priority to: " << vtime <<
         "\n");
+    */
     priority[pnd->id().val()] = vtime;
     vtime++;
 
@@ -412,6 +416,7 @@ void DUG::GlobalInitNode::process(DUG &dug, TopLevelPtsto &pts_top,
     // If we updated the set, wake all of our successors
     // For each successor partition
     if (in().hasChanged()) {
+      dout("in changed!\n");
       std::for_each(std::begin(part_succs_), std::end(part_succs_),
           [this, &work, &dug, &dest_pts, &priority]
           (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
