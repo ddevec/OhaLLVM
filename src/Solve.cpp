@@ -2,7 +2,7 @@
  * Copyright (C) 2015 David Devecsery
  */
 
-#define SPECSFS_DEBUG
+// #define SPECSFS_DEBUG
 // #define SPECSFS_LOGDEBUG
 
 #include <algorithm>
@@ -375,80 +375,6 @@ void DUG::PhiNode::process(DUG &dug, TopLevelPtsto &, Worklist &work,
     });
 
     in().resetChanged();
-  }
-}
-
-void DUG::GlobalInitNode::process(DUG &dug, TopLevelPtsto &pts_top,
-    Worklist &work, const std::vector<uint32_t> &priority) {
-  dout("Process GlobalInit\n");
-
-  bool change = false;
-  if (first_) {
-    first_ = false;
-    dout("Adding " << src() << " to top " << dest() << "\n");
-    dout("Thats a node for: " << rep() << "\n");
-
-    auto &dest_pts = pts_top.at(dest());
-    auto &src_pts = pts_top.at(src());
-
-    dout("dest_pts before: " << dest_pts << "\n");
-    dout("src_pts is: " << src_pts << "\n");
-    // change |= (dest_pts |= src_pts);
-    // dout("dest_pts after: " << dest_pts << "\n");
-    dout("in is: " << in() << "\n");
-
-    logout("n " << id() << "\n");
-    logout("t " << 3 << "\n");
-
-    logout("r " << rep() << "\n");
-    logout("s " << src() << " " << src_pts << "\n");
-    logout("d " << dest() << " " << dest_pts << "\n");
-
-    logout("i " << in() << "\n");
-
-    assert(dest_pts.size() == 1);
-    change |= in().assign(*std::begin(dest_pts), src_pts);
-
-    dout("new in is: " << in() << "\n");
-
-    logout("I " << in() << "\n");
-
-    // If we updated the set, wake all of our successors
-    // For each successor partition
-    if (in().hasChanged()) {
-      dout("in changed!\n");
-      std::for_each(std::begin(part_succs_), std::end(part_succs_),
-          [this, &work, &dug, &dest_pts, &priority]
-          (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
-        auto part_id = part_pr.first;
-        auto dug_id = part_pr.second;
-        auto &nd = dug.getNode(dug_id);
-        bool c = false;
-
-        dout("nd.in is: " << nd.in() << "\n");
-
-        // This is a strong update, right?  We should be able to just set it...
-        c = nd.in().orPart(in(), dug.objToPartMap(), part_id);
-
-        dout("nd.in is now: " << nd.in() << "\n");
-
-        if (c) {
-          dout("  Pushing part nd to work: " << nd.id() << "\n");
-          work.push(&nd, priority[nd.id().val()]);
-        }
-      });
-
-      in().resetChanged();
-    }
-
-    if (change) {
-      std::for_each(succ_begin(), succ_end(),
-          [&dug, &work, &priority](DUG::DUGid succ_id) {
-        auto &nd = dug.getNode(succ_id);
-        dout("  Pushing non-part nd to work: " << nd.id() << "\n");
-        work.push(&nd, priority[nd.id().val()]);
-      });
-    }
   }
 }
 

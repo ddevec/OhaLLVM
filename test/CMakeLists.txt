@@ -9,7 +9,7 @@
 function(create_dis TARGET_NAME)
   # message("Creating DIS: ${TARGET_NAME} : ${ARGN}")
   add_custom_command(OUTPUT ${TARGET_NAME} POST_BUILD
-    COMMAND "clang" -S -Wno-format-security -O0 -g -emit-llvm ${ARGN} -o ${TARGET_NAME}
+    COMMAND "clang-3.1" -S -Wno-format-security -O0 -g -emit-llvm ${ARGN} -o ${TARGET_NAME}
     DEPENDS ${ARGN}
     COMMENT  "Disassembling ${TARGET_NAME}"
     VERBATIM)
@@ -22,6 +22,31 @@ function(create_bc TARGET_NAME)
     DEPENDS ${ARGN}
     VERBATIM)
 endfunction(create_bc)
+
+function(create_opt_with_dis OPT_FLAG OPT_SUFFIX opt_output)
+
+  set(output_files "")
+
+  foreach(f ${ARGN})
+    set(f_nosuffix "")
+    strip_suffix(f_nosuffix ".bc" ${f})
+    set(output_var "${f_nosuffix}.${OPT_SUFFIX}.bc")
+
+
+    add_custom_command(OUTPUT ${output_var} POST_BUILD
+      COMMAND "opt" -${OPT_FLAG} ${f} > ${output_var}
+      COMMAND "llvm-dis" ${output_var}
+      DEPENDS ${f}
+      VERBATIM)
+
+
+    list(APPEND output_files ${output_var})
+  endforeach(f)
+
+  set(${opt_output} "${output_files}" PARENT_SCOPE)
+
+endfunction(create_opt_with_dis)
+
 
 function(create_opt OPT_FLAG OPT_SUFFIX opt_output)
 
@@ -48,7 +73,7 @@ endfunction(create_opt)
 function(llvm_compile TARGET_NAME OPTS)
 
   add_custom_target(${TARGET_NAME} ALL
-    COMMAND "clang" ${OPTS} -g -O0 -o ${TARGET_NAME} ${ARGN}
+    COMMAND "clang-3.1" ${OPTS} -g -O0 -o ${TARGET_NAME} ${ARGN}
     DEPENDS ${ARGN})
 
 endfunction(llvm_compile)
@@ -103,6 +128,32 @@ function(create_test TARGET_NAME)
 
   llvm_compile(${TARGET_NAME} "" ${bc_list})
 endfunction(create_test)
+
+function(create_opt_test TARGET_NAME)
+  set(bc_list "")
+  foreach(arg ${ARGN})
+    set(base_name "")
+    set(bc_name "")
+    set(opt_name "")
+
+    strip_suffix(base_name ".c" ${arg})
+    append_suffix(bc_name ".bc" ${base_name})
+
+    list(APPEND bc_list ${bc_name})
+  endforeach(arg)
+
+  set(edge_prof_list "")
+
+  create_opt_with_dis("O3" "O3" edge_prof_list ${bc_list})
+
+  set(prof_name "")
+  append_suffix(prof_name ".O3" ${TARGET_NAME})
+
+
+  llvm_compile(${prof_name} "" ${edge_prof_list})
+
+endfunction(create_opt_test)
+
 
 function(create_edge_profile TARGET_NAME)
   set(bc_list "")
@@ -187,6 +238,9 @@ create_test(test_echo_break
   )
 
 create_test(glbl_const_init
+    glbl_const_init.c
+  )
+create_opt_test(glbl_const_init
     glbl_const_init.c
   )
 

@@ -3,7 +3,7 @@
  *
  * NOTE: Components stolen from Andersens.cpp
  */
-#define SPECSFS_DEBUG
+// #define SPECSFS_DEBUG
 
 #include <cassert>
 #include <cstdint>
@@ -160,7 +160,6 @@ static void identifyAUXFcnCallRetInfo(CFG &cfg,
       CFG::CFGid call_id = cfg.nextNode();
       CFG::CFGid ret_id = cfg.nextNode();
 
-      llvm::dbgs() << "Getting ci: " << *ci << "\n";
       auto fcn_targets = dyn_info->getTargets(ci);
 
       for (auto fcn : fcn_targets) {
@@ -217,11 +216,11 @@ void addCFGLoad(CFG &graph, CFG::CFGid load_id, ConstraintGraph::ObjID dest) {
   node.debug_uses();
 }
 
-void addCFGStore(CFG &graph, CFG::CFGid *store_id,
-    ConstraintGraph::ObjID dest) {
+void addCFGStore(CFG &graph, CFG::CFGid *store_cfg_id,
+    ConstraintGraph::ObjID store_obj_id) {
   // Well, stuff here
-  dout("addStore called with store_id: " << *store_id << "\n");
-  auto node = &graph.getNode(*store_id);
+  dout("addStore called with store_cfg_id: " << *store_cfg_id << "\n");
+  auto node = &graph.getNode(*store_cfg_id);
 
   // If this is a m-node (np-node), then it has a store, and we need to make a
   // new node
@@ -229,21 +228,45 @@ void addCFGStore(CFG &graph, CFG::CFGid *store_id,
     CFG::CFGid next_id = graph.nextNode();
     dout("store cfg_id: " << next_id << "\n");
 
-    graph.addPred(next_id, *store_id);
+    graph.addPred(next_id, *store_cfg_id);
 
     // Advance the id
-    *store_id = next_id;
+    *store_cfg_id = next_id;
 
-    dout("Have np-node, added new id: " << *store_id << "\n");
-    node = &graph.getNode(*store_id);
+    dout("Have np-node, added new id: " << *store_cfg_id << "\n");
+    node = &graph.getNode(*store_cfg_id);
   }
-  dout("Setting M for store_id: " << *store_id << "\n");
+  dout("Setting M for store_cfg_id: " << *store_cfg_id << "\n");
   node->setM();
   // Need to also set R for store nodes.... bleh
   node->setR();
 
-  dout("Adding def for: " << *store_id << "\n");
-  graph.addDef(*store_id, dest);
+  dout("Adding def for: " << *store_cfg_id << "\n");
+  graph.addDef(*store_cfg_id, store_obj_id);
+}
+
+void addGlobalInit(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
+    ObjectMap::ObjID src_id, ObjectMap::ObjID dest_id) {
+  auto glbl_id = omap.createPhonyID();
+
+  // Add the store to the constraint graph
+  cg.add(ConstraintType::Store, glbl_id, src_id, dest_id);
+
+  // Do CFG setup:
+  // create new CFG node for this store
+  // Attach it between GlblStoreInit and StartNode
+  auto cfg_id = cfg.nextNode();
+  if_debug_enabled(auto chk_cfg_id = cfg_id);
+
+  // Connect cfg_id within the graph
+  // The global store goes between globalinit and init
+  cfg.addPred(cfg_id, CFG::CFGGlobalInit);
+  cfg.addPred(CFG::CFGInit, cfg_id);
+
+  addCFGStore(cfg, &cfg_id, glbl_id);
+
+  // Assert cfg_node didn't change
+  assert(cfg_id == chk_cfg_id);
 }
 
 void addCFGCallsite(CFG &cfg, ObjectMap &omap,
@@ -651,40 +674,39 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
 //   fields of the struct
 static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
     ObjectMap &omap, ObjectMap::ObjID dest, const llvm::Constant *C) {
-  int32_t offset = 0;
+  int32_t offset = 1;
+  /*
   dbg << "In glbl init cons\n";
   dbg << "glbl init cons dest: (" << dest << ") " <<
     ValPrint(dest) << "\n";
+  */
+  // llvm::dbgs() << "Entry constant: " << *C << ", dest: " << dest << "\n";
   // Simple case, single initializer
   if (C->getType()->isSingleValueType()) {
     if (llvm::isa<llvm::PointerType>(C->getType())) {
-      auto glbl_id = omap.createPhonyID();
       auto const_id = omap.getConstValue(C);
-      dbg << "Adding global init " << glbl_id << " for: (" << dest << ") " <<
+      /*
+      dbg << "Adding global init for: (" << dest << ") " <<
           ValPrint(dest) << " to (" << const_id << ") " << ValPrint(const_id)
           << "\n";
-      cg.add(ConstraintType::GlobalInit, glbl_id, const_id, dest);
+      */
 
-      cfg.addGlobalInit(glbl_id);
-
-      offset = 1;
+      /*
+      llvm::dbgs() << "Assigning constant: " << *C << "\n";
+      llvm::dbgs() << "  To: " << dest << " from: " << const_id << "\n";
+      */
+      addGlobalInit(cg, cfg, omap, const_id, dest);
     }
 
   // Initialized to null value
   } else if (C->isNullValue()) {
-    dbg << "Glbl init on: (" << dest << ") " << ValPrint(dest) << "\n";
-    if (llvm::isa<llvm::StructType>(C->getType())) {
       // NOTE: We ignore this, because null values don't point to anything...
+    // dbg << "Glbl init on: (" << dest << ") " << ValPrint(dest) << "\n";
+    if (llvm::isa<llvm::StructType>(C->getType())) {
+      // FIXME: Offset = sizeof struct type?
+      llvm::dbgs() << "FIXME: Potential bug in zero struct filling\n";
       offset = 1;
     } else {
-      // NOTE: We ignore this, because null values don't point to anything...
-      // auto glbl_id = omap.createPhonyID();
-      /*
-      cg.add(ConstraintType::GlobalInit, glbl_id, ObjectMap::NullValue, dest);
-      cfg.addGlobalInit(glbl_id);
-      */
-
-      offset = 1;
     }
   // Set to some other defined value
   } else if (!llvm::isa<llvm::UndefValue>(C)) {
@@ -693,11 +715,16 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
         llvm::isa<llvm::ConstantStruct>(C) ||
         llvm::isa<llvm::ConstantDataSequential>(C));
 
+    /*
     dbg << "Adding STRUCT global init for: (" << dest << ") " <<
       ValPrint(dest) << "\n";
+    */
     // For each field of the initializer, add a constraint for the field
     // This is done differently for structs than for array
     if (auto cs = dyn_cast<llvm::ConstantStruct>(C)) {
+      // llvm::dbgs() << "Splitting struct constant: " << *C << "\n";
+      // Need to reset to 0, because we're adding fields
+      offset = 0;
       std::for_each(cs->op_begin(), cs->op_end(),
           [&offset, &cg, &cfg, &cs, &omap, &dest]
           (const llvm::Use &field) {
@@ -706,16 +733,33 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
           omap.getOffsID(dest, offset), field_cons);
       });
     } else {
+      if_debug_enabled(int32_t first_offs = -1);
+
+      // llvm::dbgs() << "Arraying constant: " << *C << "\n";
       std::for_each(C->op_begin(), C->op_end(),
-          [&offset, &cg, &cfg, &cs, &omap, &dest]
+          [&offset, &cg, &cfg, &cs, &omap, &dest
+          if_debug_enabled(, &first_offs)]
           (const llvm::Use &field) {
         auto field_cons = cast<const llvm::Constant>(field);
         offset = addGlobalInitializerConstraints(cg, cfg, omap,
           dest, field_cons);
+
+        if_debug_enabled(
+          if (first_offs < 0) {
+            first_offs = offset;
+          });
+
+        // Each array field should have the same size
+        /*
+        llvm::dbgs() << "offset: " << offset << ", first_offs " << first_offs <<
+            "\n";
+        */
+        assert(offset == first_offs);
       });
     }
   } else {
     llvm::dbgs() << "FIXME: Unknown constant init: " << *C << "\n";
+    offset = 1;
   }
 
   return offset;
@@ -1695,24 +1739,8 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
             ObjectMap::UniversalValue);
 
         // Also store the universal value into this
-        auto node_id = omap.createPhonyID();
-        cg.add(ConstraintType::Store, node_id, ObjectMap::UniversalValue,
+        addGlobalInit(cg, cfg, omap, ObjectMap::UniversalValue,
             omap.getValue(&glbl));
-        // Do CFG setup:
-        // create new CFG node for this store
-        // Attach it between GlblStoreInit and StartNode
-        auto cfg_id = cfg.nextNode();
-        if_debug_enabled(auto chk_cfg_id = cfg_id);
-
-        // Connect cfg_id within the graph
-        // The global store goes between globalinit and init
-        cfg.addPred(cfg_id, CFG::CFGGlobalInit);
-        cfg.addPred(CFG::CFGInit, cfg_id);
-
-        addCFGStore(cfg, &cfg_id, node_id);
-
-        // Assert cfg_node didn't change
-        assert(cfg_id == chk_cfg_id);
       }
     }
   });

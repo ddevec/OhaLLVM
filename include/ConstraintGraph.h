@@ -13,7 +13,7 @@
 #include <utility>
 
 enum class ConstraintKind { Basic, Node };
-enum class ConstraintType { Copy, Load, Store, AddressOf, GlobalInit };
+enum class ConstraintType { Copy, Load, Store, AddressOf };
 class Constraint {
   //{{{
  public:
@@ -29,8 +29,7 @@ class Constraint {
     Constraint(ObjID s, ObjID d,
           ConstraintType t, int32_t o) :
         Constraint(ConstraintKind::Basic, s, d, t, o) {
-      assert(t != ConstraintType::Load && t != ConstraintType::Store &&
-          t != ConstraintType::GlobalInit);
+      assert(t != ConstraintType::Load && t != ConstraintType::Store);
       assert(!(t == ConstraintType::Copy &&
           s == ObjectMap::UniversalValue &&
           d == ObjectMap::NullValue));

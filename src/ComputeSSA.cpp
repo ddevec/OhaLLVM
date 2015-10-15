@@ -20,6 +20,7 @@
 // Transforms {{{
 // Combine all SCCs in Xp in G
 void T4(SEG &G, const SEG &Xp) {
+  PerfTimerPrinter X(dbg, "T4");
   // For each SCC in Xp combine the nodes in G
   dout("Running T4\n");
   // Do this by iterating G
@@ -59,6 +60,7 @@ void T4(SEG &G, const SEG &Xp) {
 // Now, for each P-node in G1 (output from T4) with precisely 1 predecessor,
 //   we combine that node with its predecessor
 void T2(SEG &G, SEG &Xp) {
+  PerfTimerPrinter X(dbg, "T2");
   // Visit Xp in topological order
   dout("Running T2\n");
   std::for_each(Xp.topo_begin(), Xp.topo_end(),
@@ -101,6 +103,7 @@ void T2(SEG &G, SEG &Xp) {
 }
 
 void T7(SEG &G) {
+  PerfTimerPrinter X(dbg, "T7");
   dout("Running T7\n");
   std::for_each(std::begin(G), std::end(G),
       [&G](CFG::ControlFlowGraph::node_iter_type &pnode) {
@@ -127,54 +130,60 @@ void T7(SEG &G) {
 // don't effect any r-nodes (nodes that we do care about)
 // To do this we do a reverse topological visit of the graph from each R node,
 // and mark all visited nodes as needed.  We then remove any unmarked nodes.
+static void T6_visit(SEG &G, CFG::Node &node, std::vector<int8_t> &visit_info) {
+  // If this node hasn't been visited
+  assert(node.id().val() < node_info.size());
+  auto visited = visit_info[node.id().val()];
+  if (visited == 0) {
+    visit_info[node.id().val()] = 1;
+
+    for (auto pred_id : node.preds()) {
+      auto &pred = G.getNode<CFG::Node>(pred_id);
+      T6_visit(G, pred, visit_info);
+    }
+  }
+}
+
 void T6(SEG &G) {
-  std::set<CFG::NodeID> visited;
-  // For each R node
+  PerfTimerPrinter X(dbg, "T6");
   dout("Running T6\n");
+  std::vector<int8_t> visit_info(G.getNumNodes(), 0);
+  // For each R node
   std::for_each(std::begin(G), std::end(G),
-      [&G, &visited](CFG::ControlFlowGraph::node_iter_type &pnode) {
-    auto &node = cast<CFG::Node>(*pnode);
-    // Only deal with marked non-rep nodes
-    // Mark the reverse topolocial sort of each r-node
-    // Note, we don't need to visit visited r nodes
-    if (node.r() &&
-        visited.find(node.id()) == std::end(visited)) {
-      // Do a topological search in reverse
-      // Add this node to visited...
-      dout("Visiting node: " << node.id() << "\n");
-      visited.insert(node.id());
-      std::for_each(
-          G.topo_rbegin(node.id()),
-          G.topo_rend(node.id()),
-          [&G, &visited](CFG::NodeID visit_id) {
-        dout("  Checking pred: " << visit_id << "\n");
-        visited.insert(visit_id);
-      });
-    }
-  });
-
-  // Figure out which nodes are unused
-  std::set<CFG::NodeID> remove_set;
-  std::for_each(std::begin(G), std::end(G),
-      [&G, &visited, &remove_set]
+      [&G, &visit_info]
       (CFG::ControlFlowGraph::node_iter_type &pnode) {
-    CFG::NodeID id = pnode->id();
-    if (visited.find(id) == std::end(visited)) {
-      remove_set.insert(id);
+    auto &node = cast<CFG::Node>(*pnode);
+
+    // Mark this node and its preds, iff
+    //   It is an r node
+    //   It has not been marked
+    if (node.r() &&
+        !visit_info[node.id().val()]) {
+      T6_visit(G, node, visit_info);
     }
   });
 
+  // remove any unmarked nodes
   // Remove any nodes not marked as needed
-  std::for_each(std::begin(remove_set), std::end(remove_set),
-      [&G](CFG::NodeID rm_id) {
-    // dbg << "Removing node: " << rm_id << "\n";
-    G.tryRemoveNode(rm_id);
-  });
+  for (size_t i = 0; i < visit_info.size(); i++) {
+    SEG::NodeID id(i);
+
+    uint8_t visited = visit_info[i];
+
+    if (visited == 0) {
+      auto pnode = G.tryGetNode(id);
+
+      if (pnode && pnode->id() == id) {
+        G.tryRemoveNode(id);
+      }
+    }
+  }
   dout("Finished T6\n");
 }
 
 // merge all up-nodes with exactly one successor with their successor
 void T5(SEG &G) {
+  PerfTimerPrinter X(dbg, "T5");
   dout("Running T5\n");
 
   // Get a topological ordering of all up-nodes
@@ -240,6 +249,7 @@ void T5(SEG &G) {
 //}}}
 
 SEG createGp(const SEG &G) {
+  PerfTimerPrinter X(dbg, "Gp");
   SEG ret = G.clone<CFG::Node>();
 
   // if_debug(ret.printDotFile("Gp_orig.dot", *g_omap));
@@ -270,9 +280,12 @@ void Ramalingam(SEG &G) {
   // Now get the SCC version of Gp
   // NOTE: This will merge the nodes for me
   // We must clean edges before creating the SCC...
-  dout("  Creating SCC\n");
-  Gp.createSCC();
-  dout("Gp Done\n");
+  {
+    PerfTimerPrinter X(dbg, "Create SCC");
+    dout("  Creating SCC\n");
+    Gp.createSCC();
+    dout("Gp Done\n");
+  }
 
   // if_debug(Gp.printDotFile("Xp.dot", *g_omap));
 
@@ -283,7 +296,10 @@ void Ramalingam(SEG &G) {
   // if_debug(G.printDotFile("G4.dot", *g_omap));
 
   // Similar to sfs's rm_undef -- but no removal of r nodes
-  G.cleanGraph();
+  {
+    PerfTimerPrinter X(dbg, "cleanGraph");
+    G.cleanGraph();
+  }
 
   // T2 -- If a node is a p-node and has precisely one predecessor, it may be
   // merged with that predecessor
@@ -319,15 +335,18 @@ void Ramalingam(SEG &G) {
   // if_debug(G.printDotFile("G6.dot", *g_omap));
 
   // NOTE: T5 requires succ edges, we'll add them now:
-  std::for_each(std::begin(G), std::end(G),
-      [&G] (CFG::ControlFlowGraph::node_iter_type &pnode) {
-    auto &preds = pnode->preds();
-    auto succ_id = pnode->id();
-    std::for_each(std::begin(preds), std::end(preds),
-        [&G, &succ_id] (CFG::CFGid pred_id) {
-      G.addSucc(pred_id, succ_id);
+  {
+    PerfTimerPrinter X(dbg, "add succs");
+    std::for_each(std::begin(G), std::end(G),
+        [&G] (CFG::ControlFlowGraph::node_iter_type &pnode) {
+      auto &preds = pnode->preds();
+      auto succ_id = pnode->id();
+      std::for_each(std::begin(preds), std::end(preds),
+          [&G, &succ_id] (CFG::CFGid pred_id) {
+        G.addSucc(pred_id, succ_id);
+      });
     });
-  });
+  }
 
   // T5 -- merges any up-node with exactly one predecessor with its predecessor
   T5(G);
@@ -347,11 +366,8 @@ void Ramalingam(SEG &G) {
 
 // I suppose this requires knowing the set of nodes we care about... as we're
 // calculating the "Partially Equivalent Flow Graph" (PEFG) representation
-CFG::ControlFlowGraph
-SpecSFS::computeSSA(const CFG::ControlFlowGraph &cfg) {
-  // This essentially copies the CFG
-  CFG::ControlFlowGraph ret = cfg.clone<CFG::Node>();
-
+void
+SpecSFS::computeSSA(CFG::ControlFlowGraph &ret) {
   /*
   dbg << "pre-Ramalingam: ret contains cfg ids:";
   std::for_each(ret.node_map_begin(), ret.node_map_end(),
@@ -380,8 +396,6 @@ SpecSFS::computeSSA(const CFG::ControlFlowGraph &cfg) {
   });
   dbg << "\n";
   */
-
-  return std::move(ret);
 }
 #endif
 

@@ -191,17 +191,6 @@ class CFG {
           return ret.second;
         }
 
-        bool addGlobalInit(ObjectMap::ObjID glbl_id) {
-          auto ret = glblInits_.insert(glbl_id);
-
-          assert(ret.second);
-          return ret.second;
-        }
-
-        void clearGlobalInits() {
-          glblInits_.clear();
-        }
-
         void clearUses() {
           uses_.clear();
         }
@@ -316,7 +305,7 @@ class CFG {
 
         auto &node = CFG_.getNode<Node>(node_id);
 
-        // global init nodes are np nodes, and relevant
+        // global nodes are np nodes, and relevant
         node.setM();
         node.setR();
       }
@@ -458,13 +447,6 @@ class CFG {
       assert(ret == 1);
       return ret == 1;
     }
-
-    bool addGlobalInit(ObjectMap::ObjID glbl_id) {
-      globalInits_.push_back(glbl_id);
-      auto ret = objToCFG_.emplace(glbl_id, CFGInit);
-      assert(ret.second);
-      return ret.second;
-    }
     //}}}
 
     // Accessors {{{
@@ -585,16 +567,6 @@ class CFG {
     //}}}
 
     // Def/use/global init Iterators {{{
-    typedef std::vector<ObjectMap::ObjID>::const_iterator
-      const_glbl_init_iterator;
-
-    const_glbl_init_iterator global_inits_begin() const {
-      return std::begin(globalInits_);
-    }
-
-    const_glbl_init_iterator global_inits_end() const {
-      return std::end(globalInits_);
-    }
     //}}}
 
     // CFG Iterators {{{
@@ -646,10 +618,6 @@ class CFG {
     std::map<ObjectMap::ObjID, CFGid> cfgFunctionEntries_;
     // The CFG node for each call instruction's return
     std::map<ObjectMap::ObjID, CFGid> cfgFunctionReturns_;
-
-    // Notation of ConstraintGraph::ObjID's associated with global inits.  These inits are
-    //   each associated with the CFGInit CFGid (before main)
-    std::vector<ObjectMap::ObjID> globalInits_;
 
     std::map<ObjectMap::ObjID, CFGid> objToCFG_;
 

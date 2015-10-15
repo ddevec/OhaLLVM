@@ -5,12 +5,16 @@
 #ifndef INCLUDE_UTIL_H_
 #define INCLUDE_UTIL_H_
 
+#include <cassert>
+
 #include <atomic>
 #include <chrono>
 #include <limits>
 #include <string>
 
-#include "llvm/Support/raw_ostream.h"
+#include "include/Debug.h"
+
+#include "llvm/Support/Debug.h"
 
 #ifdef SPECSFS_NOTIMERS
 #define if_timers(X)
@@ -92,6 +96,22 @@ class PerfTimer {
     Duration totalTime_ = Duration::zero();
     int64_t numTimes_ = 0;
     bool running_ = false;
+  //}}}
+};
+
+class PerfTimerTick {
+  //{{{
+ public:
+    explicit PerfTimerTick(PerfTimer &t) : tmr_(t) {
+      tmr_.start();
+    }
+
+    ~PerfTimerTick() {
+      tmr_.stop();
+    }
+
+ private:
+    PerfTimer &tmr_;
   //}}}
 };
 
@@ -205,9 +225,11 @@ class ID {
     friend bool operator==(ID a, ID b) { return a.m_val == b.m_val; }
     friend bool operator!=(ID a, ID b) { return a.m_val != b.m_val; }
 
+#ifndef SPECSFS_IS_TEST
     template <typename T, class T2, T2 DV>
     friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
          ID<T, T2, DV> id);
+#endif
 
     template <typename T, class T2, T2 DV>
     friend std::ostream &operator<<(std::ostream &o,
@@ -249,12 +271,14 @@ class IDGenerator {
   //}}}
 };
 
+#ifndef SPECSFS_IS_TEST
 template <typename T, class T2, T2 DV>
 llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
     ID<T, T2, DV> id) {
   o << id.m_val;
   return o;
 }
+#endif
 
 template <typename T, class T2, T2 DV>
 std::ostream &operator<<(std::ostream &o,

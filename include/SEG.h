@@ -14,13 +14,11 @@
 #include <iterator>
 #include <limits>
 #include <list>
-#include <map>
 #include <memory>
 #include <queue>
 #include <set>
 #include <stack>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -1046,8 +1044,7 @@ class SEG {
 
     // Accessors {{{
 
-    // Gets the node, or creates it if it doesn't exist.  Creation uses the
-    // default constructor for the node type
+    // Returns the largest NodeID possible
     size_t getNumNodes() const {
       return nodes_.size();
     }
@@ -1158,7 +1155,7 @@ class SEG {
     // Debug functions {{{
     void printDotFile(const std::string &filename,
         const ObjectMap &omap) {
-      cleanGraph();
+      // cleanGraph();
 #ifndef SPECSFS_IS_TEST
       std::ofstream ostm(filename, std::ofstream::out);
       dbg_ostream ofil(ostm);
@@ -1417,6 +1414,8 @@ SEG SEG::clone() const {
     }
   });
 
+  // DON'T COPY EDGES, this is done automagically by addNode(const node &)...
+  /*
   std::for_each(begin(), end(),
       [this, &ret]
       (const node_iter_type &pnode) {
@@ -1431,6 +1430,7 @@ SEG SEG::clone() const {
       ret.addPred(src_id, dest_id);
     }
   });
+  */
 
   return std::move(ret);
 }

@@ -107,9 +107,9 @@ static void print_trace(void) {
 
 // If debug NDEBUG enabled
 #ifndef NDEBUG
-#  define if_debug_enabled(X) X
+#  define if_debug_enabled(...) __VA_ARGS__
 #else
-#  define if_debug_enabled(X)
+#  define if_debug_enabled(...)
 #endif
 
 #if (defined(SPECSFS_LOGDEBUG) || defined(SPECSFS_DEBUG)) \

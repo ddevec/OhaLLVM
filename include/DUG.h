@@ -159,7 +159,7 @@ class DUG {
       // O(n*log(n)) ?
       int32_t consid = 0;
       {
-        PerfTimerPrinter fill_timer(llvm::dbgs(), "fill loop");
+        PerfTimerPrinter fill_timer(dbg, "fill loop");
         std::for_each(std::begin(cg), std::end(cg),
             [this, &consid, &omap, &strongCons]
             (const ConstraintGraph::iter_type &pcons) {
@@ -248,28 +248,6 @@ class DUG {
                 // logout("t " << 2 << "\n");
               }
               break;
-            case ConstraintType::GlobalInit:
-              {
-                auto &glblcons = cast<NodeConstraint>(cons);
-                dout("  node is GlobalInit\n");
-
-                auto glbl_id = glblcons.nodeId();
-                dout("  Actual glbl_id is: (" << glbl_id << ")\n");
-                node_id =
-                  DUG_.addNode<GlobalInitNode>(glbl_id, dest, src, offs);
-                // logout("n " << ret << "\n");
-                dout("  Confirming GlobalInit node!\n");
-                if_debug(auto &nd =) DUG_.getNode<GlobalInitNode>(node_id);
-                dout("    dest is: " << ValPrint(nd.dest())
-                    << "\n");
-                dout("    src is: " << ValPrint(nd.src())
-                    << "\n");
-                dout("  DUGid is " << node_id << "\n");
-                assert(strongCons.find(glbl_id) == std::end(strongCons));
-                strongCons.emplace(glbl_id, cons.strong());
-                // logout("t " << 3 << "\n");
-              }
-              break;
             case ConstraintType::Copy:
               {
                 if (auto ncons = dyn_cast<NodeConstraint>(&cons)) {
@@ -307,7 +285,7 @@ class DUG {
       // Update strength for each store node
       // O(n*log(n))
       {
-        PerfTimerPrinter strong_timer(llvm::dbgs(), "strong loop");
+        PerfTimerPrinter strong_timer(dbg, "strong loop");
         std::for_each(std::begin(DUG_), std::end(DUG_),
             [this, &strongCons] (SEG::node_iter_type &upnode) {
           auto pnode = upnode.get();
@@ -329,21 +307,32 @@ class DUG {
       // O(n*log(n))
       std::multimap<ObjID, DUGid> dest_to_node;
       {
+        int64_t edge_count = 0;
         PerfTimerPrinter edge_discovery_timer(llvm::dbgs(), "Edge Discovery");
         std::for_each(std::begin(DUG_), std::end(DUG_),
-            [this, &dest_to_node] (SEG::node_iter_type &upnode) {
+            [this, &dest_to_node, &edge_count] (SEG::node_iter_type &upnode) {
           auto &node = cast<DUGNode>(*upnode);
           dest_to_node.emplace(node.dest(), node.id());
+          edge_count++;
         });
+
+        llvm::dbgs() << "Discovered " << edge_count << " linkages\n";
       }
 
       // We add unnamed edges for top-level transitions
       // For each node, add an edge from its src() (if it exists) to it
-      // O(n*E*log(E))
+      // O(n*E)
       {
+        int64_t edge_count = 0;
+        int64_t node_count = 0;
+        PerfTimer add_timer;
+        PerfTimer inner_loop_timer;
         PerfTimerPrinter edge_addition(llvm::dbgs(), "Edge creation");
         std::for_each(std::begin(DUG_), std::end(DUG_),
-            [this, &dest_to_node] (SEG::node_iter_type &upnode) {
+            [this, &dest_to_node, &inner_loop_timer,
+              &add_timer, &edge_count, &node_count]
+            (SEG::node_iter_type &upnode) {
+          node_count++;
           auto pnode = upnode.get();
 
           auto &node = cast<DUGNode>(*pnode);
@@ -352,26 +341,34 @@ class DUG {
           // O(log(n))
           auto src_node_set = dest_to_node.equal_range(node.src());
           // O(E)
-          std::for_each(src_node_set.first, src_node_set.second,
-              [this, &node] (std::pair<const ObjID, SEG::NodeID> &pr) {
-            auto &pr_node = DUG_.getNode<DUGNode>(pr.second);
-            auto dest_id = pr_node.id();
-            // Don't add an edge to yourself!
-            if (dest_id != node.id()) {
-              /*
-              dout("Adding edge: " << pr.second << " -> " <<
-                  node.id() << "\n");
-              */
-              // O(log(n))
-              DUG_.addSucc(dest_id, node.id());
-            }
-          });
+          {
+            PerfTimerTick inner_tick(inner_loop_timer);
+            std::for_each(src_node_set.first, src_node_set.second,
+                [this, &node, &add_timer, &edge_count]
+                (std::pair<const ObjID, SEG::NodeID> &pr) {
+              auto &pr_node = DUG_.getNode<DUGNode>(pr.second);
+              auto dest_id = pr_node.id();
+              // Don't add an edge to yourself!
+              if (dest_id != node.id()) {
+                /*
+                dout("Adding edge: " << pr.second << " -> " <<
+                    node.id() << "\n");
+                */
+                // O(1)
+                {
+                  PerfTimerTick add_tick(add_timer);
+                  edge_count++;
+                  // DUG_.addSucc(dest_id, node.id());
+                  pr_node.succs().insert(node.id());
+                }
+              }
+            });
+          }
 
           // StoreNode's also need an incoming edge from dest, because dest
           //   is the store address, not an actual top level variable, and
           //   therefore the store must be recomputed on dest changes
-          if (llvm::isa<StoreNode>(pnode) ||
-              llvm::isa<GlobalInitNode>(pnode)) {
+          if (llvm::isa<StoreNode>(pnode)) {
             auto dest_id = node.dest();
 
             // O(log(n))
@@ -381,12 +378,20 @@ class DUG {
                 [this, &node] (std::pair<const ObjID, SEG::NodeID> &pr) {
               // Don't add an edge to yourself!
               if (pr.second != node.id()) {
-                // O(log(n))
+                // O(1)
                 DUG_.addSucc(pr.second, node.id());
               }
             });
           }
         });
+
+
+        llvm::dbgs() << "edge_count; " << edge_count << "\n";
+        llvm::dbgs() << "node_count; " << node_count << "\n";
+        llvm::dbgs() << "add_timer: timer duration: " <<
+          add_timer.totalElapsed().count() <<  "\n";
+        llvm::dbgs() << "inner_loop_timer: timer duration: " <<
+          inner_loop_timer.totalElapsed().count() <<  "\n";
       }
 
       /*
@@ -794,36 +799,6 @@ class DUG {
         ObjectMap::ObjID realDest_;
 
         bool strong_ = false;
-      //}}}
-    };
-
-    class GlobalInitNode : public PartNode {
-      //{{{
-     public:
-        GlobalInitNode(SEG::NodeID node_id, ObjectMap::ObjID rep,
-            ObjectMap::ObjID dest, ObjectMap::ObjID src, int32_t offset)
-          : PartNode(NodeKind::GlobalInitNode, node_id, rep, src, offset),
-          realDest_(dest) { }
-
-        // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
-            const std::vector<uint32_t> &priority) override;
-
-        static bool classof(const SEG::Node *node) {
-          return node->getKind() == NodeKind::GlobalInitNode;
-        }
-
-        ObjectMap::ObjID rep() const override {
-          return dest_;
-        }
-
-        ObjectMap::ObjID dest() const override {
-          return realDest_;
-        }
-
-     private:
-        ObjectMap::ObjID realDest_;
-        bool first_ = true;
       //}}}
     };
 

@@ -361,6 +361,7 @@ class PtstoSet {
       return const_iterator(std::end(ptsto_));
     }
 
+#ifndef SPECSFS_IS_TEST
     friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
         const PtstoSet &ps) {
       os << "{";
@@ -372,6 +373,7 @@ class PtstoSet {
 
       return os;
     }
+#endif
 
  private:
     Bitmap ptsto_;
@@ -384,12 +386,46 @@ class TopLevelPtsto {
     typedef typename SEG::NodeID NodeID;
     typedef ObjectMap::ObjID ObjID;
 
+    class PtsPair {
+      //{{{
+     public:
+        explicit PtsPair(ObjID id) : id_(id) { }
+        ObjID id() const {
+          return id_;
+        }
+
+        bool operator<(const PtsPair &rhs) const {
+          return id() < rhs.id();
+        }
+
+        bool operator<(ObjID rhs) const {
+          return id() < rhs;
+        }
+
+        std::vector<PtstoSet> &pts() {
+          return pts_;
+        }
+
+        const std::vector<PtstoSet> &pts() const {
+          return pts_;
+        }
+
+     private:
+        ObjID id_;
+        std::vector<PtstoSet> pts_;
+      //}}}
+    };
+
     TopLevelPtsto() = default;
 
     explicit TopLevelPtsto(const std::vector<ObjID> &objs) {
+      assert(is_sorted(std::begin(objs), std::end(objs)));
+      assert(std::adjacent_find(std::begin(objs), std::end(objs))
+          == std::end(objs));
+
       std::for_each(std::begin(objs), std::end(objs),
           [this] (const ObjID &id) {
-        data_.emplace(id, std::vector<PtstoSet>());
+        data_.emplace_back(id);
       });
     }
 
@@ -403,42 +439,51 @@ class TopLevelPtsto {
     //}}}
 
     PtstoSet &at(ObjID id, int32_t offset) {
-      auto &vec = data_.at(id);
+      auto &vec = atVec(id);
 
       assert(offset >= 0);
       if (vec.size() < (uint32_t)offset+1) {
         vec.resize(offset+1);
       }
 
-      auto &ret = vec.at(offset);
-
-      return ret;
+      return vec[offset];
     }
 
     PtstoSet &at(ObjID id) {
       return at(id, 0);
     }
 
+    std::vector<PtstoSet> &atVec(ObjID id) {
+      auto ret = std::lower_bound(std::begin(data_),
+          std::end(data_), id);
+      assert(ret != std::end(data_));
+      return ret->pts();
+    }
+
     void copy(ObjID src_id, ObjID dest_id) {
-      assert(data_.find(dest_id) == std::end(data_));
-      data_[dest_id] = data_.at(src_id);
+      auto it = find(dest_id);
+      assert(it == std::end(data_));
+      it->pts() = atVec(src_id);
     }
 
+    // Bleh, this is slow
     void remove(ObjID id) {
-      assert(data_.find(id) != std::end(data_));
-      data_.erase(id);
+      auto it = find(id);
+      data_.erase(it);
     }
 
-    typedef std::map<ObjID, std::vector<PtstoSet>>::iterator iterator;
-    typedef std::map<ObjID, std::vector<PtstoSet>>::const_iterator
+    typedef std::vector<PtsPair>::iterator iterator;
+    typedef std::vector<PtsPair>::const_iterator
       const_iterator;
 
     iterator find(ObjID id) {
-      return data_.find(id);
+      return std::lower_bound(std::begin(data_), std::end(data_),
+          id);
     }
 
     const_iterator find(ObjID id) const {
-      return data_.find(id);
+      return std::lower_bound(std::begin(data_), std::end(data_),
+          id);
     }
 
 
@@ -459,13 +504,14 @@ class TopLevelPtsto {
     }
 
     const_iterator cbegin() const {
-      return data_.cbegin();
+      return std::begin(data_);
     }
 
     const_iterator cend() const {
-      return data_.cend();
+      return std::end(data_);
     }
 
+#ifndef SPECSFS_IS_TEST
     friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
         const TopLevelPtsto &g) {
       o << "( ";
@@ -475,17 +521,19 @@ class TopLevelPtsto {
           o << ", ";
         }
 
-        for (auto &pts_set : pr.second) {
-          o << pr.first << "->" << pts_set;
+        for (auto &pts_set : pr.pts()) {
+          o << pr.id() << "->" << pts_set;
         }
         first = false;
       }
       o << " )";
       return o;
     }
+#endif
 
  private:
-    std::map<ObjID, std::vector<PtstoSet>> data_;
+    // std::map<ObjID, std::vector<PtstoSet>> data_;
+    std::vector<PtsPair> data_;
   //}}}
 };
 
@@ -500,10 +548,14 @@ class PtstoGraph {
     PtstoGraph() = default;
 
     explicit PtstoGraph(const std::vector<ObjID> &objs) {
-      std::for_each(std::begin(objs), std::end(objs),
-          [this] (const ObjID &id) {
-        data_.emplace(id, PtstoSet());
-      });
+      // Assert this vector is sorted and unique
+      assert(is_sorted(std::begin(objs), std::end(objs)));
+      assert(std::adjacent_find(std::begin(objs), std::end(objs))
+          == std::end(objs));
+
+      for (auto obj_id : objs) {
+        data_.emplace_back(obj_id);
+      }
     }
 
     // Allow move assignment {{{
@@ -516,11 +568,15 @@ class PtstoGraph {
     //}}}
 
     PtstoSet &at(ObjID id) {
-      return data_.at(id);
+      auto it = std::lower_bound(std::begin(data_), std::end(data_), id);
+      assert(it != std::end(data_));
+      return it->pts();
     }
 
     const PtstoSet &at(ObjID id) const {
-      return data_.at(id);
+      auto it = std::lower_bound(std::begin(data_), std::end(data_), id);
+      assert(it != std::end(data_));
+      return it->pts();
     }
 
     bool operator|=(PtstoGraph &rhs) {
@@ -540,7 +596,7 @@ class PtstoGraph {
     }
 
     bool assign(ObjID elm, const PtstoSet &ptsset) {
-      bool ret = data_.at(elm).assign(ptsset);
+      bool ret = at(elm).assign(ptsset);
 
       if (ret) {
         change_.insert(elm);
@@ -552,7 +608,7 @@ class PtstoGraph {
     bool orElement(ObjID elm, const PtstoSet &rhs) {
       bool ret = false;
 
-      auto &lhs_ptsset = data_.at(elm);
+      auto &lhs_ptsset = at(elm);
       ret |= (lhs_ptsset |= rhs);
 
       if (ret) {
@@ -614,6 +670,7 @@ class PtstoGraph {
       change_.clear();
     }
 
+    /*
     typedef std::map<ObjID, PtstoSet>::iterator iterator;
     typedef std::map<ObjID, PtstoSet>::const_iterator
       const_iterator;
@@ -641,23 +698,26 @@ class PtstoGraph {
     const_iterator cend() const {
       return data_.cend();
     }
+    */
 
+#ifndef SPECSFS_IS_TEST
     friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
         const PtstoGraph &g) {
       o << "( ";
       bool first = true;
-      for (auto &pr : g) {
+      for (auto &ptspr : g.data_) {
         if (!first) {
           o << ", ";
         }
 
-        o << pr.first << "->" << pr.second;
+        o << ptspr.id() << "->" << ptspr.pts();
 
         first = false;
       }
       o << " )";
       return o;
     }
+#endif
 
  private:
     class ChangeSet {
@@ -720,8 +780,39 @@ class PtstoGraph {
       //}}}
     };
 
+    class PtsPair {
+      //{{{
+     public:
+        explicit PtsPair(ObjID id) : id_(id) { }
+        ObjID id() const {
+          return id_;
+        }
+
+        bool operator<(const PtsPair &rhs) const {
+          return id() < rhs.id();
+        }
+
+        bool operator<(ObjID rhs) const {
+          return id() < rhs;
+        }
+
+        PtstoSet &pts() {
+          return pts_;
+        }
+
+        const PtstoSet &pts() const {
+          return pts_;
+        }
+
+     private:
+        ObjID id_;
+        PtstoSet pts_;
+      //}}}
+    };
+
     ChangeSet change_;
-    std::map<ObjID, PtstoSet> data_;
+    // std::map<ObjID, PtstoSet> data_;
+    std::vector<PtsPair> data_;
   //}}}
 };
 

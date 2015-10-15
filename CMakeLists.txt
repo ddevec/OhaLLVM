@@ -159,5 +159,5 @@ add_library(prof_ptsto STATIC
 add_cpplint_target(prof_ptsto ${PROF_DYNPTSTO_SOURCES})
 
 add_subdirectory(test)
-add_subdirectory(unit_test)
+#add_subdirectory(unit_test)
 

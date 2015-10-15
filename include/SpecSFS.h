@@ -83,7 +83,7 @@ class SpecSFS : public llvm::ModulePass,
 
   // Computes SSA form of the DUG, given its current edge set
   //   Used to compute SSA for top lvl
-  CFG::ControlFlowGraph computeSSA(const CFG::ControlFlowGraph &cfg);
+  void computeSSA(CFG::ControlFlowGraph &cfg);
 
   // Takes dynamic pointsto information, as well as hot/cold basic block
   //   information, and trims the edges of the DUG appropriately
@@ -99,7 +99,7 @@ class SpecSFS : public llvm::ModulePass,
       ObjectMap &omap);
 
   // Computes the SSA form of each partition
-  bool addPartitionsToDUG(DUG &graph, const CFG &cfg, const ObjectMap &omap);
+  bool addPartitionsToDUG(DUG &graph, CFG &cfg, const ObjectMap &omap);
 
   // Solves the remaining graph, providing full flow-sensitive inclusion-based
   // points-to analysis

@@ -4,8 +4,9 @@
 
 
 // Enable debugging prints for this file
-#define SPECSFS_DEBUG
+// #define SPECSFS_DEBUG
 // #define SPECSFS_LOGDEBUG
+// #define SEPCSFS_PRINT_RESULTS
 
 #include "include/SpecSFS.h"
 
@@ -20,6 +21,7 @@
 #include "llvm/PassSupport.h"
 #include "llvm/Function.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/ProfileInfo.h"
@@ -33,6 +35,18 @@
 #include "include/lib/DynPtsto.h"
 
 using std::swap;
+
+static llvm::cl::opt<std::string>
+  fcn_name("specsfs-debug-fcn", llvm::cl::init(""),
+      llvm::cl::value_desc("string"),
+      llvm::cl::desc("if set specsfs will print the ptsto set for this function"
+        " at the end of execution"));
+
+static llvm::cl::opt<std::string>
+  glbl_name("specsfs-debug-glbl", llvm::cl::init(""),
+      llvm::cl::value_desc("string"),
+      llvm::cl::desc("if set specsfs will print the ptsto set for this global"
+        " at the end of execution"));
 
 // Error handling functions
 /*{{{*/
@@ -87,9 +101,9 @@ void SpecSFS::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   usage.addRequired<UnusedFunctions>();
   // For indirect function following
   // FIXME: Can probably just use DynPtstoLoader...
-  usage.addRequired<IndirFunctionInfo>();
+  // usage.addRequired<IndirFunctionInfo>();
   // For dynamic ptsto removal
-  usage.addRequired<DynPtstoLoader>();
+  // usage.addRequired<DynPtstoLoader>();
   usage.addRequired<llvm::ProfileInfo>();
 }
 
@@ -98,6 +112,11 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   // Set up our alias analysis
   // -- This is required for the llvm AliasAnalysis interface
   InitializeAliasAnalysis(this);
+
+  if (fcn_name != "") {
+    llvm::dbgs() << "Got debug function: " << fcn_name << "\n";
+  }
+
 
   // Clear the def-use graph
   // It should already be cleared, but I'm paranoid
@@ -202,8 +221,10 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   // Now, fill in the indirect function calls
   {
     PerfTimerPrinter indir_timer(llvm::dbgs(), "addIndirectCalls");
-    const auto &dyn_indir_info = getAnalysis<IndirFunctionInfo>();
-    if (addIndirectCalls(cg, cfg, aux, &dyn_indir_info, omap)) {
+    // const auto &dyn_indir_info = getAnalysis<IndirFunctionInfo>();
+    IndirFunctionInfo *pass = nullptr;
+    // if (addIndirectCalls(cg, cfg, aux, &dyn_indir_info, omap))
+    if (addIndirectCalls(cg, cfg, aux, pass, omap)) {
       error("AddIndirectCalls failure!");
     }
   }
@@ -215,32 +236,26 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     cg.unique();
   }
 
-  if_debug(cfg.getSEG().printDotFile("CFG_indir.dot", omap));
+  // if_debug(cfg.getSEG().printDotFile("CFG_indir.dot", omap));
+  // cfg.getSEG().printDotFile("CFG_indir.dot", omap);
 
   // Now, compute the SSA form for the top-level variables
   // We translate any PHI nodes into copy nodes... b/c the paper says so
-  CFG::ControlFlowGraph ssa;
   {
     PerfTimerPrinter ssa_timer(llvm::dbgs(), "computeSSA");
-    cfg.getSEG().cleanGraph();
-    ssa = std::move(computeSSA(cfg.getSEG()));
+    computeSSA(cfg.getSEG());
   }
 
-  if_debug(ssa.printDotFile("CFG_ssa.dot", omap));
-
-  {
-    PerfTimerPrinter seg_timer(llvm::dbgs(), "setSEG");
-    cfg.setSEG(std::move(ssa));
-  }
+  // cfg.getSEG().printDotFile("CFG_ssa.dot", omap);
 
   // Compute partitions, based on address equivalence
   DUG graph;
-
   {
     PerfTimerPrinter fill_timer(llvm::dbgs(), "fillTopLevel");
     graph.fillTopLevel(cg, omap);
   }
 
+  /*
   // Now that we've filled in the top level constraint graph, we add in dynamic
   //   info
   {
@@ -249,6 +264,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
       error("DynPtstoInfo addition failure!");
     }
   }
+  */
 
   {
     PerfTimerPrinter partition_timer(llvm::dbgs(), "computePartitions");
@@ -275,7 +291,38 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     }
   }
 
-#ifndef SPECSFS_NODEBUG
+
+  // Go through a function, and print the ptsto graph for that function, this
+  // should be faster then printing the whole graph
+  if (fcn_name != "") {
+    auto fcn = m.getFunction(fcn_name);
+
+    llvm::dbgs() << "Printing ptsto for function: " << fcn_name << "\n";
+    std::for_each(inst_begin(fcn), inst_end(fcn),
+        [this, &omap] (llvm::Instruction &inst) {
+      if (llvm::isa<llvm::PointerType>(inst.getType())) {
+        auto val_id = omap.getValue(&inst);
+        auto &pts_set_vec = pts_top_.atVec(val_id);
+
+        llvm::dbgs() << "pts_top[" << val_id << "]: " << ValPrint(val_id) <<
+          "\n";
+
+        for (uint32_t i = 0; i < pts_set_vec.size(); i++) {
+          llvm::dbgs() << "  Offset: " << i << "\n";
+
+          auto &ptsto = pts_set_vec[i];
+
+          std::for_each(ptsto.cbegin(), ptsto.cend(),
+              [&omap] (const ObjectMap::ObjID obj_id) {
+            llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
+                << "\n";
+          });
+        }
+      }
+    });
+  }
+
+#if !defined(SPECSFS_NODEBUG) && defined(SPECSFS_PRINT_RESULTS)
   llvm::dbgs() << "Printing final ptsto set for top level variables:\n";
   std::for_each(pts_top_.cbegin(), pts_top_.cend(),
       [&omap]
@@ -332,10 +379,10 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   std::for_each(pts_top_.cbegin(), pts_top_.cend(),
       [&omap, &total_variables, &total_ptstos, &max_objects, &num_objects,
         &num_max]
-      (const std::pair<const ObjectMap::ObjID, std::vector<PtstoSet>> &pr) {
-    for (uint32_t i = 0; i < pr.second.size(); i++) {
+      (const TopLevelPtsto::PtsPair &pr) {
+    for (uint32_t i = 0; i < pr.pts().size(); i++) {
       // Statistics
-      auto &ptsto = pr.second[i];
+      auto &ptsto = pr.pts()[i];
       size_t ptsto_size = ptsto.size();
 
       total_variables++;
@@ -391,8 +438,8 @@ llvm::AliasAnalysis::AliasResult SpecSFS::alias(const Location &L1,
     return AliasAnalysis::alias(L1, L2);
   }
 
-  auto &pts1 = pts1_it->second;
-  auto &pts2 = pts2_it->second;
+  auto &pts1 = pts1_it->pts();
+  auto &pts2 = pts2_it->pts();
 
   // If either of the sets point to nothing, no alias
   if (pts1.empty() || pts2.empty()) {
