@@ -481,11 +481,16 @@ class DUG {
       partitionMap_ = std::move(mapping);
     }
 
-    void setRelevantNodes(std::map<ObjID, Bitmap> mapping) {
+    void setRelevantNodes(std::vector<Bitmap> mapping) {
       relevantNodes_ = std::move(mapping);
     }
 
+    /*
     void setPartNodes(std::map<ObjID, std::vector<DUGid>> mapping) {
+      partNodes_ = std::move(mapping);
+    }
+    */
+    void setPartNodes(std::vector<std::vector<DUGid>> mapping) {
       partNodes_ = std::move(mapping);
     }
 
@@ -493,11 +498,16 @@ class DUG {
       revPartitionMap_ = std::move(mapping);
     }
 
+    /*
     std::vector<DUGid> &getPartNodes(ObjID obj_id) {
       return partNodes_.at(obj_id);
     }
+    */
+    std::vector<DUGid> &getPartNodes(ObjID obj_id) {
+      return partNodes_[obj_id.val()];
+    }
 
-    std::map<ObjID, Bitmap> &getRelevantNodes() {
+    std::vector<Bitmap> &getRelevantNodes() {
       return relevantNodes_;
     }
 
@@ -817,9 +827,10 @@ class DUG {
     // Private variables {{{
     // The Partition equivalence for each object in the graph
     std::map<PartID, std::vector<ObjID>> partitionMap_;
-    std::map<ObjID, Bitmap> relevantNodes_;
+    std::vector<Bitmap> relevantNodes_;
     std::map<ObjID, PartID> revPartitionMap_;
-    std::map<ObjID, std::vector<DUGid>> partNodes_;
+    // std::map<ObjID, std::vector<DUGid>> partNodes_;
+    std::vector<std::vector<DUGid>> partNodes_;
 
     std::map<ObjID, SEG::NodeID> nodeMap_;
 

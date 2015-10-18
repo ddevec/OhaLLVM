@@ -83,96 +83,143 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
 
   // This map holds the conservative "Access Equivalence"
   //   sets for each pointer analyzed
-  std::map<DUG::ObjID, Bitmap> AE;
-  std::map<ObjectMap::ObjID, std::vector<DUG::DUGid>> part_nodes;
+  // std::map<DUG::ObjID, Bitmap> AE;
 
-  // Group nodes based on relevant obj_id
+  // FIXME: Maybe I could get this from the object map?
+  ObjectMap::ObjID max_id(0);
   std::for_each(cfg.obj_to_cfg_begin(), cfg.obj_to_cfg_end(),
-      [&aux, &omap, &dug, &part_nodes]
+      [&aux, &omap, &dug, &max_id]
       (const std::pair<const ObjectMap::ObjID, CFG::CFGid> &pr) {
     // Get info about this node
     auto &node = dug.getNode(pr.first);
 
     ObjectMap::ObjID val_id;
-    dout("Creating part_nodes for obj_id " << pr.first << " : " <<
-        ValPrint(pr.first) << "\n");;
     if (llvm::isa<DUG::StoreNode>(node)) {
       // val is dest for stores...
       val_id = node.dest();
-      dout("  Have store node: " << node.rep() << " : " <<
-        ValPrint(node.rep()) << "\n");
-      dout("    dest: " << node.dest() << " : " <<
-        ValPrint(node.dest()) << "\n");
-      dout("    src: " << node.src() << " : " <<
-        ValPrint(node.src()) << "\n");
     } else {
-      dout("    node_id is: " << node.id() << "\n");
       assert(llvm::isa<DUG::LoadNode>(node) ||
           llvm::isa<DUG::ConstPartNode>(node));
 
       // val is src for gv and loads
       val_id = node.src();
     }
-    /*
-    auto val = omap.valueAtID(val_id);
-    auto obj_id = omap.getObject(val);
-    */
-    // We use the value to label which part nodes are associated with which
-    //   obj_ids
-    auto obj_id = val_id;
-    dout("  Adding part_node for obj: " << obj_id << " : " <<
-        ValPrint(obj_id) << "->" << node.id() << "\n");;
 
-    part_nodes[obj_id].push_back(node.id());
-  });
-
-  // Now, create a grouping of each relevant obj_id for a given DUGid
-  std::for_each(part_nodes.cbegin(), part_nodes.cend(),
-      [this, &AE, &omap, &dug, &aux]
-      (const std::pair<const ObjectMap::ObjID, std::vector<DUG::DUGid>> &pr) {
-    auto obj_id = pr.first;
-
-    const llvm::SparseBitVector<> *paux_ptsto;
-    // Specially handle our special object ids...
-    if (omap.isSpecial(obj_id)) {
-      auto aux_obj = special_aux_.at(obj_id);
-      paux_ptsto = &aux.getPointsTo(aux_obj);
-      dout("Got Special ptsto: " << obj_id << "\n");
-    } else {
-      // If not special, just get the pointsto
-      auto val = omap.valueAtID(obj_id);
-      if (val == nullptr) {
-        auto &nd = dug.getNode(obj_id);
-
-        val = omap.valueAtID(nd.dest());
-      }
-
-      paux_ptsto = &aux.getPointsTo(val);
+    if (val_id > max_id) {
+      max_id = val_id;
     }
-    auto aux_ptsto = *paux_ptsto;
-
-    if_debug(
-      dout("aux ptsto for: " << obj_id << " : " << ValPrint(obj_id)
-          << " is:");
-      for (auto id : aux_ptsto) {
-        dout(" " << id);
-      }
-      dout("\n"));
-
-    std::for_each(std::begin(aux_ptsto), std::end(aux_ptsto),
-        [this, &AE, &obj_id] (uint32_t ptsto_id) {
-      auto aux_it = aux_to_obj_.find(ptsto_id);
-      dout("  Checking aux_to_obj[" << ptsto_id << "]\n");
-      // If I have a value in aux, but not in my object set, ignore it, its an
-      //   aux internal node which I've already accounted for
-      if (aux_it != std::end(aux_to_obj_)) {
-        dout("  aux_to_obj[" << ptsto_id << "] is: " <<
-            aux_it->second << "\n");
-        auto aux_obj_id = aux_it->second;
-        AE[aux_obj_id].set(obj_id.val());
-      }
-    });
   });
+
+  // Size the part_node array to be able to hold up to max_id ids
+  std::vector<std::vector<DUG::DUGid>> part_nodes(max_id.val() + 1);
+
+  // Group nodes based on relevant obj_id
+  {
+    PerfTimerPrinter part_nodes_timer(llvm::dbgs(), "Calculating part_nodes");
+    std::for_each(cfg.obj_to_cfg_begin(), cfg.obj_to_cfg_end(),
+        [&aux, &omap, &dug, &part_nodes]
+        (const std::pair<const ObjectMap::ObjID, CFG::CFGid> &pr) {
+      // Get info about this node
+      auto &node = dug.getNode(pr.first);
+
+      ObjectMap::ObjID val_id;
+      dout("Creating part_nodes for obj_id " << pr.first << " : " <<
+          ValPrint(pr.first) << "\n");;
+      if (llvm::isa<DUG::StoreNode>(node)) {
+        // val is dest for stores...
+        val_id = node.dest();
+        dout("  Have store node: " << node.rep() << " : " <<
+          ValPrint(node.rep()) << "\n");
+        dout("    dest: " << node.dest() << " : " <<
+          ValPrint(node.dest()) << "\n");
+        dout("    src: " << node.src() << " : " <<
+          ValPrint(node.src()) << "\n");
+      } else {
+        dout("    node_id is: " << node.id() << "\n");
+        assert(llvm::isa<DUG::LoadNode>(node) ||
+            llvm::isa<DUG::ConstPartNode>(node));
+
+        // val is src for gv and loads
+        val_id = node.src();
+      }
+      /*
+      auto val = omap.valueAtID(val_id);
+      auto obj_id = omap.getObject(val);
+      */
+      // We use the value to label which part nodes are associated with which
+      //   obj_ids
+      auto obj_id = val_id;
+      dout("  Adding part_node for obj: " << obj_id << " : " <<
+          ValPrint(obj_id) << "->" << node.id() << "\n");
+
+      part_nodes[obj_id.val()].push_back(node.id());
+    });
+  }
+
+  // std::map<DUG::ObjID, Bitmap> AE;
+  max_id = ObjectMap::ObjID(0);
+  for (auto obj_id : aux_to_obj_) {
+    if (max_id < obj_id) {
+      max_id = obj_id;
+    }
+  }
+  std::vector<Bitmap> AE(max_id.val() + 1);
+
+  {
+    PerfTimerPrinter AE_create_timer(llvm::dbgs(), "Creating AE sets");
+    // Now, create a grouping of each relevant obj_id for a given DUGid
+    for (size_t i = 0; i < part_nodes.size(); i++) {
+      ObjectMap::ObjID obj_id(i);
+      auto &part_vec = part_nodes[i];
+      // Only worry about parts with entries
+      if (part_vec.empty()) {
+        continue;
+      }
+
+      const llvm::SparseBitVector<> *paux_ptsto;
+      // Specially handle our special object ids...
+      if (omap.isSpecial(obj_id)) {
+        auto aux_obj = special_aux_.at(obj_id);
+        paux_ptsto = &aux.getPointsTo(aux_obj);
+        dout("Got Special ptsto: " << obj_id << "\n");
+      } else {
+        // If not special, just get the pointsto
+        auto val = omap.valueAtID(obj_id);
+        if (val == nullptr) {
+          auto &nd = dug.getNode(obj_id);
+
+          val = omap.valueAtID(nd.dest());
+        }
+
+        paux_ptsto = &aux.getPointsTo(val);
+      }
+      auto &aux_ptsto = *paux_ptsto;
+
+      if_debug(
+        dout("aux ptsto for: " << obj_id << " : " << ValPrint(obj_id)
+            << " is:");
+        for (auto id : aux_ptsto) {
+          dout(" " << id);
+        }
+        dout("\n"));
+
+      std::for_each(std::begin(aux_ptsto), std::end(aux_ptsto),
+          [this, &AE, &obj_id]
+          (uint32_t ptsto_id) {
+        dout("  Checking aux_to_obj[" << ptsto_id << "]\n");
+        dout("  aux_to_obj.size() is: " << aux_to_obj_.size() << "]\n");
+
+        if (aux_to_obj_.size() > ptsto_id &&
+            aux_to_obj_[ptsto_id] != ObjectMap::ObjID::invalid()) {
+          auto aux_obj_id = aux_to_obj_[ptsto_id];
+          dout("  aux_to_obj[" << ptsto_id << "] is: " <<
+              aux_obj_id << "\n");
+          assert(AE.size() > static_cast<size_t>(aux_obj_id.val()));
+          AE[aux_obj_id.val()].set(obj_id.val());
+        }
+      });
+    }
+  }
 
   // Okay, I now have a populated AE, fill out our parts
   // Create a partition ID generatior
@@ -183,73 +230,84 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
 
   std::map<DUG::PartID, std::vector<ObjectMap::ObjID>> rev_part_map;
 
-  // Now, for each relevant DUGid, create an AE mapping
-  std::for_each(AE.cbegin(), AE.cend(),
-      [&AE, &omap, &rev_part_map, &equiv_map, &part_id_generator]
-      (const std::pair<const ObjectMap::ObjID, Bitmap> &pr) {
-    auto equiv_it = equiv_map.find(pr.second);
+  {
+    PerfTimerPrinter rev_part_timer(llvm::dbgs(), "Populating rev_part_map");
+    // Now, for each relevant DUGid, create an AE mapping
+    /*
+    std::for_each(AE.cbegin(), AE.cend(),
+        [&AE, &omap, &rev_part_map, &equiv_map, &part_id_generator]
+        (const std::pair<const ObjectMap::ObjID, Bitmap> &pr) {
+        */
+    for (size_t i = 0; i < AE.size(); i++) {
+      ObjectMap::ObjID obj_id(i);
+      auto &ae_map = AE[i];
+      auto equiv_it = equiv_map.find(ae_map);
 
-    // I haven't encountered this mapping yet, add a new one
-    if (equiv_it == std::end(equiv_map)) {
-      auto equiv_ret = equiv_map.emplace(pr.second,
-          part_id_generator.next());
-      assert(equiv_ret.second);
+      // I haven't encountered this mapping yet, add a new one
+      if (equiv_it == std::end(equiv_map)) {
+        auto equiv_ret = equiv_map.emplace(ae_map,
+            part_id_generator.next());
+        assert(equiv_ret.second);
 
-      equiv_it = equiv_ret.first;
+        equiv_it = equiv_ret.first;
+      }
+
+      auto part_id = equiv_it->second;
+
+      auto field_pr = omap.findObjAliases(obj_id);
+
+      if (field_pr.first) {
+        auto &field_vec = field_pr.second;
+        std::for_each(std::begin(field_vec), std::end(field_vec),
+            [&rev_part_map, &part_id] (ObjectMap::ObjID id) {
+          rev_part_map[part_id].emplace_back(id);
+        });
+      }
+      // Set the object for this part into pr.first
+      rev_part_map[part_id].emplace_back(obj_id);
     }
-
-    auto part_id = equiv_it->second;
-
-    auto field_pr = omap.findObjAliases(pr.first);
-
-    if (field_pr.first) {
-      auto &field_vec = field_pr.second;
-      std::for_each(std::begin(field_vec), std::end(field_vec),
-          [&rev_part_map, &part_id] (ObjectMap::ObjID id) {
-        rev_part_map[part_id].emplace_back(id);
-      });
-    }
-    // Set the object for this part into pr.first
-    rev_part_map[part_id].emplace_back(pr.first);
-  });
+  }
 
   // Create the node to partition mapping
   // To do this, we basically just reverse the part to node mapping
   // NOTE: We also deduplicate the node to part mapping here -- Is this needed?
   std::map<ObjectMap::ObjID, DUG::PartID> part_map;
-  std::for_each(std::begin(rev_part_map), std::end(rev_part_map),
-      [&part_map, &omap]
-      (std::pair<const DUG::PartID, std::vector<ObjectMap::ObjID>> &pr) {
-    // Okay... here we go
-    // First deduplicate rev_part_map:
-    std::sort(std::begin(pr.second), std::end(pr.second));
-    auto it = std::unique(std::begin(pr.second), std::end(pr.second));
-    pr.second.erase(it, std::end(pr.second));
+  {
+    PerfTimerPrinter part_map_printer(llvm::dbgs(), "Populating part_map");
+    std::for_each(std::begin(rev_part_map), std::end(rev_part_map),
+        [&part_map, &omap]
+        (std::pair<const DUG::PartID, std::vector<ObjectMap::ObjID>> &pr) {
+      // Okay... here we go
+      // First deduplicate rev_part_map:
+      std::sort(std::begin(pr.second), std::end(pr.second));
+      auto it = std::unique(std::begin(pr.second), std::end(pr.second));
+      pr.second.erase(it, std::end(pr.second));
 
-    // Now, create mapping
-    std::for_each(std::begin(pr.second), std::end(pr.second),
-        [&pr, &part_map, &omap]
-        (ObjectMap::ObjID &obj_id) {
-      // Check to see if this is an internal alias I introduced...
-      //    An example of this would be structure fields
-      //    Or allocations from indirect pointers
-      /*
-      auto field_pr = omap.findObjAliases(obj_id);
+      // Now, create mapping
+      std::for_each(std::begin(pr.second), std::end(pr.second),
+          [&pr, &part_map, &omap]
+          (ObjectMap::ObjID &obj_id) {
+        // Check to see if this is an internal alias I introduced...
+        //    An example of this would be structure fields
+        //    Or allocations from indirect pointers
+        /*
+        auto field_pr = omap.findObjAliases(obj_id);
 
-      // If so, add each field to the part map
-      if (field_pr.first) {
-        auto &field_vec = field_pr.second;
-        std::for_each(std::begin(field_vec), std::end(field_vec),
-            [&pr, &part_map] (ObjectMap::ObjID id) {
-          part_map[id] = pr.first;
-        });
-      }
-      */
+        // If so, add each field to the part map
+        if (field_pr.first) {
+          auto &field_vec = field_pr.second;
+          std::for_each(std::begin(field_vec), std::end(field_vec),
+              [&pr, &part_map] (ObjectMap::ObjID id) {
+            part_map[id] = pr.first;
+          });
+        }
+        */
 
-      // Now, just add the obj
-      part_map[obj_id] = pr.first;
+        // Now, just add the obj
+        part_map[obj_id] = pr.first;
+      });
     });
-  });
+  }
 
   if_debug(
     dout("End partitionToNode map is:\n");
@@ -263,11 +321,14 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
       });
     }));
 
-  // We now have our mappings, and we transfer them to the DUG
-  dug.setNodeToPartition(std::move(part_map));
-  dug.setPartitionToNodes(std::move(rev_part_map));
-  dug.setRelevantNodes(std::move(AE));
-  dug.setPartNodes(std::move(part_nodes));
+  {
+    PerfTimerPrinter(llvm::dbgs(), "Moving entries to DUG");
+    // We now have our mappings, and we transfer them to the DUG
+    dug.setNodeToPartition(std::move(part_map));
+    dug.setPartitionToNodes(std::move(rev_part_map));
+    dug.setRelevantNodes(std::move(AE));
+    dug.setPartNodes(std::move(part_nodes));
+  }
 
   return false;
 }
@@ -321,7 +382,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
 
       auto &rel_map = graph.getRelevantNodes();
       dout("Getting rel_map for: " << obj_id << "\n");
-      auto &rel_bitmap = rel_map[obj_id];
+      auto &rel_bitmap = rel_map[obj_id.val()];
 
       int num_loads = 0;
       int num_stores = 0;

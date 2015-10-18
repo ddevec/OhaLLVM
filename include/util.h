@@ -222,6 +222,18 @@ class ID {
       return *this != invalid();
     }
 
+    ID operator++(int) {
+      ID ret(val_++);
+
+      return ret;
+    }
+
+    ID operator++() {
+      ++val_;
+
+      return *this;
+    }
+
     friend bool operator==(ID a, ID b) { return a.val_ == b.val_; }
     friend bool operator!=(ID a, ID b) { return a.val_ != b.val_; }
 

@@ -124,7 +124,8 @@ class SpecSFS : public llvm::ModulePass,
   TopLevelPtsto pts_top_;
 
   // FIXME: Should put in another entity? oh well...
-  std::map<int, ObjectMap::ObjID> aux_to_obj_;
+  // std::map<int, ObjectMap::ObjID> aux_to_obj_;
+  std::vector<ObjectMap::ObjID> aux_to_obj_;
   std::map<ObjectMap::ObjID, int> special_aux_;
 
   ObjectMap::ObjID getObjIDRep(ObjectMap::ObjID id) {

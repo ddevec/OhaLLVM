@@ -4,7 +4,7 @@
 
 
 // Enable debugging prints for this file
-#define SPECSFS_DEBUG
+// #define SPECSFS_DEBUG
 // #define SPECSFS_LOGDEBUG
 // #define SEPCSFS_PRINT_RESULTS
 
@@ -177,6 +177,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   }
 
   {
+    PerfTimerPrinter(llvm::dbgs(), "aux_to_obj fill");
     // Converting from aux_id to obj_ids
     // For each pointer value we care about:
     // dout("Filling aux_to_obj:\n");
@@ -194,17 +195,33 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     special_aux_.emplace(ObjectMap::PthreadSpecificValue,
         aux.PthreadSpecificNode);
 
-    aux_to_obj_.emplace(Andersens::NullPtr, ObjectMap::NullValue);
-    aux_to_obj_.emplace(Andersens::NullObject, ObjectMap::NullObjectValue);
-    aux_to_obj_.emplace(Andersens::ArgvValue, ObjectMap::ArgvValue);
-    aux_to_obj_.emplace(Andersens::ArgvObject, ObjectMap::ArgvObjectValue);
-    aux_to_obj_.emplace(aux.IntNode, ObjectMap::IntValue);
-    aux_to_obj_.emplace(Andersens::UniversalSet, ObjectMap::UniversalValue);
-    aux_to_obj_.emplace(Andersens::LocaleObject, ObjectMap::LocaleObject);
-    aux_to_obj_.emplace(Andersens::CTypeObject, ObjectMap::CTypeObject);
-    aux_to_obj_.emplace(Andersens::ErrnoObject, ObjectMap::ErrnoObject);
-    aux_to_obj_.emplace(aux.PthreadSpecificNode,
-        ObjectMap::PthreadSpecificValue);
+    uint32_t max_aux_id = std::max(aux.IntNode, aux.PthreadSpecificNode);
+    std::for_each(std::begin(aux_val_nodes), std::end(aux_val_nodes),
+        [this, &aux, &omap, &max_aux_id]
+        (const std::pair<const llvm::Value *, uint32_t> &pr) {
+      if (max_aux_id < pr.second) {
+        max_aux_id = pr.second;
+      }
+    });
+
+    // We should have less than 100mill ids, right?
+    assert(max_aux_id < 100000000);
+
+    llvm::dbgs() << "max_aux_id is: " << max_aux_id << "\n";
+    aux_to_obj_.resize(max_aux_id + 1);
+
+    aux_to_obj_[Andersens::NullPtr] = ObjectMap::NullValue;
+    aux_to_obj_[Andersens::NullObject] = ObjectMap::NullObjectValue;
+    aux_to_obj_[Andersens::ArgvValue] = ObjectMap::ArgvValue;
+    aux_to_obj_[Andersens::ArgvObject] = ObjectMap::ArgvObjectValue;
+    assert(aux.IntNode < aux_to_obj_.size());
+    aux_to_obj_[aux.IntNode] = ObjectMap::IntValue;
+    aux_to_obj_[Andersens::UniversalSet] = ObjectMap::UniversalValue;
+    aux_to_obj_[Andersens::LocaleObject] = ObjectMap::LocaleObject;
+    aux_to_obj_[Andersens::CTypeObject] = ObjectMap::CTypeObject;
+    aux_to_obj_[Andersens::ErrnoObject] = ObjectMap::ErrnoObject;
+    aux_to_obj_[aux.PthreadSpecificNode] =
+      ObjectMap::PthreadSpecificValue;
 
     std::for_each(std::begin(aux_val_nodes), std::end(aux_val_nodes),
         [this, &aux, &omap]
@@ -217,8 +234,9 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
       dout("  " << aux_val_id << "->" << obj_id <<
         "\n");
       */
-      assert(aux_to_obj_.find(aux_val_id) == std::end(aux_to_obj_));
-      aux_to_obj_.emplace(aux_val_id, obj_id);
+      // assert(aux_to_obj_.find(aux_val_id) == std::end(aux_to_obj_));
+      assert(aux_to_obj_.size() > aux_val_id);
+      aux_to_obj_[aux_val_id] = obj_id;
     });
   }
 
