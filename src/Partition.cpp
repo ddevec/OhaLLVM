@@ -337,7 +337,7 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
 bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
     const ObjectMap &omap) {
   // Map to track which partitions use each DUG node
-  std::map<DUG::DUGid, std::vector<DUG::PartID>> node_to_partition;
+  std::vector<std::vector<DUG::PartID>> node_to_partition(graph.getNumNodes());
 
   SEG ssa_seg;
   {
@@ -360,18 +360,16 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
     });
   }
 
+  std::vector<DUG::DUGid> cfg_node_rep;
   // For each partition, calculate the SSA of any nodes in that partiton
   {
     PerfTimerPrinter tmr(llvm::dbgs(), "calcParts");
     std::for_each(graph.part_cbegin(), graph.part_cend(),
-        [this, &graph, &ssa, &ssa_seg, &node_to_partition, &omap]
+        [this, &graph, &ssa, &ssa_seg, &node_to_partition, &omap, &cfg_node_rep]
         (const std::pair<const DUG::PartID, std::vector<ObjectMap::ObjID>> &pr) {  // NOLINT
-      std::map<CFG::CFGid, DUG::DUGid> cfg_node_rep;
-
-      // Create a clone of the ControlFlowGraph for this partition's ssa
-      CFG::ControlFlowGraph part_graph =
-        ssa_seg.clone<CFG::Node>();
-
+      // clear the entries in cfg_node_rep (note this is faster then
+      //     reallocating)
+      cfg_node_rep.assign(ssa_seg.getNumNodes(), DUG::DUGid::invalid());
       // Now calculate and fill in the info for each object
       //   in this partition
       const auto &part_id = pr.first;
@@ -387,14 +385,15 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
       int num_loads = 0;
       int num_stores = 0;
 
-      std::list<DUG::DUGid> part_load;
-      std::list<DUG::DUGid> part_store;
+      // Holds dugid and cfg nodeid, so we can update nodes if SEG is needed
+      std::vector<std::pair<DUG::DUGid, SEG::NodeID>> part_load;
+      std::vector<std::pair<DUG::DUGid, SEG::NodeID>> part_store;
 
       // We iterate over each object which may be accessed by this partition,
       //   using our rel_vec
       std::for_each(std::begin(rel_bitmap), std::end(rel_bitmap),
           [&ssa, &graph, &part_id, &omap, &part_load, &num_loads,
-              &part_store, &num_stores, &part_graph,
+              &part_store, &num_stores, &ssa_seg,
               &node_to_partition]
           (uint32_t obj_id_val) {
         ObjectMap::ObjID obj_id = ObjectMap::ObjID(obj_id_val);
@@ -416,22 +415,12 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
             auto cfg_id = ssa.getCFGid(node.rep());
 
             // Ooops, I aliased a variable... shame on me
-            auto &node = part_graph.getNode<CFG::Node>(cfg_id);
-
-            // Set R
-            node.setR();
-
-            // Denote this CFG node maps to this DUG node
-            // FIXME:
-            // MAHHHH this is the wrong type of ID... so I'm forcing it...
-            //   because I'm ticked off!
-            dout("Adding use to node: " << node.id() << "\n");
-            node.addUse(ObjectMap::ObjID(dug_id.val()));
+            auto &node = ssa_seg.getNode<CFG::Node>(cfg_id);
 
             // Denote that this DUG node is part of this partition
-            node_to_partition[dug_id].push_back(part_id);
+            node_to_partition[dug_id.val()].push_back(part_id);
 
-            part_load.push_back(dug_id);
+            part_load.emplace_back(dug_id, node.id());
             num_loads++;
           // If its a store:
           } else if (llvm::isa<DUG::StoreNode>(node)) {
@@ -439,27 +428,11 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
             auto cfg_id = ssa.getCFGid(node.rep());
 
             // Get the node in the CFG
-            auto &node = part_graph.getNode<CFG::Node>(cfg_id);
+            auto &node = ssa_seg.getNode<CFG::Node>(cfg_id);
 
-            // Set M and R
-            node.setM();
-            node.setR();
+            node_to_partition[dug_id.val()].push_back(part_id);
 
-            // Possibly set C
-            if (ssa.isStrong(obj_id)) {
-              node.setC();
-            }
-
-            // Denote this CFGid references this DUG entry
-            // FIXME:
-            // MAHHHH this is the wrong type of ID... so I'm forcing it...
-            //   because I'm ticked off!
-            dout("Adding def to node: " << node.id() << "\n");
-            node.addDef(ObjectMap::ObjID(dug_id.val()));
-
-            node_to_partition[dug_id].push_back(part_id);
-
-            part_store.push_back(dug_id);
+            part_store.emplace_back(dug_id, node.id());
             num_stores++;
           }  else {
             llvm_unreachable("Unrecognized node type!");
@@ -474,27 +447,74 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
         // This graph has only one store:
         if (num_stores == 1 && num_loads > 0) {
           dout("Have 1 load, adding edges that way\n");
-          auto st_id = part_store.front();
+          auto st_id = part_store.front().first;
 
-          std::for_each(std::begin(part_load), std::end(part_load),
-              [&graph, &part_id, &st_id] (DUG::DUGid load_id) {
+          for (auto &pr : part_load) {
+            auto load_id = pr.first;
             graph.addEdge(st_id, load_id, part_id);
-          });
+          }
         // This graph has only 1 load
         } else if (num_stores >= 0 && num_loads == 1) {
           dout("Have 1 load, adding edges that way\n");
-          auto load_id = part_load.front();
+          auto load_id = part_load.front().first;
 
-          std::for_each(std::begin(part_store), std::end(part_store),
-              [&graph, &part_id, &load_id] (DUG::DUGid st_id) {
+          for (auto &pr : part_store) {
+            auto st_id = pr.first;
             graph.addEdge(st_id, load_id, part_id);
-          });
+          }
         }
         // NOTE: It's possible that we fell through here (if we have 0
         // loads or 0 stores).  In that case, I don't need to add any edges...
 
       // This isn't a simple graph, I need to calculate full SSA
       } else {
+        // Create a clone of the ControlFlowGraph for this partition's ssa
+        CFG::ControlFlowGraph part_graph =
+          ssa_seg.clone<CFG::Node>();
+
+        // Update our part seg so we can use this
+        for (auto &pr : part_store) {
+          auto cfg_id = pr.second;
+          auto dug_id = pr.first;
+
+          // Get the node in the CFG
+          auto &node = part_graph.getNode<CFG::Node>(cfg_id);
+
+          // Set M and R
+          node.setM();
+          node.setR();
+
+          // Possibly set C
+          if (ssa.isStrong(obj_id)) {
+            node.setC();
+          }
+
+          // Denote this CFGid references this DUG entry
+          // FIXME:
+          // MAHHHH this is the wrong type of ID... so I'm forcing it...
+          //   because I'm ticked off!
+          dout("Adding def to node: " << node.id() << "\n");
+          node.addDef(ObjectMap::ObjID(dug_id.val()));
+        }
+
+        for (auto &pr : part_load) {
+          auto cfg_id = pr.second;
+          auto dug_id = pr.first;
+
+          // Get the node in the CFG
+          auto &node = part_graph.getNode<CFG::Node>(cfg_id);
+
+          // Set R
+          node.setR();
+
+          // Denote this CFG node maps to this DUG node
+          // FIXME:
+          // MAHHHH this is the wrong type of ID... so I'm forcing it...
+          //   because I'm ticked off!
+          dout("Adding use to node: " << node.id() << "\n");
+          node.addUse(ObjectMap::ObjID(dug_id.val()));
+        }
+
 #ifdef DO_SEG_PRINT
         {
           std::string part_file("part_graph");
@@ -563,7 +583,10 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
           } else {
             dug_id = graph.addPhi();
             // Add the phi node to the partition
-            node_to_partition[dug_id].push_back(part_id);
+            assert(node_to_partition.size() ==
+                static_cast<size_t>(dug_id.val()));
+            node_to_partition.push_back(std::vector<DUG::PartID>());
+            node_to_partition[dug_id.val()].push_back(part_id);
             dout("  Got phi of: " << dug_id << "\n");
             assert(llvm::isa<DUG::PhiNode>(graph.getNode(dug_id)));
           }
@@ -571,8 +594,9 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
           // Update our cfg_node_rep map, so we can fill in preds later
           dout("  Setting cfg_node_rep for " << cfg_id << " to: "
               << dug_id << "\n");
-          assert(cfg_node_rep.find(cfg_id) == std::end(cfg_node_rep));
-          cfg_node_rep.emplace(cfg_id, dug_id);
+          assert(cfg_node_rep[cfg_id.val()] == DUG::DUGid::invalid());
+          assert(cfg_node_rep.size() > static_cast<size_t>(cfg_id.val()));
+          cfg_node_rep[cfg_id.val()] = dug_id;
 
           // Put an edge from the basic block's "leader" to its members
           if (have_st) {
@@ -654,15 +678,15 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
             // NOTE: if we were not doing a topo order we may have to
             //   evaluate the pred here
             // dout("Finding cfg_node_rep at: " << pred_cfg_id << "\n");
-            auto pred_rep_it = cfg_node_rep.find(pred_cfg_id);
-            if (pred_rep_it == std::end(cfg_node_rep)) {
+            auto pred_rep = cfg_node_rep[pred_cfg_id.val()];
+            if (pred_rep == DUG::DUGid::invalid()) {
               // Delay our rep resolving until after we've visited all nodes
               dout("    ||Delaying cfg edge (pred id: " << pred_cfg_id
                   << ") {" << "??" << " -(" << part_id << ")-> " << dug_id <<
                   "}\n");
               delayed_edges.emplace_back(pred_node_id, dug_id, part_id);
             } else {
-              DUG::DUGid &pred_rep_id = pred_rep_it->second;
+              DUG::DUGid pred_rep_id = pred_rep;
 
               dout("    --Adding cfg edge {" << pred_rep_id << " -(" <<
                 part_id << ")-> " << dug_id << "}\n");
@@ -693,10 +717,11 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
               [&graph, &cfg_node_rep]
               (std::tuple<CFG::CFGid, DUG::DUGid, DUG::PartID> &tup) {
             auto pred_cfg_id = std::get<0>(tup);
-            auto pred_rep_it = cfg_node_rep.find(pred_cfg_id);
-            assert(pred_rep_it != std::end(cfg_node_rep));
+            // auto pred_rep_it = cfg_node_rep.find(pred_cfg_id);
+            auto pred_rep = cfg_node_rep[pred_cfg_id.val()];
+            assert(pred_rep != DUG::DUGid::invalid());
 
-            auto pred_rep_id = pred_rep_it->second;
+            auto pred_rep_id = pred_rep;
 
             dout("  --Adding delayed-cfg edge {" << pred_rep_id <<
                 " -(" << std::get<2>(tup) << ")-> " << std::get<1>(tup)
@@ -723,11 +748,15 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
     PerfTimer inner_loop;
     PerfTimer part_node_setup;
     PerfTimerPrinter tmr(llvm::dbgs(), "Setup nodes");
-    std::for_each(node_to_partition.cbegin(), node_to_partition.cend(),
-        [&graph, &omap, &inner_loop, &part_node_setup]
-        (const std::pair<const DUG::DUGid, std::vector<DUG::PartID>> &pr) {
-      auto &part_node = cast<DUG::PartNode>(graph.getNode(pr.first));
-      auto &parts = pr.second;
+    for (size_t i = 0; i < node_to_partition.size(); i++) {
+      DUG::DUGid dug_id(i);
+      auto &parts = node_to_partition[i];
+
+      if (parts.empty()) {
+        continue;
+      }
+
+      auto &part_node = cast<DUG::PartNode>(graph.getNode(dug_id));
       std::vector<ObjectMap::ObjID> vars;
 
       dout("  Looking at ID: " << part_node.id() << "\n");
@@ -755,22 +784,6 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
         });
       }
 
-      /*
-      if_debug(
-        dout("  Setting up vars as:");
-        for (auto &obj : vars) {
-          dout(" " << obj);
-        }
-        dout("\n"));
-      */
-      /*
-      llvm::dbgs() << "  (" << pr.first << ")Setting up vars as:";
-      for (auto &obj : vars) {
-        llvm::dbgs() << " " << obj;
-      }
-      llvm::dbgs() << "\n";
-      */
-
       std::sort(std::begin(vars), std::end(vars));
       auto it = std::unique(std::begin(vars), std::end(vars));
       vars.erase(it, std::end(vars));
@@ -779,7 +792,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
         PerfTimerTick tick(part_node_setup);
         part_node.setupPartGraph(vars);
       }
-    });
+    }
 
 
     llvm::dbgs() << "inner_loop: timer duration: " <<

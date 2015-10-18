@@ -18,55 +18,130 @@
 
 // Ramalingams {{{
 // Transforms {{{
-// Combine all SCCs in Xp in G
-void T4(SEG &G, const SEG &Xp) {
-  // PerfTimerPrinter X(dbg, "T4");
-  // For each SCC in Xp combine the nodes in G
-  dout("Running T4\n");
-  // Do this by iterating G
-  std::for_each(std::begin(G), std::end(G),
-      [&G, &Xp](const CFG::ControlFlowGraph::node_iter_type &pnode) {
-    // Get the node in G
-    auto &nd = cast<CFG::Node>(*pnode);
+static auto should_visit_default = [] (const SEG::Node &) -> bool {
+  return true;
+};
 
-    dout("  Evaluating Node: " << nd.id() << "\n");
+static auto scc_visit_default = [] (const SEG::Node &) { };
 
-    // Now, get the rep from Xp
-    auto pxp_rep = Xp.tryGetNode<CFG::Node>(nd.id());
-    // auto &xp_rep = Xp.getNode<CFG::Node>(nd.id());
+// NOTE: a topo order can be achieved by visiting each node on post_unite
+template<typename should_visit = decltype(should_visit_default),
+  typename scc_visit = decltype(scc_visit_default)>
+class RunTarjans {
+ public:
+    static const int32_t IndexInvalid = -1;
 
-    if (pxp_rep != nullptr) {
-      auto &xp_rep = *pxp_rep;
-      dout("    Xp node has rep: " << xp_rep.id() << "\n");
-      // If the rep from xp has a different ID than G:
-      if (xp_rep.id() != nd.id()) {
-        // Get the G node that should be rep, and unite the two
-        auto &g_rep = G.getNode(xp_rep.id());
-
-        // Remove the edge from rep to nd, as we're about to unite them
-        G.removePred(nd.id(), xp_rep.id());
-        // And any edges the other way!
-        G.removePred(xp_rep.id(), nd.id());
-
-        dout("!!  Running unite rep: " << xp_rep.id() << "\n");
-        g_rep.unite(G, nd);
+    explicit RunTarjans(SEG &G,
+        should_visit do_visit = should_visit_default,
+        scc_visit do_scc_visit = scc_visit_default) :
+        should_visit_(do_visit), scc_visit_(do_scc_visit),
+        seg_(G), nodeData_(G.getNumNodes()) {
+      for (auto &pnode : G) {
+        auto &node = *pnode;
+        auto &node_data = getData(node.id());
+        // If this is both a unvisited node, and we should visit it
+        if (node_data.index == IndexInvalid && should_visit_(node)) {
+          tarjan_visit(node);
+        }
       }
     }
-  });
+
+ private:
+    struct TarjanData {
+      int32_t index = IndexInvalid;
+      int32_t lowlink = IndexInvalid;
+      bool onStack = false;
+    };
+
+    struct TarjanData &getData(SEG::NodeID id) {
+      assert(id != SEG::NodeID::invalid());
+      assert(id.val() < nodeData_.size());
+      return nodeData_[id.val()];
+    }
+
+    void tarjan_visit(SEG::Node &node) {
+      auto &node_data = getData(node.id());
+      assert(!node_data.onStack);
+      assert(node_data.index == IndexInvalid);
+      node_data.index = nextIndex_;
+      node_data.lowlink = nextIndex_;
+      nextIndex_++;
+
+      nodeStack_.push_back(node.id());
+      node_data.onStack = true;
+
+      for (auto pred_id : node.preds()) {
+        auto &pred_node = seg_.getNode(pred_id);
+        // If this node should be visited (allows us to exclude some nodes, like
+        //   needed in Ramalingam's T4 transform)
+        if (should_visit_(pred_node)) {
+          auto &pred_data = getData(pred_node.id());
+          if (pred_data.index == IndexInvalid) {
+            tarjan_visit(pred_node);
+            node_data.lowlink = std::min(pred_data.lowlink, node_data.lowlink);
+          } else if (pred_data.onStack) {
+            node_data.lowlink = std::min(node_data.lowlink, pred_data.index);
+          }
+        }
+      }
+
+      if (node_data.lowlink == node_data.index) {
+        while (true) {
+          auto merge_id = nodeStack_.back();
+          nodeStack_.pop_back();
+          auto &merge_node = seg_.getNode(merge_id);
+          auto &merge_data = getData(merge_node.id());
+          merge_data.onStack = false;
+
+          if (merge_id == node.id()) {
+            break;
+          }
+
+          node.unite(seg_, merge_node);
+        }
+
+        scc_visit_(node);
+      }
+    }
+
+    // Visit fcns...
+    should_visit &should_visit_;
+    scc_visit &scc_visit_;
+
+    SEG &seg_;
+
+    int32_t nextIndex_ = 0;
+    std::vector<SEG::NodeID> nodeStack_;
+    std::vector<TarjanData> nodeData_;
+};
+
+void T4(SEG &G, std::vector<SEG::NodeID> &topo_order) {
+  // PerfTimerPrinter X(dbg, "T4");
+  dout("Running T4\n");
+
+  auto p_only = [] (const SEG::Node &nd) -> bool {
+      auto &node = cast<CFG::Node>(nd);
+      return node.p();
+  };
+
+  auto save_topo = [&topo_order] (SEG::Node &nd) {
+    topo_order.push_back(nd.id());
+  };
+
+  RunTarjans<decltype(p_only), decltype(save_topo)> (G, p_only, save_topo);
 
   dout("Finished T4\n");
 }
 
 // Now, for each P-node in G1 (output from T4) with precisely 1 predecessor,
 //   we combine that node with its predecessor
-void T2(SEG &G, SEG &Xp) {
+void T2(SEG &G, const std::vector<SEG::NodeID> &topo_order) {
   // PerfTimerPrinter X(dbg, "T2");
   // Visit Xp in topological order
   dout("Running T2\n");
-  std::for_each(Xp.topo_begin(), Xp.topo_end(),
-      [&G, &Xp](CFG::NodeID xp_id) {
+  for (auto topo_id : topo_order) {
     dout("visiting node: " << xp_id << "\n");
-    auto &w_node = G.getNode<CFG::Node>(xp_id);
+    auto &w_node = G.getNode<CFG::Node>(topo_id);
 
     bool multi_preds = false;
     SEG::NodeID saved_pred = SEG::NodeID::invalid();
@@ -97,7 +172,7 @@ void T2(SEG &G, SEG &Xp) {
           << w_node.id() << "\n");
       pred_node.unite(G, w_node);
     }
-  });
+  }
 
   dout("Finished T2\n");
 }
@@ -186,27 +261,57 @@ void T5(SEG &G) {
   // PerfTimerPrinter X(dbg, "T5");
   dout("Running T5\n");
 
-  // Get a topological ordering of all up-nodes
-  // For each up-node in said ordering
-  // Create a new graph, with only up-nodes
-  // Start with Gup as a clone of G
+  auto up_nodes = [](SEG::Node &nd) -> bool {
+    auto &node = cast<CFG::Node>(nd);
+    return (node.p() && node.u());
+  };
 
-  CFG::ControlFlowGraph Gup = G.clone<CFG::Node>();
+  auto t5_visit = [&G](SEG::Node &seg_nd) {
+    auto &nd = cast<CFG::Node>(seg_nd);
+    // This had better be a up-node...
+    assert(nd.isRep());
+    assert(nd.u() && nd.p());
+    dout("visiting node: " << nd.id() << "\n");
 
-  // Now, remove any non-up nodes
-  std::for_each(std::begin(G), std::end(G),
-      [&Gup](CFG::ControlFlowGraph::node_iter_type &pnode) {
-    auto &node = cast<CFG::Node>(*pnode);
+    bool multi_succs = false;
+    SEG::NodeID saved_succ = SEG::NodeID::invalid();
 
-    // remove any non-up nodes
-    if (!node.u() || !node.p()) {
-      dout("Gup Removing: " << node.id() << "\n");
-      Gup.removeNode(node.id());
+    for (auto succ_id : nd.succs()) {
+      dout("  visiting raw_succ: " << succ_id << "\n");
+      auto &succ_node = G.getNode<CFG::Node>(succ_id);
+      dout("  visiting succ: " << succ_node.id() << "\n");
+
+      if (saved_succ == SEG::NodeID::invalid()) {
+        saved_succ = succ_node.id();
+      } else if (saved_succ != succ_node.id()) {
+        multi_succs = true;
+        break;
+      }
     }
-  });
+
+    // We don't unite if the node has more than 1 pred
+    // We don't unite if we're our own predecessor
+    if (!multi_succs && saved_succ != nd.id()) {
+      auto &succ_node = G.getNode<CFG::Node>(saved_succ);
+
+      dout("!!Uniting: " << succ_node.id() << ", "
+          << nd.id() << "\n");
+      G.removeSucc(nd.id(), succ_node.id());
+      G.removePred(succ_node.id(), nd.id());
+      succ_node.unite(G, nd);
+    }
+  };
+
+  // Do topo visit:
+  // NOTE: Since The graph is guaranteed to be in normal form w/ respect to T4
+  //   it cannot have a cycle of p nodes, so tarjans will just visit the set of
+  //   p-nodes in topo-order
+  RunTarjans<decltype(up_nodes), decltype(t5_visit)>(G, up_nodes, t5_visit);
+
 
   // Now, visit each up-node in G in a topological order with repsect to the
   //     up-nodes -- We use Gup for this
+  /*
   std::for_each(Gup.topo_begin(), Gup.topo_end(),
       [&G](CFG::NodeID topo_id) {
     auto &nd = G.getNode<CFG::Node>(topo_id);
@@ -243,67 +348,36 @@ void T5(SEG &G) {
       succ_node.unite(G, nd);
     }
   });
+  */
 
   dout("Finished T5\n");
 }
 //}}}
-
-SEG createGp(const SEG &G) {
-  // PerfTimerPrinter X(dbg, "Gp");
-  SEG ret = G.clone<CFG::Node>();
-
-  // if_debug(ret.printDotFile("Gp_orig.dot", *g_omap));
-
-  // Iterate each node in G (which is a clone of Gp)
-  // If the node is non-P, remove it
-  std::for_each(std::begin(G), std::end(G),
-      [&ret] (const SEG::node_iter_type &pnode) {
-    auto &node = cast<CFG::Node>(*pnode);
-    // If the node is non-preserving, remove it
-    if (!node.p()) {
-      ret.removeNode(node.id());
-    }
-  });
-
-  return std::move(ret);
-}
 
 void Ramalingam(SEG &G) {
   // Start by restricting G to only p-nodes, this gives is "Gp"
   // Make Gp a copy of G
   // if_debug(G.printDotFile("G.dot", *g_omap));
 
-  SEG Gp = createGp(G);
-
-  // if_debug(Gp.printDotFile("Gp.dot", *g_omap));
-
-  // Now get the SCC version of Gp
-  // NOTE: This will merge the nodes for me
-  // We must clean edges before creating the SCC...
-  {
-    // PerfTimerPrinter X(dbg, "Create SCC");
-    dout("  Creating SCC\n");
-    Gp.createSCC();
-    dout("Gp Done\n");
-  }
-
   // if_debug(Gp.printDotFile("Xp.dot", *g_omap));
 
-  // T4 -- This transform collapses a set of strongly connected p (preserving)
-  // nodes into a single node.
-  T4(G, Gp);
-
-  // if_debug(G.printDotFile("G4.dot", *g_omap));
-
-  // Similar to sfs's rm_undef -- but no removal of r nodes
+  // Limmits lifetime of topo_order
   {
-    // PerfTimerPrinter X(dbg, "cleanGraph");
-    G.cleanGraph();
-  }
+    std::vector<SEG::NodeID> topo_order;
+    // T4 -- This transform collapses a set of strongly connected p (preserving)
+    //   nodes into a single node.
+    // Populates topo_order
+    T4(G, topo_order);
 
-  // T2 -- If a node is a p-node and has precisely one predecessor, it may be
-  // merged with that predecessor
-  T2(G, Gp);
+    // if_debug(G.printDotFile("G4.dot", *g_omap));
+
+    // Similar to sfs's rm_undef -- but no removal of r nodes
+    G.cleanGraph();
+
+    // T2 -- If a node is a p-node and has precisely one predecessor, it may be
+    // merged with that predecessor
+    T2(G, topo_order);
+  }
 
   // if_debug(G.printDotFile("G2.dot", *g_omap));
 

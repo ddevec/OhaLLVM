@@ -288,7 +288,6 @@ class CFG {
       bool r_ = false;
       // To identify constant nodes (see computeSSA comments)
       bool c_ = false;
-      //}}}
     };
     //}}}
 
