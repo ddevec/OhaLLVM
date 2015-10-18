@@ -4,7 +4,7 @@
 
 
 // Enable debugging prints for this file
-// #define SPECSFS_DEBUG
+#define SPECSFS_DEBUG
 // #define SPECSFS_LOGDEBUG
 // #define SEPCSFS_PRINT_RESULTS
 
@@ -116,6 +116,9 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   if (fcn_name != "") {
     llvm::dbgs() << "Got debug function: " << fcn_name << "\n";
   }
+  if (glbl_name != "") {
+    llvm::dbgs() << "Got debug gv: " << glbl_name << "\n";
+  }
 
 
   // Clear the def-use graph
@@ -152,11 +155,12 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   // Runs HU on the graph as it stands, w/ only top level info filled in
   // Removes any nodes deemed to be non-ptr (definitely null), and merges nodes
   //   with statically equivalent ptsto sets
-  /* FIXME: -- ddevec -- Skipping for now to help debug
-  if (optimizeConstraints(cg, cfg, omap)) {
-    error("OptimizeConstraints failure!");
+  {
+    PerfTimerPrinter opt_timer(llvm::dbgs(), "optimizeConstarints");
+    if (optimizeConstraints(cg, cfg, omap)) {
+      error("OptimizeConstraints failure!");
+    }
   }
-  */
 
   if_debug(cfg.getSEG().printDotFile("CFG.dot", omap));
 
@@ -233,7 +237,6 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   // (possibly created by optimizeConstraints())
   {
     PerfTimerPrinter unique_timer(llvm::dbgs(), "cg.unique()");
-    cg.unique();
   }
 
   // if_debug(cfg.getSEG().printDotFile("CFG_indir.dot", omap));
@@ -294,6 +297,29 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
 
   // Go through a function, and print the ptsto graph for that function, this
   // should be faster then printing the whole graph
+  if (glbl_name != "") {
+    llvm::dbgs() << "Printing ptsto for global variable: " << glbl_name << "\n";
+    auto glbl = m.getNamedValue(glbl_name);
+    auto val_id = omap.getValue(glbl);
+    auto &pts_set_vec = pts_top_.atVec(val_id);
+
+
+    llvm::dbgs() << "pts_top[" << val_id << "]: " << ValPrint(val_id) <<
+      "\n";
+
+    for (uint32_t i = 0; i < pts_set_vec.size(); i++) {
+      llvm::dbgs() << "  Offset: " << i << "\n";
+
+      auto &ptsto = pts_set_vec[i];
+
+      std::for_each(ptsto.cbegin(), ptsto.cend(),
+          [&omap] (const ObjectMap::ObjID obj_id) {
+        llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
+            << "\n";
+      });
+    }
+  }
+
   if (fcn_name != "") {
     auto fcn = m.getFunction(fcn_name);
 
@@ -323,29 +349,44 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   }
 
 #if !defined(SPECSFS_NODEBUG) && defined(SPECSFS_PRINT_RESULTS)
+  llvm::dbgs() << "Printing the rep mappings for top level variales:\n";
+  for (auto &pr : obj_to_rep_) {
+    auto obj_id = pr.first;
+    auto rep_id = getObjIDRep(obj_id);
+
+    llvm::dbgs() << obj_id << "->" << rep_id << "\n";
+  }
+
+
   llvm::dbgs() << "Printing final ptsto set for top level variables:\n";
   std::for_each(pts_top_.cbegin(), pts_top_.cend(),
       [&omap]
-      (const std::pair<const ObjectMap::ObjID, std::vector<PtstoSet>> &pr) {
-    auto top_val = omap.valueAtID(pr.first);
+      (const TopLevelPtsto::PtsPair &pr) {
+    auto top_val = omap.valueAtID(pr.id());
 
-    if (top_val == nullptr) {
-      llvm::dbgs() << "Value is (id): " << pr.first << "\n";
-    } else if (auto gv = dyn_cast<llvm::GlobalValue>(top_val)) {
-      llvm::dbgs() << "Value (" << pr.first << ") is: " <<
-          gv->getName() << "\n";
-    } else if (auto fcn = dyn_cast<llvm::Function>(top_val)) {
-      llvm::dbgs() << "Value (" << pr.first <<") is: " <<
-          fcn->getName() << "\n";
+    if (omap.isObject(pr.id())) {
+      llvm::dbgs() << "Object ";
     } else {
-      llvm::dbgs() << "Value (" << pr.first << ") is: " << *top_val << "\n";
+      llvm::dbgs() << "Value ";
     }
 
-    for (uint32_t i = 0; i < pr.second.size(); i++) {
+    if (top_val == nullptr) {
+      llvm::dbgs() << "is (id): " << pr.id() << "\n";
+    } else if (auto gv = dyn_cast<llvm::GlobalValue>(top_val)) {
+      llvm::dbgs() << "(" << pr.id() << ") is: " <<
+          gv->getName() << "\n";
+    } else if (auto fcn = dyn_cast<llvm::Function>(top_val)) {
+      llvm::dbgs() << "(" << pr.id() <<") is: " <<
+          fcn->getName() << "\n";
+    } else {
+      llvm::dbgs() << "(" << pr.id() << ") is: " << *top_val << "\n";
+    }
+
+    for (uint32_t i = 0; i < pr.pts().size(); i++) {
       llvm::dbgs() << "  Offset: " << i << "\n";
 
       // Statistics
-      auto &ptsto = pr.second[i];
+      auto &ptsto = pr.pts()[i];
 
       // Printing
       std::for_each(ptsto.cbegin(), ptsto.cend(),
@@ -427,8 +468,12 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
 
 llvm::AliasAnalysis::AliasResult SpecSFS::alias(const Location &L1,
                                             const Location &L2) {
-  auto pts1_it = pts_top_.find(omap_.getValue(L1.Ptr));
-  auto pts2_it = pts_top_.find(omap_.getValue(L2.Ptr));
+  auto obj_id1 = omap_.getValue(L1.Ptr);
+  auto obj_id2 = omap_.getValue(L2.Ptr);
+  auto rep_id1 = getObjIDRep(obj_id1);
+  auto rep_id2 = getObjIDRep(obj_id2);
+  auto pts1_it = pts_top_.find(rep_id1);
+  auto pts2_it = pts_top_.find(rep_id2);
 
   if (pts1_it == std::end(pts_top_)) {
     return AliasAnalysis::alias(L1, L2);

@@ -12,28 +12,46 @@
 
 #include <utility>
 
-enum class ConstraintKind { Basic, Node };
 enum class ConstraintType { Copy, Load, Store, AddressOf };
 class Constraint {
   //{{{
  public:
     typedef typename ObjectMap::ObjID ObjID;
+
+    struct SrcDestCmp {
+      bool operator()(const Constraint &lhs, const Constraint &rhs) const {
+        if (lhs.src() == rhs.src()) {
+          return lhs.dest() < rhs.dest();
+        }
+
+        return lhs.src() < rhs.src();
+      }
+    };
+
     // Constructors {{{
     Constraint(ObjID s, ObjID d, ConstraintType t) :
-        Constraint(ConstraintKind::Basic, s, d, t, 0) {
-      assert(!(t == ConstraintType::Copy &&
-          s == ObjectMap::UniversalValue &&
-          d == ObjectMap::NullValue));
+        Constraint(s, d, t, 0) {
     }
 
     Constraint(ObjID s, ObjID d,
           ConstraintType t, int32_t o) :
-        Constraint(ConstraintKind::Basic, s, d, t, o) {
+        // Note, when rep not specified, rep is dest
+        Constraint(t, s, d, d, o) {
       assert(t != ConstraintType::Load && t != ConstraintType::Store);
-      assert(!(t == ConstraintType::Copy &&
-          s == ObjectMap::UniversalValue &&
-          d == ObjectMap::NullValue));
     }
+
+    Constraint(ConstraintType type, ObjID src, ObjID dest, ObjID rep) :
+          Constraint(type, src, dest, rep, 0) { }
+
+    Constraint(ConstraintType type, ObjID src, ObjID dest, ObjID rep,
+        int32_t offs) :
+        src_(src), dest_(dest), rep_(rep), type_(type), offs_(offs) {
+      // We shouldn't copy from the UV to null val... its bad
+      assert(!(type == ConstraintType::Copy &&
+          src == ObjectMap::UniversalValue &&
+          dest == ObjectMap::NullValue));
+    }
+      
 
     // No copys, yes moves {{{
     Constraint(const Constraint &) = default;
@@ -55,6 +73,14 @@ class Constraint {
 
     ObjID dest() const {
       return dest_;
+    }
+
+    ObjID rep() const {
+      return rep_;
+    }
+    
+    void updateRep(ObjID new_rep) {
+      rep_ = new_rep;
     }
 
     void retarget(ObjID src, ObjID dest) {
@@ -98,10 +124,6 @@ class Constraint {
       return false;
     }
 
-    ConstraintKind getKind() const {
-      return kind_;
-    }
-
     // For LLVM RTTI {{{
     static bool classof(const Constraint *) {
       return true;
@@ -129,79 +151,35 @@ class Constraint {
           ofil << "BLEH";
       }
     }
-    //}}}
 
- protected:
-    // Used from subclass constructors only
-    Constraint(ConstraintKind kind, ObjID s, ObjID d, ConstraintType t) :
-      Constraint(kind, s, d, t, 0) { }
-    Constraint(ConstraintKind kind, ObjID s, ObjID d,
-          ConstraintType t, int32_t o) :
-        src_(s), dest_(d), type_(t), kind_(kind), offs_(o) {
-      // We should never copy universal value into null value!
-      assert(!(t == ConstraintType::Copy &&
-          s == ObjectMap::UniversalValue &&
-          d == ObjectMap::NullValue));
+    static constexpr const char *getTypeName(ConstraintType t) {
+      return (t == ConstraintType::Copy) ? "copy" :
+             (t == ConstraintType::AddressOf) ? "address_of" :
+             (t == ConstraintType::Load) ? "load" :
+             (t == ConstraintType::Store) ?  "store" :
+             "ERROR UNKNOWN CONST EXPR";
     }
+
+    friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
+        const Constraint &cons) {
+      o << cons.rep() << ": " << getTypeName(cons.type()) << ", (" <<
+          cons.src() << ", " << cons.dest() << ") + " << cons.offs();
+      return o;
+    }
+    //}}}
 
  private:
     // Private Data {{{
     ObjID src_;
     ObjID dest_;
+    ObjID rep_;
 
     bool strong_ = false;
 
     ConstraintType type_;
 
-    ConstraintKind kind_;
-
     int32_t offs_ = 0;
     //}}}
-  //}}}
-};
-
-class NodeConstraint : public Constraint {
-  //{{{
- public:
-    typedef typename ObjectMap::ObjID ObjID;
-
-    NodeConstraint(ConstraintType type, ObjID src, ObjID dest, ObjID nd) :
-      Constraint(ConstraintKind::Node, src, dest, type), nodeId_(nd) { }
-
-    // No copys, yes moves {{{
-    NodeConstraint(const NodeConstraint &) = default;
-    NodeConstraint &operator=(const NodeConstraint&) = default;
-
-    NodeConstraint(NodeConstraint &&) = default;
-    NodeConstraint &operator=(NodeConstraint&&) = default;
-    //}}}
-    
-    ObjID nodeId() const {
-      return nodeId_;
-    }
-
-    void setNodeID(ObjID node_id) {
-      nodeId_ = node_id;
-    }
-
-    bool operator<(const Constraint &cons) const override {
-      auto ld_cons = cast<NodeConstraint>(cons);
-
-      if (nodeId() != ld_cons.nodeId()) {
-        return nodeId() < ld_cons.nodeId();
-      }
-
-      return Constraint::operator<(cons);
-    }
-
-    // For LLVM RTTI {{{
-    static bool classof(const Constraint *cons) {
-      return cons->getKind() == ConstraintKind::Node;
-    }
-    //}}}
-
- private:
-    ObjID nodeId_;
   //}}}
 };
 
@@ -230,15 +208,16 @@ class ConstraintGraph {
           s == ObjectMap::UniversalValue &&
           d == ObjectMap::NullValue));
       constraints_.emplace_back(new Constraint(s, d, type, o));
-      // dbg << "Creating constriant: " << (constraints_.size()-1) << "\n";
-      return ConsID(constraints_.size()-1);
+
+      auto id = ConsID(constraints_.size()-1);
+      return id;
     }
 
     ConsID add(ConstraintType type, ObjID nd, ObjID s, ObjID d) {
-      constraints_.emplace_back(new NodeConstraint(type, s, d, nd));
+      constraints_.emplace_back(new Constraint(type, s, d, nd));
 
-      // dbg << "Creating constriant: " << (constraints_.size()-1) << "\n";
-      return ConsID(constraints_.size()-1);
+      auto id = ConsID(constraints_.size()-1);
+      return id;
     }
 
     void removeConstraint(std::unique_ptr<Constraint> &pcons) {
@@ -249,12 +228,6 @@ class ConstraintGraph {
       // Reset the ptr to nullptr
       constraints_.at(id.val()).reset(nullptr);
     }
-
-    void unique() {
-      std::sort(std::begin(constraints_), std::end(constraints_));
-      auto it = std::unique(std::begin(constraints_), std::end(constraints_));
-      constraints_.erase(it, std::end(constraints_));
-    }
     //}}}
 
     // Accessors {{{
@@ -264,6 +237,10 @@ class ConstraintGraph {
 
     const Constraint  &getConstraint(ConsID id) const {
       return *constraints_.at(id.val());
+    }
+
+    size_t constraintSize() const {
+      return constraints_.size();
     }
     //}}}
 

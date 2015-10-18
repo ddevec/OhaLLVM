@@ -15,8 +15,6 @@
 class CFG {
  public:
 
-    // Id Types {{{
-
     // Constant CFGid values {{{
     enum class CFGEnum : int32_t {
       CFGGlobalInit = 0,
@@ -139,7 +137,6 @@ class CFG {
 
           uses_.insert(std::begin(node.uses_), std::end(node.uses_));
           defs_.insert(std::begin(node.defs_), std::end(node.defs_));
-          glblInits_.insert(std::begin(node.glblInits_), std::end(node.glblInits_));
 
 
           SEG::Node::unite(graph, n);
@@ -199,6 +196,14 @@ class CFG {
           return !uses_.empty();
         }
 
+        void swapUses(std::set<ObjectMap::ObjID> &new_uses) {
+          uses_.swap(new_uses);
+        }
+
+        void swapDefs(std::set<ObjectMap::ObjID> &new_defs) {
+          defs_.swap(new_defs);
+        }
+
         void debug_uses() const {
           if_debug(
             dbg << "  Uses.size is: " << uses_.size() << "\n";
@@ -248,14 +253,6 @@ class CFG {
           return std::end(uses_);
         }
 
-        const_def_use_iterator glbl_inits_begin() const {
-          return std::begin(glblInits_);
-        }
-
-        const_def_use_iterator glbl_inits_end() const {
-          return std::end(glblInits_);
-        }
-
         /*
         const_def_use_iterator uses_begin() const {
           return std::begin(uses_);
@@ -284,7 +281,6 @@ class CFG {
       // The objects defined/uses by this node
       std::set<ObjectMap::ObjID> defs_;
       std::set<ObjectMap::ObjID> uses_;
-      std::set<ObjectMap::ObjID> glblInits_;
 
       // To identify p/m nodes (see computeSSA comments)
       bool m_ = false;
@@ -452,6 +448,10 @@ class CFG {
     // Accessors {{{
     CFGid getCFGid(ObjectMap::ObjID obj_id) const {
       return objToCFG_.at(obj_id);
+    }
+
+    void swapObjToCFG(std::map<ObjectMap::ObjID, CFGid> &mapping) {
+      objToCFG_.swap(mapping);
     }
 
     bool isStrong(ObjectMap::ObjID) const {
@@ -623,6 +623,7 @@ class CFG {
 
     // List of functions that have no obvious uses
     std::map<ObjectMap::ObjID, std::vector<ConstraintGraph::ConsID>> unusedFunctions_;
+    //}}}
 };
 
 #endif  // INCLUDE_CONTROLFLOWGRAPH_H_

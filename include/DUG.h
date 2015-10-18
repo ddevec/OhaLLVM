@@ -213,9 +213,8 @@ class DUG {
               //   with an addressof operator)
               // Make a phony dest for this store:
               {
-                auto &stcons = cast<NodeConstraint>(cons);
                 dout("  node is Store\n");
-                auto st_id = stcons.nodeId();
+                auto st_id = cons.rep();
                 dout("  adding for store: (" << st_id << ") "
                   << ValPrint(st_id) << "\n");
                 node_id = DUG_.addNode<StoreNode>(st_id, dest, src, offs);
@@ -228,9 +227,8 @@ class DUG {
               break;
             case ConstraintType::Load:
               {
-                auto &ldcons = cast<NodeConstraint>(cons);
                 dout("  node is Load\n");
-                auto ld_id = ldcons.nodeId();
+                auto ld_id = cons.rep();
                 dout("  Actual load_id is: (" << ld_id << ") " <<
                   ValPrint(ld_id) << "\n");
                 node_id = DUG_.addNode<LoadNode>(ld_id, dest, src, offs);
@@ -250,22 +248,12 @@ class DUG {
               break;
             case ConstraintType::Copy:
               {
-                if (auto ncons = dyn_cast<NodeConstraint>(&cons)) {
-                  dout("  node is Copy\n");
-                  node_id =
-                    DUG_.addNode<CopyNode>(ncons->nodeId(), dest, src, offs);
-                  // logout("n " << ret << "\n");
-                  dout("  DUGid is " << node_id << "\n");
-                  strongCons.emplace(dest, cons.strong());
-                } else {
-                  dout("  node is Copy\n");
-                  node_id =
-                    DUG_.addNode<CopyNode>(dest, src, offs);
-                  // logout("n " << ret << "\n");
-                  dout("  DUGid is " << node_id << " : consid is: "
-                      << consid <<  "\n");
-                  strongCons.emplace(dest, cons.strong());
-                }
+                dout("  node is Copy\n");
+                node_id =
+                  DUG_.addNode<CopyNode>(cons.rep(), dest, src, offs);
+                // logout("n " << ret << "\n");
+                dout("  DUGid is " << node_id << "\n");
+                strongCons.emplace(dest, cons.strong());
                 // logout("t " << 4 << "\n");
               }
               break;
@@ -305,19 +293,25 @@ class DUG {
       // Need to create a list of providers for each id, and go from there...
       // First, map all ids to sources
       // O(n*log(n))
-      std::multimap<ObjID, DUGid> dest_to_node;
-      {
-        int64_t edge_count = 0;
-        PerfTimerPrinter edge_discovery_timer(llvm::dbgs(), "Edge Discovery");
-        std::for_each(std::begin(DUG_), std::end(DUG_),
-            [this, &dest_to_node, &edge_count] (SEG::node_iter_type &upnode) {
-          auto &node = cast<DUGNode>(*upnode);
-          dest_to_node.emplace(node.dest(), node.id());
-          edge_count++;
-        });
+      // std::multimap<ObjID, DUGid> dest_to_node;
+      int32_t max_dest = 0;
+      int64_t edge_count = 0;
+      std::for_each(std::begin(DUG_), std::end(DUG_),
+          [this, &max_dest] (SEG::node_iter_type &upnode) {
+        auto &node = cast<DUGNode>(*upnode);
+        if (node.dest().val() > max_dest) {
+          max_dest = node.dest().val();
+        }
+      });
 
-        llvm::dbgs() << "Discovered " << edge_count << " linkages\n";
-      }
+      std::vector<std::vector<DUGid>> dest_to_node(max_dest+1);
+      std::for_each(std::begin(DUG_), std::end(DUG_),
+          [this, &dest_to_node, &edge_count] (SEG::node_iter_type &upnode) {
+        auto &node = cast<DUGNode>(*upnode);
+        dest_to_node[node.dest().val()].push_back(node.id());
+        edge_count++;
+      });
+      llvm::dbgs() << "Discovered " << edge_count << " linkages\n";
 
       // We add unnamed edges for top-level transitions
       // For each node, add an edge from its src() (if it exists) to it
@@ -339,30 +333,29 @@ class DUG {
 
           // Add an incoming edge from src
           // O(log(n))
-          auto src_node_set = dest_to_node.equal_range(node.src());
-          // O(E)
-          {
+          // auto src_node_set = dest_to_node.equal_range(node.src());
+          /*
+          assert(node.src().val() <
+              static_cast<int32_t>(dest_to_node.size()));
+          */
+          if (node.src().val() < static_cast<int32_t>(dest_to_node.size())) {
             PerfTimerTick inner_tick(inner_loop_timer);
-            std::for_each(src_node_set.first, src_node_set.second,
-                [this, &node, &add_timer, &edge_count]
-                (std::pair<const ObjID, SEG::NodeID> &pr) {
-              auto &pr_node = DUG_.getNode<DUGNode>(pr.second);
-              auto dest_id = pr_node.id();
+            auto &srcs = dest_to_node[node.src().val()];
+            for (auto src_id : srcs) {
+              auto &pr_node = DUG_.getNode<DUGNode>(src_id);
+              auto node_id = node.id();
               // Don't add an edge to yourself!
-              if (dest_id != node.id()) {
-                /*
-                dout("Adding edge: " << pr.second << " -> " <<
-                    node.id() << "\n");
-                */
-                // O(1)
-                {
-                  PerfTimerTick add_tick(add_timer);
-                  edge_count++;
-                  // DUG_.addSucc(dest_id, node.id());
-                  pr_node.succs().insert(node.id());
-                }
+              // assert(pr_node.id() != node_id);
+              if (pr_node.id() != node_id) {
+              // O(1)
+              // edge_count++;
+              // DUG_.addSucc(dest_id, node.id());
+                pr_node.succs().insert(node_id);
               }
-            });
+            }
+          } else {
+            llvm::dbgs() << "WARNING: fillTopLevel sink without source: (" <<
+              node.src() << ") " << ValPrint(node.src()) << "\n";
           }
 
           // StoreNode's also need an incoming edge from dest, because dest
@@ -372,16 +365,17 @@ class DUG {
             auto dest_id = node.dest();
 
             // O(log(n))
-            auto dest_nodes = dest_to_node.equal_range(dest_id);
+            // auto dest_nodes = dest_to_node.equal_range(dest_id);
+            assert(dest_id.val() < static_cast<int32_t>(dest_to_node.size()));
+            auto &st_srcs = dest_to_node[dest_id.val()];
             // O(E)
-            std::for_each(dest_nodes.first, dest_nodes.second,
-                [this, &node] (std::pair<const ObjID, SEG::NodeID> &pr) {
+            for (auto src_id : st_srcs) {
               // Don't add an edge to yourself!
-              if (pr.second != node.id()) {
+              if (src_id != node.id()) {
                 // O(1)
-                DUG_.addSucc(pr.second, node.id());
+                DUG_.addSucc(src_id, node.id());
               }
-            });
+            }
           }
         });
 

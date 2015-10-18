@@ -20,7 +20,7 @@
 // Transforms {{{
 // Combine all SCCs in Xp in G
 void T4(SEG &G, const SEG &Xp) {
-  PerfTimerPrinter X(dbg, "T4");
+  // PerfTimerPrinter X(dbg, "T4");
   // For each SCC in Xp combine the nodes in G
   dout("Running T4\n");
   // Do this by iterating G
@@ -60,7 +60,7 @@ void T4(SEG &G, const SEG &Xp) {
 // Now, for each P-node in G1 (output from T4) with precisely 1 predecessor,
 //   we combine that node with its predecessor
 void T2(SEG &G, SEG &Xp) {
-  PerfTimerPrinter X(dbg, "T2");
+  // PerfTimerPrinter X(dbg, "T2");
   // Visit Xp in topological order
   dout("Running T2\n");
   std::for_each(Xp.topo_begin(), Xp.topo_end(),
@@ -103,7 +103,7 @@ void T2(SEG &G, SEG &Xp) {
 }
 
 void T7(SEG &G) {
-  PerfTimerPrinter X(dbg, "T7");
+  // PerfTimerPrinter X(dbg, "T7");
   dout("Running T7\n");
   std::for_each(std::begin(G), std::end(G),
       [&G](CFG::ControlFlowGraph::node_iter_type &pnode) {
@@ -132,7 +132,7 @@ void T7(SEG &G) {
 // and mark all visited nodes as needed.  We then remove any unmarked nodes.
 static void T6_visit(SEG &G, CFG::Node &node, std::vector<int8_t> &visit_info) {
   // If this node hasn't been visited
-  assert(node.id().val() < node_info.size());
+  assert(node.id().val() < static_cast<int32_t>(visit_info.size()));
   auto visited = visit_info[node.id().val()];
   if (visited == 0) {
     visit_info[node.id().val()] = 1;
@@ -145,7 +145,7 @@ static void T6_visit(SEG &G, CFG::Node &node, std::vector<int8_t> &visit_info) {
 }
 
 void T6(SEG &G) {
-  PerfTimerPrinter X(dbg, "T6");
+  // PerfTimerPrinter X(dbg, "T6");
   dout("Running T6\n");
   std::vector<int8_t> visit_info(G.getNumNodes(), 0);
   // For each R node
@@ -183,7 +183,7 @@ void T6(SEG &G) {
 
 // merge all up-nodes with exactly one successor with their successor
 void T5(SEG &G) {
-  PerfTimerPrinter X(dbg, "T5");
+  // PerfTimerPrinter X(dbg, "T5");
   dout("Running T5\n");
 
   // Get a topological ordering of all up-nodes
@@ -249,7 +249,7 @@ void T5(SEG &G) {
 //}}}
 
 SEG createGp(const SEG &G) {
-  PerfTimerPrinter X(dbg, "Gp");
+  // PerfTimerPrinter X(dbg, "Gp");
   SEG ret = G.clone<CFG::Node>();
 
   // if_debug(ret.printDotFile("Gp_orig.dot", *g_omap));
@@ -281,7 +281,7 @@ void Ramalingam(SEG &G) {
   // NOTE: This will merge the nodes for me
   // We must clean edges before creating the SCC...
   {
-    PerfTimerPrinter X(dbg, "Create SCC");
+    // PerfTimerPrinter X(dbg, "Create SCC");
     dout("  Creating SCC\n");
     Gp.createSCC();
     dout("Gp Done\n");
@@ -297,7 +297,7 @@ void Ramalingam(SEG &G) {
 
   // Similar to sfs's rm_undef -- but no removal of r nodes
   {
-    PerfTimerPrinter X(dbg, "cleanGraph");
+    // PerfTimerPrinter X(dbg, "cleanGraph");
     G.cleanGraph();
   }
 
@@ -336,7 +336,7 @@ void Ramalingam(SEG &G) {
 
   // NOTE: T5 requires succ edges, we'll add them now:
   {
-    PerfTimerPrinter X(dbg, "add succs");
+    // PerfTimerPrinter X(dbg, "add succs");
     std::for_each(std::begin(G), std::end(G),
         [&G] (CFG::ControlFlowGraph::node_iter_type &pnode) {
       auto &preds = pnode->preds();

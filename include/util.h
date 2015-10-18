@@ -189,7 +189,7 @@ class ID {
     ID() = default;
 
     // Explicit constructor:
-    constexpr explicit ID(impl val) : m_val(val) { }
+    constexpr explicit ID(impl val) : val_(val) { }
 
     // Allow copy
     ID(const ID &) = default;
@@ -198,32 +198,32 @@ class ID {
     ID &operator=(const ID &) = default;
 
     // Explicit conversion to get back the impl:
-    explicit operator impl() const { return m_val; }
+    explicit operator impl() const { return val_; }
 
-    constexpr impl val() const { return m_val; }
+    constexpr impl val() const { return val_; }
 
     bool operator<(const ID &id) const {
-      return m_val < id.m_val;
+      return val_ < id.val_;
     }
 
     bool operator>(const ID &id) const {
-      return m_val > id.m_val;
+      return val_ > id.val_;
     }
 
     bool operator>=(const ID &id) const {
-      return m_val >= id.m_val;
+      return val_ >= id.val_;
     }
 
     bool operator<=(const ID &id) const {
-      return m_val <= id.m_val;
+      return val_ <= id.val_;
     }
 
     bool valid() const {
       return *this != invalid();
     }
 
-    friend bool operator==(ID a, ID b) { return a.m_val == b.m_val; }
-    friend bool operator!=(ID a, ID b) { return a.m_val != b.m_val; }
+    friend bool operator==(ID a, ID b) { return a.val_ == b.val_; }
+    friend bool operator!=(ID a, ID b) { return a.val_ != b.val_; }
 
 #ifndef SPECSFS_IS_TEST
     template <typename T, class T2, T2 DV>
@@ -236,7 +236,7 @@ class ID {
         ID<T, T2, DV> id);
 
  private:
-    impl m_val = invalid_value;
+    impl val_ = invalid_value;
   //}}}
 };
 
@@ -275,7 +275,7 @@ class IDGenerator {
 template <typename T, class T2, T2 DV>
 llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
     ID<T, T2, DV> id) {
-  o << id.m_val;
+  o << id.val_;
   return o;
 }
 #endif
@@ -283,7 +283,7 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
 template <typename T, class T2, T2 DV>
 std::ostream &operator<<(std::ostream &o,
     ID<T, T2, DV> id) {
-  o << id.m_val;
+  o << id.val_;
   return o;
 }
 

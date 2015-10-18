@@ -78,7 +78,7 @@ class SpecSFS : public llvm::ModulePass,
   // It also requires the CFG, because it will change the destination of some
   //   loads
   bool optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
-      const ObjectMap &omap);
+      ObjectMap &omap);
 
 
   // Computes SSA form of the DUG, given its current edge set
@@ -126,6 +126,22 @@ class SpecSFS : public llvm::ModulePass,
   // FIXME: Should put in another entity? oh well...
   std::map<int, ObjectMap::ObjID> aux_to_obj_;
   std::map<ObjectMap::ObjID, int> special_aux_;
+
+  ObjectMap::ObjID getObjIDRep(ObjectMap::ObjID id) {
+    auto it = obj_to_rep_.find(id);
+    if (it == std::end(obj_to_rep_)) {
+      return id;
+    }
+
+    it->second = getObjIDRep(it->second);
+    return it->second;
+  }
+
+  void setObjIDRep(ObjectMap::ObjID id, ObjectMap::ObjID rep) {
+    obj_to_rep_[id] = rep;
+  }
+
+  std::map<ObjectMap::ObjID, ObjectMap::ObjID> obj_to_rep_;
   //}}}
 };
 

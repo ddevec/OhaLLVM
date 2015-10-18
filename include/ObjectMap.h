@@ -36,7 +36,7 @@ class ObjectMap {
     // Internal types {{{
     // NOTE: I use int32_t for size reasons
     struct omap_id { };
-    typedef ID<omap_id, int32_t> ObjID;
+    typedef ID<omap_id, int32_t, -1> ObjID;
     //}}}
 
     // Exported Constant ObjIDs {{{
@@ -261,6 +261,7 @@ class ObjectMap {
 
     // Value insertion {{{
     // Used to create phony identifers for nodes that don't have values
+    /*
     ObjID createPhonyID() {
       return phonyIdGen_.next();
     }
@@ -282,11 +283,43 @@ class ObjectMap {
 
       return ret;
     }
+    */
+
+    ObjID createPhonyID() {
+      return createMapping(nullptr);
+    }
+
+    ObjID createPhonyID(const llvm::Value *val) {
+      auto ret = createMapping(val);
+
+      assert(phonyMap_.find(ret) == std::end(phonyMap_));
+      phonyMap_.emplace(ret, val);
+
+      return ret;
+    }
+
+    ObjID createPhonyObjectID(const llvm::Value *val) {
+      auto ret = createMapping(val);
+
+      assert(phonyMap_.find(ret) == std::end(phonyMap_));
+      idToObj_.emplace(ret, val);
+
+      return ret;
+    }
+
     // Top level variable/node
     ObjID addValueFunction(const llvm::Value *val) {
       auto id = __do_add(val, valToID_, idToVal_);
       functions_.push_back(std::make_pair(id, val));
       return id;
+    }
+
+    void updateObjID(ObjID orig_id, ObjID new_id) {
+      auto val = valueAtID(orig_id);
+
+      if (isValue(orig_id)) {
+        valToID_[val] = new_id;
+      }
     }
 
     void addValues(const llvm::Type *type, const llvm::Value *val) {
@@ -361,6 +394,7 @@ class ObjectMap {
     }
 
     const llvm::Value *valueAtID(ObjID id) const {
+      /*
       if (isPhony(id)) {
         auto phony_it = phonyMap_.find(id);
         if (phony_it != std::end(phonyMap_)) {
@@ -368,6 +402,7 @@ class ObjectMap {
         }
         return nullptr;
       }
+      */
       return mapping_.at(id.val());
     }
 
@@ -403,11 +438,12 @@ class ObjectMap {
     }
 
     bool isObject(const ObjID id) const {
-      return (id == NullObjectValue || id == UniversalValue ||
+      return (isSpecial(id) ||
           (idToObj_.find(id) != std::end(idToObj_)));
-      return (id == NullObjectValue || id == UniversalValue ||
-          id == IntValue ||
-          (idToObj_.find(id) != std::end(idToObj_)));
+    }
+
+    bool isValue(const ObjID id) const {
+      return (idToVal_.find(id) != std::end(idToObj_));
     }
 
     ObjID getReturn(const llvm::Value *val) const {
@@ -434,10 +470,6 @@ class ObjectMap {
     // Misc helpers {{{
     size_t size() const {
       return mapping_.size();
-    }
-
-    ObjID makeTempValue() {
-      return createMapping(nullptr);
     }
     //}}}
 
@@ -576,8 +608,11 @@ class ObjectMap {
       return idToVal_.cend();
     }
 
-
-
+    /*
+    static bool isPhony(ObjID id) {
+      return id.val() >= phonyIdBase;
+    }
+    */
 
     //}}}
  private:
@@ -605,14 +640,12 @@ class ObjectMap {
     std::map<ObjID, int32_t> objIsStruct_;
     const StructInfo *maxStructInfo_ = nullptr;
 
-    static constexpr int32_t phonyIdBase = 1<<30;
-    IDGenerator<ObjID, phonyIdBase> phonyIdGen_;
+    // static constexpr int32_t phonyIdBase = 1<<30;
+    // IDGenerator<ObjID, phonyIdBase> phonyIdGen_;
     ///}}}
 
     // Internal helpers {{{
-    bool isPhony(ObjID id) const {
-      return id.val() >= phonyIdBase;
-    }
+
     ObjID getNextID() const {
       return ObjID(mapping_.size());
     }
@@ -620,7 +653,8 @@ class ObjectMap {
     ObjID createMapping(const llvm::Value *val) {
       ObjID ret = getNextID();
       mapping_.emplace_back(val);
-      assert(ret.val() >= 0 && ret.val() < phonyIdBase);
+      // assert(ret.val() >= 0 && ret.val() < phonyIdBase);
+      assert(ret.val() >= 0);
       return ret;
     }
 
@@ -858,7 +892,8 @@ class ValPrint {
   //{{{
  public:
     explicit ValPrint(ObjectMap::ObjID id) : id_(id), omap_(g_omap) { }
-    ValPrint(ObjectMap::ObjID id, ObjectMap &omap) : id_(id), omap_(&omap) { }
+    ValPrint(ObjectMap::ObjID id, const ObjectMap &omap) : id_(id),
+        omap_(&omap) { }
 
     friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
         const ValPrint &pr) {
@@ -871,6 +906,8 @@ class ValPrint {
           o << gv->getName();
         } else if (auto fcn = dyn_cast<const llvm::Function>(val)) {
           o << fcn->getName();
+        } else if (auto bb = dyn_cast<const llvm::BasicBlock>(val)) {
+          o << bb->getParent()->getName() << ": " << bb->getName();
         } else {
           o << *val;
         }
@@ -887,7 +924,7 @@ class ValPrint {
 
  private:
     ObjectMap::ObjID id_;
-    ObjectMap *omap_;
+    const ObjectMap *omap_;
   //}}}
 };
 

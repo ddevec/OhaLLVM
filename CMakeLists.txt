@@ -98,7 +98,7 @@ set(SPECSFS_SOURCES
   src/Andersens.cpp
 
   src/IdentifyObjects.cpp
-#  src/Optimize.cpp
+  src/Optimize.cpp
   src/ComputeSSA.cpp
   src/Partition.cpp
   src/Solve.cpp

@@ -402,6 +402,13 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
       F->getName() == "sqrt" || F->getName() == "strftime" ||
       F->getName() == "getuid" || F->getName() == "getgid" ||
       F->getName() == "gettimeofday" || F->getName() == "settimeofday" ||
+      F->getName() == "iconv" || F->getName() == "iconv_close" ||
+      F->getName() == "access" || F->getName() == "dup" ||
+      F->getName() == "strncpy" || F->getName() == "__isoc99_sscanf" ||
+      F->getName() == "select" || F->getName() == "ctime" ||
+      F->getName() == "fsync" || F->getName() == "utime" ||
+      F->getName() == "mblen" || F->getName() == "perror" ||
+      F->getName() == "lseek64" || F->getName() == "perror" ||
       F->getName() == "getopt_long" || F->getName() == "getopt") {
     return true;
   }
@@ -513,7 +520,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
       F->getName() == "strpbrk"  || F->getName() == "localtime"  ||
       // FIXME: I don't fully understand the man page, so I'm not 100% sure
       //   bindtextdomain goes here
-      F->getName() == "textdomain"  ||
+      F->getName() == "textdomain"  || F->getName() == "mkdtemp"  ||
       F->getName() == "bindtextdomain") {
     const llvm::FunctionType *FTy = F->getFunctionType();
     if (FTy->getNumParams() > 0 &&
@@ -525,6 +532,15 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
     }
   }
 
+  // strtoll maddness
+  // stores arg0 in arg1
+  if (F->getName() == "strtoll") {
+    auto st_id = omap.createPhonyID();
+    cg.add(ConstraintType::Store, st_id,
+        omap.getValue(CS.getArgument(0)),
+        omap.getValue(CS.getArgument(1)));
+    return true;
+  }
 
   // Locale functions
   if (F->getName() == "getlocale" ||
@@ -660,7 +676,8 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
   }
 
   // Don't worry about debug declare...
-  if (F->getName() == "llvm.dbg.declare") {
+  if (F->getName() == "llvm.dbg.declare" ||
+      F->getName() == "llvm.dbg.value") {
     return true;
   }
 
@@ -704,8 +721,9 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
     // dbg << "Glbl init on: (" << dest << ") " << ValPrint(dest) << "\n";
     if (llvm::isa<llvm::StructType>(C->getType())) {
       // FIXME: Offset = sizeof struct type?
+      auto &si = omap.getStructInfo(cast<llvm::StructType>(C->getType()));
       llvm::dbgs() << "FIXME: Potential bug in zero struct filling\n";
-      offset = 1;
+      offset = si.size();
     } else {
     }
   // Set to some other defined value
@@ -754,7 +772,7 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
         llvm::dbgs() << "offset: " << offset << ", first_offs " << first_offs <<
             "\n";
         */
-        assert(offset == first_offs);
+        // assert(offset == first_offs);
       });
     }
   } else {
@@ -921,7 +939,7 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
       cg.add(ConstraintType::Copy, node_id, arg_id,
           ObjectMap::UniversalValue);
       */
-      cg.add(ConstraintType::Copy, node_id, ObjectMap::UniversalValue,
+      cg.add(ConstraintType::Store, node_id, ObjectMap::UniversalValue,
           arg_id);
       // The arg now aliases the universal value
       // omap.addObjAlias(ObjectMap::UniversalValue, arg_id);
@@ -1782,7 +1800,7 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
           std::for_each(fcn.arg_begin(), fcn.arg_end(),
               [&cg, &cfg, &omap, &con_ids](const llvm::Argument &arg) {
             auto arg_id = omap.getValue(&arg);
-            auto id = omap.makeTempValue();
+            auto id = omap.createPhonyID();
 
             auto con_id = cg.add(ConstraintType::AddressOf, arg_id, id);
             assert(con_id != ConstraintGraph::ConsID::invalid());
