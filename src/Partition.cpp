@@ -423,32 +423,31 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
           dout("  that's value: " << *omap.valueAtID(obj_id) << "\n");
 
           auto &node = graph.getNode(dug_id);
+          auto cfg_id = ssa.getCFGid(node.rep());
+
+          // The cfg_node may be removed by rm_undef, if that happens, we ignore
+          //   the node... I guess
+          auto pcfg_node = ssa_seg.tryGetNode<CFG::Node>(cfg_id);
+
+          // This node was removed by ramalingams, probably by rm_undef.
+          //    Ignore it?
+          if (pcfg_node == nullptr) {
+            continue;
+          }
+          auto &cfg_node = *pcfg_node;
+
+          // Denote that this DUG node is part of this partition
+          node_to_partition[dug_id.val()].push_back(part_id);
 
           // Okay, now that we have the CFGid, update its info:
           // If this is a load:
           if (llvm::isa<DUG::LoadNode>(node) ||
               llvm::isa<DUG::ConstPartNode>(node)) {
-            auto cfg_id = ssa.getCFGid(node.rep());
-
-            // Ooops, I aliased a variable... shame on me
-            auto &node = ssa_seg.getNode<CFG::Node>(cfg_id);
-
-            // Denote that this DUG node is part of this partition
-            node_to_partition[dug_id.val()].push_back(part_id);
-
-            part_load.emplace_back(dug_id, node.id());
+            part_load.emplace_back(dug_id, cfg_node.id());
             num_loads++;
           // If its a store:
           } else if (llvm::isa<DUG::StoreNode>(node)) {
-            // Get the cfg_id of this node
-            auto cfg_id = ssa.getCFGid(node.rep());
-
-            // Get the node in the CFG
-            auto &node = ssa_seg.getNode<CFG::Node>(cfg_id);
-
-            node_to_partition[dug_id.val()].push_back(part_id);
-
-            part_store.emplace_back(dug_id, node.id());
+            part_store.emplace_back(dug_id, cfg_node.id());
             num_stores++;
           }  else {
             llvm_unreachable("Unrecognized node type!");

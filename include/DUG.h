@@ -371,6 +371,7 @@ class DUG {
           }
         });
 
+        // Clean up the succs
 
         llvm::dbgs() << "edge_count; " << num_edges << "\n";
         llvm::dbgs() << "st_edge_count; " << st_edges << "\n";

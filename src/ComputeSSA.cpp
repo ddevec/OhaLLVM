@@ -37,6 +37,7 @@ class RunTarjans {
         should_visit_(do_visit), scc_visit_(do_scc_visit),
         seg_(G), nodeData_(G.getNumNodes()) {
       for (auto &pnode : G) {
+        assert(pnode != nullptr);
         auto &node = *pnode;
         auto &node_data = getData(node.id());
         // If this is both a unvisited node, and we should visit it
@@ -55,8 +56,14 @@ class RunTarjans {
 
     struct TarjanData &getData(SEG::NodeID id) {
       assert(id != SEG::NodeID::invalid());
+      assert(id.val() >= 0);
       assert(id.val() < nodeData_.size());
-      return nodeData_[id.val()];
+#ifndef NDEBUG
+      auto &node_data = nodeData_.at(id.val());
+#else
+      auto &node_data = nodeData_[id.val()];
+#endif
+      return node_data;
     }
 
     void tarjan_visit(SEG::Node &node) {
@@ -70,7 +77,9 @@ class RunTarjans {
       nodeStack_.push_back(node.id());
       node_data.onStack = true;
 
-      for (auto pred_id : node.preds()) {
+      std::vector<SEG::NodeID> pred_list(std::begin(node.preds()),
+          std::end(node.preds()));
+      for (auto pred_id : pred_list) {
         auto ppred_node = seg_.tryGetNode(pred_id);
         if (ppred_node == nullptr) {
           continue;
@@ -191,7 +200,7 @@ void T2(SEG &G, const std::vector<SEG::NodeID> &topo_order) {
   dout("Running T2\n");
   for (auto topo_id : topo_order) {
     dout("visiting node: " << xp_id << "\n");
-    // NOTE: Node may have been deleted in rm_undefj
+    // NOTE: Node may have been deleted in rm_undef
     auto pw_node = G.tryGetNode<CFG::Node>(topo_id);
     if (pw_node == nullptr) {
       continue;
@@ -342,7 +351,12 @@ void T5(SEG &G) {
 
     for (auto succ_id : nd.succs()) {
       dout("  visiting raw_succ: " << succ_id << "\n");
-      auto &succ_node = G.getNode<CFG::Node>(succ_id);
+      auto psucc_node = G.tryGetNode<CFG::Node>(succ_id);
+      if (psucc_node == nullptr) {
+        continue;
+      }
+
+      auto &succ_node = *psucc_node;
       dout("  visiting succ: " << succ_node.id() << "\n");
 
       if (saved_succ == SEG::NodeID::invalid()) {
@@ -394,7 +408,7 @@ void Ramalingam(SEG &G) {
     // if_debug(G.printDotFile("G4.dot", *g_omap));
 
     // Similar to sfs's rm_undef
-    rm_undef(G, topo_order);
+    // rm_undef(G, topo_order);
 
     // T2 -- If a node is a p-node and has precisely one predecessor, it may be
     // merged with that predecessor

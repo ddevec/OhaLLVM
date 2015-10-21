@@ -949,7 +949,8 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
   } else if (F &&
       llvm::isa<llvm::PointerType>(F->getFunctionType()->getReturnType())) {
     // The call now aliases the universal value
-    // llvm::dbgs() << "  Universal Val ret!\n";
+    llvm::dbgs() << "FIXME: Direct call returns universal value: " <<
+        CS.getInstruction() << "\n";
     auto ret_id = omap.getReturn(F);
     cg.add(ConstraintType::Copy,
         ret_id, ObjectMap::UniversalValue);
@@ -1827,7 +1828,7 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
         // We don't add any ptsto constraints for null value here, because null
         //   value points to nothing...
       } else {
-        dout("NO GLOBAL INITIALIZER: " << glbl.getName() << "\n");
+        dout("FIXME: NO GLOBAL INITIALIZER: " << glbl.getName() << "\n");
         cg.add(ConstraintType::Copy, omap.getValue(&glbl),
             ObjectMap::UniversalValue);
 
@@ -1921,15 +1922,13 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
         }
 
         scanFcn(unused_fcns, cg, cfg, omap, fcn);
-      // There is no body...
+      // There is no body... We handle this via external calls?
       } else {
-        // FIXME:
-        // This used to create constraints for function arguments, but for
-        //   external calls... This caused issue with not being able to get the
-        //   UniversalValue set from Andersens... so I'm once again unsoundly
-        //   removing it
+        /*
         if (llvm::isa<llvm::PointerType>(
               fcn.getFunctionType()->getReturnType())) {
+          llvm::dbgs() << "FIXME: adding Universal value ret for: " <<
+            fcn.getName() << "\n";
           auto ret_id = omap.getReturn(&fcn);
           cg.add(ConstraintType::Copy, ret_id,
               ObjectMap::UniversalValue);
@@ -1945,6 +1944,8 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
 
             dout("fcn is: " << fcn.getName() << "\n");
             dout("arg is: " << arg << "\n");
+            llvm::dbgs() << "FIXME: adding Universal value arg for: " <<
+              fcn.getName() << ": " << arg << "\n";
 
             auto arg_id = omap.getValue(&arg);
             // must deal w/ memory object passed into external fcns
@@ -1958,9 +1959,12 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
             auto st_id = omap.createPhonyID();
             dout("Creating universal value vararg pass to id: " <<
                 st_id << "\n"));
+          llvm::dbgs() << "FIXME: adding Universal value vararg for: " <<
+            fcn.getName() << "\n";
           cg.add(ConstraintType::Copy, omap.getVarArg(&fcn),
               ObjectMap::UniversalValue);
         }
+      */
       }
     }
   }
