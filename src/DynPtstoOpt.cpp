@@ -77,6 +77,18 @@ bool SpecSFS::addDynPtstoInfo(llvm::Module &m, DUG &dug,
   if (unused_fcn.hasInfo() && dyn_ptsto.hasInfo()) {
     CostApprox ca(m, prof_info);
 
+    std::vector<std::vector<DUG::DUGid>> dug_providers(omap.size());
+
+    for (auto &pnode : dug) {
+      auto &node = cast<DUGNode>(*pnode);
+
+      // Store nodes do not modify top-level values directly...
+      // All other nodes do
+      if (!llvm::isa<DUG::StoreNode>(node)) {
+        dug_providers[node.dest().val()].push_back(node.id());
+      }
+    }
+
     // For each function
     for (auto &fcn : m) {
       for (auto &bb : fcn) {
@@ -90,14 +102,27 @@ bool SpecSFS::addDynPtstoInfo(llvm::Module &m, DUG &dug,
               // node w/ the constant ptr info
               if (llvm::isa<llvm::PointerType>(instr.getType())) {
                 auto val_id = omap.getValue(&instr);
-                auto dug_pnode = dug.tryGetNode(val_id);
-                if (dug_pnode != nullptr) {
-                  auto &dug_node = *dug_pnode;
+                // Rewrite all nodes that provide this value:
+                auto &providers = dug_providers[val_id.val()];
+                for (auto &dug_id : providers) {
+                  auto &dug_node = dug.getNode(dug_id);
+                  assert(!llvm::isa<DUG::ConstNode>(dug_node));
+                  assert(!llvm::isa<DUG::ConstPartNode>(dug_node));
 
                   auto &ptsto_set = dyn_ptsto.getPtsto(val_id);
 
-                  // If its a PartNode, we need to go through some headache
-                  dug.replaceWithConstantNode(dug_node.id(), ptsto_set);
+                  // DONT replace alloc nodes! I need the allocations!
+                  if (!llvm::isa<DUG::AllocNode>(dug_node)) {
+                    // If its a PartNode, we need to go through some headache
+                    llvm::dbgs() << "replacing node: " << dug_node.id() <<
+                      ", val_id: " << val_id << ", with const pststo:";
+                    for (auto pts : ptsto_set) {
+                      llvm::dbgs() << " " << pts;
+                    }
+                    llvm::dbgs() << "\n";
+
+                    dug.replaceWithConstantNode(dug_node.id(), ptsto_set);
+                  }
                 }
               }
             }

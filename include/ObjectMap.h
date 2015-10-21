@@ -60,6 +60,8 @@ class ObjectMap {
       eLocaleObject = 8,
       eCTypeObject = 9,
       eErrnoObject = 10,
+      eCLibObject = 11,
+      eTermInfoObject = 12,
       eNumDefaultObjs
     } DefaultObjs;
 
@@ -75,6 +77,8 @@ class ObjectMap {
     static const ObjID LocaleObject;
     static const ObjID CTypeObject;
     static const ObjID ErrnoObject;
+    static const ObjID CLibObject;
+    static const ObjID TermInfoObject;
     //}}}
 
     static constexpr ObjID getOffsID(ObjID id, int32_t offs) {
@@ -311,6 +315,7 @@ class ObjectMap {
     ObjID addValueFunction(const llvm::Value *val) {
       auto id = __do_add(val, valToID_, idToVal_);
       functions_.push_back(std::make_pair(id, val));
+      functionSet_.insert(id);
       return id;
     }
 
@@ -443,7 +448,9 @@ class ObjectMap {
     }
 
     bool isValue(const ObjID id) const {
-      return (idToVal_.find(id) != std::end(idToObj_));
+      // Also, functions aren't values
+      return (idToVal_.find(id) != std::end(idToObj_) &&
+          functionSet_.find(id) == std::end(functionSet_));
     }
 
     ObjID getReturn(const llvm::Value *val) const {
@@ -620,6 +627,7 @@ class ObjectMap {
     // Forward mapping
     std::vector<const llvm::Value *> mapping_;
     std::vector<std::pair<ObjID, const llvm::Value *>> functions_;
+    std::set<ObjID> functionSet_;
 
     // Reverse mapping
     std::unordered_map<const llvm::Value *, ObjID> valToID_;
@@ -801,10 +809,12 @@ static const llvm::Type *findLargestType(ObjectMap &omap,
   bool found = false;
   int32_t max_size = 0;
 
+  // Strip any array qualifiers
   while (auto at = dyn_cast<llvm::ArrayType>(biggest_type)) {
     biggest_type = at->getElementType();
   }
 
+  // If its a struct type, update our lragest size
   if (auto st = dyn_cast<llvm::StructType>(biggest_type)) {
     max_size = omap.getStructInfo(st).size();
   }

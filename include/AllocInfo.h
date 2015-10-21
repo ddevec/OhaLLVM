@@ -26,14 +26,9 @@ class AllocInfo {
         callee->getName() != "realloc" &&
         callee->getName() != "memalign" &&
         callee->getName() != "fopen" &&
-        // From coreutils src
-        callee->getName() != "xrealloc" &&
-        callee->getName() != "xmalloc" &&
-        callee->getName() != "xnmalloc" &&
-        // End coreutils src
-        // From zlib src
-        callee->getName() != "zcalloc" &&
-        // End zlib src
+        callee->getName() != "popen" &&
+        callee->getName() != "fdopen" &&
+        callee->getName() != "fopen64" &&
         callee->getName() != "_Znwj" &&  // operator new(unsigned int)
         callee->getName() != "_Znwm" &&  // operator new(unsigned long)
         callee->getName() != "_Znaj" &&  // operator new[](unsigned int)
@@ -49,18 +44,23 @@ class AllocInfo {
   //   instructions will be inserted directly before callee
   static llvm::Value *getMallocSizeArg(llvm::Module &m,
       llvm::CallInst *ci, const llvm::Function *callee) {
+    bool do_mult = false;
+    llvm::Value *ret = nullptr;
+    llvm::Instruction *before = nullptr;
     // Arg pos 0
     if (callee->getName() == "malloc" ||
-        callee->getName() == "xmalloc" ||
         callee->getName() == "valloc") {
-      return ci->getArgOperand(0);
+      ret = ci->getArgOperand(0);
+      before = ci;
+      do_mult = true;
     }
 
     // Arg pos 1
     if (callee->getName() == "memalign" ||
-        callee->getName() == "xrealloc" ||
         callee->getName() == "realloc") {
-      return ci->getArgOperand(1);
+      ret = ci->getArgOperand(1);
+      before = ci;
+      do_mult = true;
     }
 
     // Arg (pos 0 * pos 1)
@@ -68,32 +68,41 @@ class AllocInfo {
       auto a0 = ci->getArgOperand(0);
       auto a1 = ci->getArgOperand(1);
 
-      return llvm::BinaryOperator::Create(
+      ret = llvm::BinaryOperator::Create(
           llvm::Instruction::Mul, a0, a1, "", ci);
+      before = cast<llvm::Instruction>(ret);
+      do_mult = true;
     }
 
     // fopen...
     if (callee->getName() == "fopen" ||
+        callee->getName() == "fopen64" ||
+        callee->getName() == "popen" ||
         callee->getName() == "fdopen") {
       // Allocate a new file struct... calc size of file struct...
       auto file_type = m.getTypeByName("struct._IO_FILE");
-      return LLVMHelper::calcTypeOffset(m, file_type, ci);
+      ret = LLVMHelper::calcTypeOffset(m, file_type, ci);
+      do_mult = false;
+    }
+
+    if (do_mult) {
+      auto i64_type = llvm::IntegerType::get(m.getContext(), 64);
+      ret = llvm::BinaryOperator::Create(
+          llvm::Instruction::Mul, ret, 
+          llvm::ConstantInt::get(i64_type, 8),
+          "", before);
     }
 
     llvm::dbgs() << "callee->getName(): " << callee->getName() << "\n";
-    llvm_unreachable("Unknown malloc size?");
-    return nullptr;
+    assert(ret != nullptr);
+    return ret;
   }
 
   static bool fcnIsFree(const llvm::Function *callee) {
     if (callee->getName() != "free" &&
         callee->getName() != "fclose" &&
         callee->getName() != "realloc" &&
-        // From coreutils src
-        callee->getName() != "xrealloc" &&
-        // End coreutils src
-        // From zlib src
-        callee->getName() != "zcfree") {
+        callee->getName() != "pclose") {
       return false;
     }
 
@@ -104,13 +113,13 @@ class AllocInfo {
       llvm::CallInst *ci, const llvm::Function *callee) {
     // Arg pos 0
     if (callee->getName() == "free" ||
-        callee->getName() == "realloc" ||
-        callee->getName() == "xrealloc") {
+        callee->getName() == "realloc") {
       return ci->getArgOperand(0);
     }
 
     // Need to bitcast to i8*...
-    if (callee->getName() == "fclose") {
+    if (callee->getName() == "fclose" ||
+        callee->getName() == "pclose") {
       auto i8_ptr_type = llvm::PointerType::get(
           llvm::IntegerType::get(m.getContext(), 8), 0);
       auto arg = ci->getArgOperand(0);
@@ -118,17 +127,9 @@ class AllocInfo {
           "", ci);
     }
 
-    // Arg pos 1
-    if (callee->getName() == "zcfree") {
-      return ci->getArgOperand(1);
-    }
-
     llvm_unreachable("Unknown free pos?");
     return nullptr;
   }
-
-
-
 };
 
 #endif  // INCLUDE_ALLOCINFO_H_

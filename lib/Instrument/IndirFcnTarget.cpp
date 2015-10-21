@@ -36,13 +36,13 @@ static llvm::cl::opt<std::string>
       llvm::cl::desc("Id file loaded by indir-fcn-loader"));
 
 static bool isIgnoredFcn(llvm::Function &fcn) {
-  // If this is a function I should ignore...
-  if (fcn.getName().find("llvm.va") == 0 ||
-      fcn.getName().find("llvm.memcpy") == 0 ||
-      fcn.getName().find("llvm.memmov") == 0 ||
-      fcn.getName().find("llvm.debug.declare") == 0 ||
-      fcn.getName().find("__InstrIndirCalls_fcn_call") == 0 ||
-      fcn.getName().find("llvm.memset") == 0) {
+  // Ignore intrinsic fcns
+  if (fcn.isIntrinsic()) {
+    return true;
+  }
+
+  // Ignore my own instrumentation functions
+  if (fcn.getName().find("__InstrIndirCalls_fcn_call") == 0) {
     return true;
   }
 
@@ -124,7 +124,7 @@ bool InstrIndirCalls::runOnModule(llvm::Module &m) {
         auto ci = const_cast<llvm::CallInst *>(cci);
         auto fcn = LLVMHelper::getFcnFromCall(ci);
 
-        if (fcn != nullptr) {
+        if (fcn == nullptr) {
           insert_list.push_back(ci);
         }
       }
@@ -180,6 +180,15 @@ bool InstrIndirCalls::runOnModule(llvm::Module &m) {
       "__InstrIndirCalls_fcn_lookup_len");
   fcn_lookup_len->setInitializer(llvm::ConstantInt::get(i32_type,
         fcn_lookup_initializer.size()));
+
+  auto num_callsites = new llvm::GlobalVariable(m,
+      i32_type,
+      false,
+      llvm::GlobalValue::ExternalLinkage,
+      0,
+      "__InstrIndirCalls_num_callsites");
+  num_callsites->setInitializer(llvm::ConstantInt::get(i32_type,
+        fcn_id));
 
   // Okay, now we need to create a function which populate our array (because
   // addresses are not known until runtime, due to aslr
@@ -295,7 +304,7 @@ bool IndirFunctionInfo::runOnModule(llvm::Module &m) {
 
         auto fcn = LLVMHelper::getFcnFromCall(ci);
 
-        if (fcn != nullptr) {
+        if (fcn == nullptr) {
           insert_list.push_back(ci);
         }
       }

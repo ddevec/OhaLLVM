@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 
 #include <iostream>
 #include <map>
@@ -55,6 +56,28 @@ void __DynPtsto_do_finish() {
   }
 }
 
+void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
+    void *addr);
+void __DynPtsto_main_init2(int32_t obj_id, int argc, char **argv) {
+  for (int i = 0; i < argc; i++) {
+    __DynPtsto_do_malloc(obj_id, (strlen(argv[i])+1)*8, argv[i]);
+  }
+  __DynPtsto_do_malloc(obj_id, (sizeof(*argv)*argc+1)*8, argv);
+}
+
+void __DynPtsto_main_init3(int32_t obj_id, int argc, char **argv,
+    char **envp) {
+  // Init envp
+  int i;
+  for (i = 0; envp[i] != nullptr; i++) {
+    __DynPtsto_do_malloc(obj_id, (strlen(envp[i])+1)*8, envp[i]);
+  }
+  __DynPtsto_do_malloc(obj_id, (sizeof(*envp)*i)*8, envp);
+
+  // Do std init
+  __DynPtsto_main_init2(obj_id, argc, argv);
+}
+
 void __DynPtsto_do_call() {
   // Push a frame on the "stack"
   stack_allocs.emplace_back();
@@ -70,7 +93,10 @@ void __DynPtsto_do_alloca(int32_t obj_id, int64_t size,
   std::cout << "stacking: (" << obj_id << ") " << addr << std::endl;
   stack_allocs.back().push_back(addr);
   // Add ptstos to ptsto map
-  auto ret = addr_to_objid.emplace(AddrRange(addr, size), obj_id);
+#ifndef NDEBUG
+  auto ret =
+#endif
+    addr_to_objid.emplace(AddrRange(addr, size), obj_id);
   assert(ret.second);
 }
 
@@ -79,7 +105,10 @@ void __DynPtsto_do_ret() {
   const std::vector<void *> &cur_frame = stack_allocs.back();
   for (auto addr : cur_frame) {
     std::cout << "popping: " << addr << std::endl;
-    auto ret = addr_to_objid.erase(AddrRange(addr));
+#ifndef NDEBUG
+    auto ret =
+#endif
+      addr_to_objid.erase(AddrRange(addr));
     assert(ret == 1);
   }
 
@@ -113,7 +142,9 @@ void __DynPtsto_do_visit(int32_t val_id, void *addr) {
     int32_t obj_id = addr_to_objid.at(AddrRange(addr));
     valid_to_objids[val_id].insert(obj_id);
   } else {
-    std::cout << "  !!Found unmapped addr: " << addr << std::endl;
+    std::cout << "  !!Found unmapped addr: " << addr <<
+      " val_id: " << val_id << std::endl;
+    // abort();
   }
 }
 

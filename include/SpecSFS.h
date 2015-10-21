@@ -72,14 +72,6 @@ class SpecSFS : public llvm::ModulePass,
  private:
   // The functions which do the primary (high-level) work of SFS
 
-  // Optimizes the top-level constraints in the DUG
-  // This requires the omap, so it knows which ids are objects, and doesn't
-  //   group them
-  // It also requires the CFG, because it will change the destination of some
-  //   loads
-  bool optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
-      ObjectMap &omap);
-
 
   // Computes SSA form of the DUG, given its current edge set
   //   Used to compute SSA for top lvl
@@ -113,6 +105,14 @@ class SpecSFS : public llvm::ModulePass,
   // Also populates Def/Use info for later address-taken constraints
   bool createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
       const llvm::Module &M, const UnusedFunctions &unused);
+
+  // Optimizes the top-level constraints in the DUG
+  // This requires the omap, so it knows which ids are objects, and doesn't
+  //   group them
+  // It also requires the CFG, because it will change the destination of some
+  //   loads
+  bool optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
+      ObjectMap &omap);
 
   // Adds additional indirect call info, given an AUX analysis
   //   (in this case, Andersens analysis)

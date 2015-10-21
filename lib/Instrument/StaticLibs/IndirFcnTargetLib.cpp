@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+extern int32_t __InstrIndirCalls_num_callsites;
 extern int32_t __InstrIndirCalls_fcn_lookup_len;
 extern void *__InstrIndirCalls_fcn_lookup_array[];
 
@@ -26,7 +27,7 @@ void __InstrIndirCalls_init_inst(void) {
     addr_to_id_map.emplace(__InstrIndirCalls_fcn_lookup_array[i], i);
   }
 
-  called_fcns.resize(__InstrIndirCalls_fcn_lookup_len);
+  called_fcns.resize(__InstrIndirCalls_num_callsites);
 }
 
 void __InstrIndirCalls_finish_inst(void) {
@@ -51,6 +52,8 @@ void __InstrIndirCalls_finish_inst(void) {
 void __InstrIndirCalls_fcn_call(int32_t id, void **addr) {
   auto res_set = addr_to_id_map.equal_range(addr);
   // assert(res_set.first != res_set.second);
+  // std::cout << "array_size is: " << called_fcns.size() << std::endl;
+  // std::cout << "id is: " << id << std::endl;
   std::for_each(res_set.first, res_set.second,
       [&id] (std::pair<void *, int32_t> res_pr) {
     called_fcns[id].insert(res_pr.second);

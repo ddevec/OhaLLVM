@@ -233,16 +233,8 @@ class DUG {
                   ValPrint(ld_id) << "\n");
                 node_id = DUG_.addNode<LoadNode>(ld_id, dest, src, offs);
                 // logout("n " << ret << "\n");
-                dout("  Confirming load node!\n");
-                if_debug(auto &nd =) DUG_.getNode<LoadNode>(node_id);
-                dout("    dest is: " << ValPrint(nd.dest())
-                    << "\n");
-                dout("    src is: " << ValPrint(nd.src())
-                    << "\n");
                 dout("  DUGid is " << node_id << "\n");
                 strongCons.emplace(ld_id, cons.strong());
-                // Just trust me on this one...
-                // We don't enforce this... assert(strong_ret.second);
                 // logout("t " << 2 << "\n");
               }
               break;
@@ -317,14 +309,13 @@ class DUG {
       // For each node, add an edge from its src() (if it exists) to it
       // O(n*E)
       {
-        int64_t edge_count = 0;
+        int64_t num_edges = 0;
+        int64_t st_edges = 0;
         int64_t node_count = 0;
-        PerfTimer add_timer;
-        PerfTimer inner_loop_timer;
         PerfTimerPrinter edge_addition(llvm::dbgs(), "Edge creation");
         std::for_each(std::begin(DUG_), std::end(DUG_),
-            [this, &dest_to_node, &inner_loop_timer,
-              &add_timer, &edge_count, &node_count]
+            [this, &dest_to_node,
+              &num_edges, &st_edges, &node_count]
             (SEG::node_iter_type &upnode) {
           node_count++;
           auto pnode = upnode.get();
@@ -339,8 +330,8 @@ class DUG {
               static_cast<int32_t>(dest_to_node.size()));
           */
           if (node.src().val() < static_cast<int32_t>(dest_to_node.size())) {
-            PerfTimerTick inner_tick(inner_loop_timer);
             auto &srcs = dest_to_node[node.src().val()];
+            num_edges += srcs.size();
             for (auto src_id : srcs) {
               auto &pr_node = DUG_.getNode<DUGNode>(src_id);
               auto node_id = node.id();
@@ -368,6 +359,7 @@ class DUG {
             // auto dest_nodes = dest_to_node.equal_range(dest_id);
             assert(dest_id.val() < static_cast<int32_t>(dest_to_node.size()));
             auto &st_srcs = dest_to_node[dest_id.val()];
+            st_edges += st_srcs.size();
             // O(E)
             for (auto src_id : st_srcs) {
               // Don't add an edge to yourself!
@@ -380,12 +372,9 @@ class DUG {
         });
 
 
-        llvm::dbgs() << "edge_count; " << edge_count << "\n";
+        llvm::dbgs() << "edge_count; " << num_edges << "\n";
+        llvm::dbgs() << "st_edge_count; " << st_edges << "\n";
         llvm::dbgs() << "node_count; " << node_count << "\n";
-        llvm::dbgs() << "add_timer: timer duration: " <<
-          add_timer.totalElapsed().count() <<  "\n";
-        llvm::dbgs() << "inner_loop_timer: timer duration: " <<
-          inner_loop_timer.totalElapsed().count() <<  "\n";
       }
 
       /*
@@ -561,6 +550,14 @@ class DUG {
     typedef SEG::node_iterator node_iterator;
     typedef SEG::const_node_iterator const_node_iterator;
     typedef SEG::node_iter_type node_iter_type;
+
+    node_iterator begin() {
+      return std::begin(DUG_);
+    }
+
+    node_iterator end() {
+      return std::end(DUG_);
+    }
 
     node_iterator nodes_begin() {
       return std::begin(DUG_);

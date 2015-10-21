@@ -266,20 +266,28 @@ void Andersens::IdentifyObjects(Module &M) {
   assert(NumObjects == ErrnoObject && "Something changed!");
   ++NumObjects;
 
+  // Object #4 always represents the argv value
+  assert(NumObjects == CLibObject && "Something changed!");
+  ++NumObjects;
+
+  // Object #4 always represents the argv value
+  assert(NumObjects == TermInfoObject && "Something changed!");
+  ++NumObjects;
+
   // its place may change
-  IntNode = 8;
+  IntNode = 10;
   // Object #3 always represents the int object (all ints)
   assert(NumObjects == IntNode && "Something changed!");
   ++NumObjects;
 
   // its place may change
-  AggregateNode = 9;
+  AggregateNode = 11;
   // Object #4 always represents the aggregate object (all aggregates)
   assert(NumObjects == AggregateNode && "Something changed!");
   ++NumObjects;
 
   // its place may change
-  PthreadSpecificNode = 10;
+  PthreadSpecificNode = 12;
   // Object #4 always represents the pthread_specific object
   assert(NumObjects == PthreadSpecificNode && "Something changed!");
   ++NumObjects;
@@ -557,6 +565,14 @@ bool Andersens::AddConstraintsForExternalCall(CallSite CS, Function *F) {
           getNode(CS.getInstruction()),
           ArgvObject));
     return true;
+  }
+
+  // Term info stuffs... meh
+  if (F->getName() == "tigetstr" ||
+      F->getName() == "tiparm") {
+    Constraints.push_back(Constraint(Constraint::AddressOf,
+          getNode(CS.getInstruction()),
+          TermInfoObject));
   }
 
   if (F->getName() == "__errno_location") {
@@ -2680,6 +2696,12 @@ void Andersens::PrintNode(const Node *N) const {
     return;
   } else if (N == &GraphNodes[ErrnoObject]) {
     errs() << "<errno>";
+    return;
+  } else if (N == &GraphNodes[CLibObject]) {
+    errs() << "<clib>";
+    return;
+  } else if (N == &GraphNodes[TermInfoObject]) {
+    errs() << "<terminfo>";
     return;
   } else if (N == &GraphNodes[IntNode]) {
     errs() << "<int>";

@@ -51,6 +51,14 @@ const ObjectMap::ObjID ObjectMap::ErrnoObject =
     ObjectMap::ObjID(
         static_cast<int32_t>(ObjectMap::ObjEnum::eErrnoObject));
 
+const ObjectMap::ObjID ObjectMap::CLibObject =
+    ObjectMap::ObjID(
+        static_cast<int32_t>(ObjectMap::ObjEnum::eCLibObject));
+
+const ObjectMap::ObjID ObjectMap::TermInfoObject =
+    ObjectMap::ObjID(
+        static_cast<int32_t>(ObjectMap::ObjEnum::eTermInfoObject));
+
 ObjectMap::ObjectMap() {
   for (int32_t i = 0; i < static_cast<int32_t>(ObjEnum::eNumDefaultObjs);
       i++) {

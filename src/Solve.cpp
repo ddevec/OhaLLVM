@@ -358,17 +358,20 @@ void DUG::PhiNode::process(DUG &dug, TopLevelPtsto &, Worklist &work,
   logout("r " << rep() << "\n");
   logout("i " << in() << "\n");
   if (in().hasChanged()) {
+    dout("  Got change in IN\n");
     std::for_each(std::begin(part_succs_), std::end(part_succs_),
         [this, &work, &dug, &priority]
         (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
       auto dug_id = part_pr.second;
-      bool change = false;
+      auto part_id = part_pr.first;
 
       auto &nd = dug.getNode(dug_id);
 
+      dout("  Checking IN for node: " << nd.id() << "\n");
+      dout("    nd.in() is " << nd.id() << "\n");
       // FIXME?? Does this need to be a part_or?
-      change = (nd.in() |= in());
-      if (change) {
+      bool ch = nd.in().orPart(in_, dug.objToPartMap(), part_id);
+      if (ch) {
         dout("  Pushing nd to work: " << nd.id() << "\n");
         work.push(&nd, priority[nd.id().val()]);
       }

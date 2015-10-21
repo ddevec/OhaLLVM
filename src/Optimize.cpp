@@ -346,7 +346,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
     // If the node is not a value, make it indirect, so its not merged
     //   arbitrarily
     auto obj_id = nodeToObj(node_id);
-    if (!omap.isValue(obj_id)) {
+    if (!omap.isValue(obj_id) || cfg.isIndirCall(obj_id)) {
       auto &node = hu_graph.getNode<HUNode>(node_id);
       node.setIndirect();
     }
@@ -428,6 +428,10 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
     auto rep_id = node.id();
 
     if (rep_id != node_id) {
+      /*
+      llvm::dbgs() << "Updating omap: (" << node_id << ") " <<
+        ValPrint(nodeToObj(node_id)) << " -> " << rep_id << "\n";
+      */
       setObjIDRep(nodeToObj(node_id), nodeToObj(rep_id));
       omap.updateObjID(nodeToObj(node_id), nodeToObj(rep_id));
     }
@@ -468,19 +472,17 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
       cons.retarget(src_rep_id, dest_rep_id);
     }
 
-    /*
     if (HUCalc::isNonPtr(src_rep_node) || HUCalc::isNonPtr(dest_rep_node)) {
-      llvm::dbgs() << __LINE__ << " Deleting rep: " << cons.rep() << "\n";
+      // llvm::dbgs() << __LINE__ << " Deleting rep: " << cons.rep() << "\n";
       graph.removeConstraint(id);
       continue;
     }
-    */
 
     // If we have a copy to self, delete it
     if (cons.type() == ConstraintType::Copy &&
         cons.src() == cons.dest() && cons.offs() == 0) {
-      llvm::dbgs() << __LINE__ << " Deleting rep: " << cons.rep() << "\n";
-      llvm::dbgs() << "  With dest: " << cons.dest() << "\n";
+      // llvm::dbgs() << __LINE__ << " Deleting rep: " << cons.rep() << "\n";
+      // llvm::dbgs() << "  With dest: " << cons.dest() << "\n";
       graph.removeConstraint(id);
       continue;
     }
@@ -495,8 +497,8 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
       if (it == std::end(dedup)) {
         dedup.insert(cons);
       } else {
-        llvm::dbgs() << __LINE__ << " Deleting rep: " << cons.rep() << "\n";
-      llvm::dbgs() << "  With dest: " << cons.dest() << "\n";
+        // llvm::dbgs() << __LINE__ << " Deleting rep: " << cons.rep() << "\n";
+        // llvm::dbgs() << "  With dest: " << cons.dest() << "\n";
         graph.removeConstraint(id);
       }
     }
@@ -542,8 +544,10 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
     auto rep_id = node.id();
     auto new_obj_id = nodeToObj(rep_id);
 
-    dout("Inserting " << new_obj_id << " to obj_to_cfg at: " <<
-        pr.second << "\n");
+    /*
+    llvm::dbgs() << "Inserting " << new_obj_id << " to obj_to_cfg at: " <<
+        pr.second << "\n";
+    */
 
     if_debug_enabled(auto ret =) new_obj_to_cfg.emplace(new_obj_id, pr.second);
     assert(ret.second);

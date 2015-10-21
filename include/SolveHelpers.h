@@ -184,12 +184,12 @@ class PtstoSet {
           [this, &ret, &offs, &struct_set]
           (const int32_t &val) {
         auto or_offs = offs;
+
         // If this isn't a structure, don't treat it with an offset
         auto it = struct_set.find(ObjectMap::ObjID(val));
         if (it == std::end(struct_set)) {
           or_offs = 0;
         } else {
-          dout("  struct_size is: " << it->second << "\n");
           if (it->second <= or_offs) {
             or_offs = 0;
           }

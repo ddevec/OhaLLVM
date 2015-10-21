@@ -47,6 +47,10 @@ class Constraint {
         int32_t offs) :
         src_(src), dest_(dest), rep_(rep), type_(type), offs_(offs) {
       // We shouldn't copy from the UV to null val... its bad
+      /*
+      assert(!(src == ObjectMap::UniversalValue &&
+            dest == ObjectMap::ObjID(79309)));
+      */
       assert(!(type == ConstraintType::Copy &&
           src == ObjectMap::UniversalValue &&
           dest == ObjectMap::NullValue));
@@ -204,13 +208,20 @@ class ConstraintGraph {
       dbg << "Adding edge: (" << s << ", " << d <<
         ") with type: " << static_cast<int32_t>(type) << "\n";
         */
-      assert(!(type == ConstraintType::Copy &&
-          s == ObjectMap::UniversalValue &&
-          d == ObjectMap::NullValue));
-      constraints_.emplace_back(new Constraint(s, d, type, o));
+      // assert(!(s == ObjectMap::ObjID(20852) && d == ObjectMap::ObjID(3167)));
+      if (s == ObjectMap::NullValue || d == ObjectMap::NullValue ||
+          s == ObjectMap::NullObjectValue || d == ObjectMap::NullObjectValue) {
+        // llvm::dbgs() << "Skipping null constraint....\n";
+        return ConsID();
+      } else {
+        assert(!(type == ConstraintType::Copy &&
+            s == ObjectMap::UniversalValue &&
+            d == ObjectMap::NullValue));
+        constraints_.emplace_back(new Constraint(s, d, type, o));
 
-      auto id = ConsID(constraints_.size()-1);
-      return id;
+        auto id = ConsID(constraints_.size()-1);
+        return id;
+      }
     }
 
     ConsID add(ConstraintType type, ObjID nd, ObjID s, ObjID d) {

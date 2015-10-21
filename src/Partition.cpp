@@ -123,19 +123,23 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
       auto &node = dug.getNode(pr.first);
 
       ObjectMap::ObjID val_id;
+      /*
       dout("Creating part_nodes for obj_id " << pr.first << " : " <<
           ValPrint(pr.first) << "\n");;
+      */
       if (llvm::isa<DUG::StoreNode>(node)) {
         // val is dest for stores...
         val_id = node.dest();
+        /*
         dout("  Have store node: " << node.rep() << " : " <<
           ValPrint(node.rep()) << "\n");
         dout("    dest: " << node.dest() << " : " <<
           ValPrint(node.dest()) << "\n");
         dout("    src: " << node.src() << " : " <<
           ValPrint(node.src()) << "\n");
+        */
       } else {
-        dout("    node_id is: " << node.id() << "\n");
+        // dout("    node_id is: " << node.id() << "\n");
         assert(llvm::isa<DUG::LoadNode>(node) ||
             llvm::isa<DUG::ConstPartNode>(node));
 
@@ -149,8 +153,10 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
       // We use the value to label which part nodes are associated with which
       //   obj_ids
       auto obj_id = val_id;
+      /*
       dout("  Adding part_node for obj: " << obj_id << " : " <<
           ValPrint(obj_id) << "->" << node.id() << "\n");
+          */
 
       part_nodes[obj_id.val()].push_back(node.id());
     });
@@ -181,7 +187,7 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
       if (omap.isSpecial(obj_id)) {
         auto aux_obj = special_aux_.at(obj_id);
         paux_ptsto = &aux.getPointsTo(aux_obj);
-        dout("Got Special ptsto: " << obj_id << "\n");
+        // dout("Got Special ptsto: " << obj_id << "\n");
       } else {
         // If not special, just get the pointsto
         auto val = omap.valueAtID(obj_id);
@@ -195,6 +201,7 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
       }
       auto &aux_ptsto = *paux_ptsto;
 
+      /*
       if_debug(
         dout("aux ptsto for: " << obj_id << " : " << ValPrint(obj_id)
             << " is:");
@@ -202,18 +209,20 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
           dout(" " << id);
         }
         dout("\n"));
+        */
 
       std::for_each(std::begin(aux_ptsto), std::end(aux_ptsto),
           [this, &AE, &obj_id]
           (uint32_t ptsto_id) {
-        dout("  Checking aux_to_obj[" << ptsto_id << "]\n");
-        dout("  aux_to_obj.size() is: " << aux_to_obj_.size() << "]\n");
+        // dout("  Checking aux_to_obj[" << ptsto_id << "]\n");
 
         if (aux_to_obj_.size() > ptsto_id &&
             aux_to_obj_[ptsto_id] != ObjectMap::ObjID::invalid()) {
           auto aux_obj_id = aux_to_obj_[ptsto_id];
+          /*
           dout("  aux_to_obj[" << ptsto_id << "] is: " <<
               aux_obj_id << "\n");
+          */
           assert(AE.size() > static_cast<size_t>(aux_obj_id.val()));
           AE[aux_obj_id.val()].set(obj_id.val());
         }
@@ -240,12 +249,15 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
         */
     for (size_t i = 0; i < AE.size(); i++) {
       ObjectMap::ObjID obj_id(i);
-      auto &ae_map = AE[i];
-      auto equiv_it = equiv_map.find(ae_map);
+      auto &ae_set = AE[i];
+      if (ae_set.count() == 0) {
+        continue;
+      }
+      auto equiv_it = equiv_map.find(ae_set);
 
       // I haven't encountered this mapping yet, add a new one
       if (equiv_it == std::end(equiv_map)) {
-        auto equiv_ret = equiv_map.emplace(ae_map,
+        auto equiv_ret = equiv_map.emplace(ae_set,
             part_id_generator.next());
         assert(equiv_ret.second);
 

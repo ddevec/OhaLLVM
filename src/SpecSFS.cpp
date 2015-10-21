@@ -101,9 +101,9 @@ void SpecSFS::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   usage.addRequired<UnusedFunctions>();
   // For indirect function following
   // FIXME: Can probably just use DynPtstoLoader...
-  // usage.addRequired<IndirFunctionInfo>();
+  usage.addRequired<IndirFunctionInfo>();
   // For dynamic ptsto removal
-  // usage.addRequired<DynPtstoLoader>();
+  usage.addRequired<DynPtstoLoader>();
   usage.addRequired<llvm::ProfileInfo>();
 }
 
@@ -243,19 +243,12 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   // Now, fill in the indirect function calls
   {
     PerfTimerPrinter indir_timer(llvm::dbgs(), "addIndirectCalls");
-    // const auto &dyn_indir_info = getAnalysis<IndirFunctionInfo>();
-    IndirFunctionInfo *pass = nullptr;
-    // if (addIndirectCalls(cg, cfg, aux, &dyn_indir_info, omap))
-    if (addIndirectCalls(cg, cfg, aux, pass, omap)) {
+    const auto &dyn_indir_info = getAnalysis<IndirFunctionInfo>();
+    if (addIndirectCalls(cg, cfg, aux, &dyn_indir_info, omap)) {
       error("AddIndirectCalls failure!");
     }
   }
 
-  // Now that we've resolve our indir edges, we can remove duplicate constraints
-  // (possibly created by optimizeConstraints())
-  {
-    PerfTimerPrinter unique_timer(llvm::dbgs(), "cg.unique()");
-  }
 
   // if_debug(cfg.getSEG().printDotFile("CFG_indir.dot", omap));
   // cfg.getSEG().printDotFile("CFG_indir.dot", omap);
@@ -276,7 +269,6 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     graph.fillTopLevel(cg, omap);
   }
 
-  /*
   // Now that we've filled in the top level constraint graph, we add in dynamic
   //   info
   {
@@ -285,7 +277,6 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
       error("DynPtstoInfo addition failure!");
     }
   }
-  */
 
   {
     PerfTimerPrinter partition_timer(llvm::dbgs(), "computePartitions");
@@ -338,18 +329,164 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     }
   }
 
-  if (fcn_name != "") {
-    auto fcn = m.getFunction(fcn_name);
+  if (true) {
+    auto fcn = m.getFunction("deflateInit2_");
 
-    llvm::dbgs() << "Printing ptsto for function: " << fcn_name << "\n";
+    llvm::dbgs() << "Printing ptsto for function: " << "deflateInit2_" << "\n";
+    llvm::dbgs() << "Printing args: " << "deflateInit2_" << "\n";
+    std::for_each(fcn->arg_begin(), fcn->arg_end(),
+        [this, &omap] (const llvm::Argument &arg) {
+      if (llvm::isa<llvm::PointerType>(arg.getType())) {
+        auto val_id = omap.getValue(&arg);
+        auto &pts_set_vec = pts_top_.atVec(val_id);
+
+        llvm::dbgs() << "pts_top[" << val_id << "]: " << ValPrint(val_id) <<
+          "\n";
+
+        for (uint32_t i = 0; i < pts_set_vec.size(); i++) {
+          llvm::dbgs() << "  Offset: " << i << "\n";
+
+          auto &ptsto = pts_set_vec[i];
+
+          std::for_each(ptsto.cbegin(), ptsto.cend(),
+              [&omap] (const ObjectMap::ObjID obj_id) {
+            llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
+                << "\n";
+          });
+        }
+      }
+    });
+
+    llvm::dbgs() << "Printing instructions: " << fcn_name << "\n";
     std::for_each(inst_begin(fcn), inst_end(fcn),
         [this, &omap] (llvm::Instruction &inst) {
       if (llvm::isa<llvm::PointerType>(inst.getType())) {
         auto val_id = omap.getValue(&inst);
         auto &pts_set_vec = pts_top_.atVec(val_id);
 
+        llvm::dbgs() << "pts_top[" << val_id << "]: " << inst <<
+          "\n";
+
+        if (omap.valueAtID(val_id) != &inst) {
+          llvm::dbgs() << "--have value remap: " << inst << " -> " <<
+              *omap.valueAtID(val_id) << "\n";
+        }
+
+        for (uint32_t i = 0; i < pts_set_vec.size(); i++) {
+          llvm::dbgs() << "  Offset: " << i << "\n";
+
+          auto &ptsto = pts_set_vec[i];
+
+          std::for_each(ptsto.cbegin(), ptsto.cend(),
+              [&omap] (const ObjectMap::ObjID obj_id) {
+            llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
+                << "\n";
+          });
+        }
+      }
+    });
+  }
+
+  if (true) {
+    auto fcn = m.getFunction("fill_window");
+
+    llvm::dbgs() << "Printing ptsto for function: " << "fill_window" << "\n";
+    llvm::dbgs() << "Printing args: " << "fill_window" << "\n";
+    std::for_each(fcn->arg_begin(), fcn->arg_end(),
+        [this, &omap] (const llvm::Argument &arg) {
+      if (llvm::isa<llvm::PointerType>(arg.getType())) {
+        auto val_id = omap.getValue(&arg);
+        auto &pts_set_vec = pts_top_.atVec(val_id);
+
         llvm::dbgs() << "pts_top[" << val_id << "]: " << ValPrint(val_id) <<
           "\n";
+
+        for (uint32_t i = 0; i < pts_set_vec.size(); i++) {
+          llvm::dbgs() << "  Offset: " << i << "\n";
+
+          auto &ptsto = pts_set_vec[i];
+
+          std::for_each(ptsto.cbegin(), ptsto.cend(),
+              [&omap] (const ObjectMap::ObjID obj_id) {
+            llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
+                << "\n";
+          });
+        }
+      }
+    });
+
+    llvm::dbgs() << "Printing instructions: " << fcn_name << "\n";
+    std::for_each(inst_begin(fcn), inst_end(fcn),
+        [this, &omap] (llvm::Instruction &inst) {
+      if (llvm::isa<llvm::PointerType>(inst.getType())) {
+        auto val_id = omap.getValue(&inst);
+        auto &pts_set_vec = pts_top_.atVec(val_id);
+
+        llvm::dbgs() << "pts_top[" << val_id << "]: " << inst <<
+          "\n";
+
+        if (omap.valueAtID(val_id) != &inst) {
+          llvm::dbgs() << "--have value remap: " << inst << " -> " <<
+              *omap.valueAtID(val_id) << "\n";
+        }
+
+        for (uint32_t i = 0; i < pts_set_vec.size(); i++) {
+          llvm::dbgs() << "  Offset: " << i << "\n";
+
+          auto &ptsto = pts_set_vec[i];
+
+          std::for_each(ptsto.cbegin(), ptsto.cend(),
+              [&omap] (const ObjectMap::ObjID obj_id) {
+            llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
+                << "\n";
+          });
+        }
+      }
+    });
+  }
+
+  if (fcn_name != "") {
+    auto fcn = m.getFunction(fcn_name);
+
+    llvm::dbgs() << "Printing ptsto for function: " << fcn_name << "\n";
+    llvm::dbgs() << "Printing args: " << fcn_name << "\n";
+    std::for_each(fcn->arg_begin(), fcn->arg_end(),
+        [this, &omap] (const llvm::Argument &arg) {
+      if (llvm::isa<llvm::PointerType>(arg.getType())) {
+        auto val_id = omap.getValue(&arg);
+        auto &pts_set_vec = pts_top_.atVec(val_id);
+
+        llvm::dbgs() << "pts_top[" << val_id << "]: " << ValPrint(val_id) <<
+          "\n";
+
+        for (uint32_t i = 0; i < pts_set_vec.size(); i++) {
+          llvm::dbgs() << "  Offset: " << i << "\n";
+
+          auto &ptsto = pts_set_vec[i];
+
+          std::for_each(ptsto.cbegin(), ptsto.cend(),
+              [&omap] (const ObjectMap::ObjID obj_id) {
+            llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
+                << "\n";
+          });
+        }
+      }
+    });
+
+    llvm::dbgs() << "Printing instructions: " << fcn_name << "\n";
+    std::for_each(inst_begin(fcn), inst_end(fcn),
+        [this, &omap] (llvm::Instruction &inst) {
+      if (llvm::isa<llvm::PointerType>(inst.getType())) {
+        auto val_id = omap.getValue(&inst);
+        auto &pts_set_vec = pts_top_.atVec(val_id);
+
+        llvm::dbgs() << "pts_top[" << val_id << "]: " << inst <<
+          "\n";
+
+        if (omap.valueAtID(val_id) != &inst) {
+          llvm::dbgs() << "--have value remap: " << inst << " -> " <<
+              *omap.valueAtID(val_id) << "\n";
+        }
 
         for (uint32_t i = 0; i < pts_set_vec.size(); i++) {
           llvm::dbgs() << "  Offset: " << i << "\n";
@@ -554,7 +691,18 @@ void SpecSFS::copyValue(llvm::Value *From, llvm::Value *To) {
   // FIXME: Should do this
   auto from_id = omap_.getValue(From);
   auto to_id = omap_.getValue(To);
-  pts_top_.copy(from_id, to_id);
+
+  // If to doesn't exist, make it
+  if (to_id == ObjectMap::ObjID::invalid()) {
+    omap_.addValue(To);
+    to_id = omap_.getValue(To);
+  }
+
+  // From really should exist...
+  assert(from_id != ObjectMap::ObjID::invalid());
+
+  // Make to point to from
+  omap_.updateObjID(to_id, from_id);
 
   getAnalysis<AliasAnalysis>().copyValue(From, To);
 }

@@ -387,6 +387,8 @@ class Andersens : public llvm::ModulePass,
     LocaleObject = 5,
     CTypeObject  = 6,
     ErrnoObject  = 7,
+    CLibObject   = 8,
+    TermInfoObject = 9,
     NumberSpecialNodes
   };
 
