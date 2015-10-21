@@ -1402,6 +1402,7 @@ template <typename node_type>
 SEG SEG::clone() const {
   SEG ret;
 
+  // Initialize ret to nullptr
   // We don't use node itr, because we want to include nullptrs
   std::for_each(std::begin(nodes_), std::end(nodes_),
       [this, &ret]
@@ -1410,27 +1411,9 @@ SEG SEG::clone() const {
       auto &my_node = cast<node_type>(*pnode);
       ret.addNode(my_node);
     } else {
-      ret.nodes_.emplace_back(nullptr);
+      ret.nodes_.push_back(nullptr);
     }
   });
-
-  // DON'T COPY EDGES, this is done automagically by addNode(const node &)...
-  /*
-  std::for_each(begin(), end(),
-      [this, &ret]
-      (const node_iter_type &pnode) {
-    auto src_id = pnode->id();
-    for (auto dest_id : pnode->succs()) {
-      dest_id = ret.getRep(dest_id);
-      ret.addSucc(src_id, dest_id);
-    }
-
-    for (auto dest_id : pnode->preds()) {
-      dest_id = ret.getRep(dest_id);
-      ret.addPred(src_id, dest_id);
-    }
-  });
-  */
 
   return std::move(ret);
 }

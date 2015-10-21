@@ -192,6 +192,8 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     special_aux_.emplace(ObjectMap::LocaleObject, Andersens::LocaleObject);
     special_aux_.emplace(ObjectMap::CTypeObject, Andersens::CTypeObject);
     special_aux_.emplace(ObjectMap::ErrnoObject, Andersens::ErrnoObject);
+    special_aux_.emplace(ObjectMap::CLibObject, Andersens::CLibObject);
+    special_aux_.emplace(ObjectMap::TermInfoObject, Andersens::TermInfoObject);
     special_aux_.emplace(ObjectMap::PthreadSpecificValue,
         aux.PthreadSpecificNode);
 
@@ -220,6 +222,8 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     aux_to_obj_[Andersens::LocaleObject] = ObjectMap::LocaleObject;
     aux_to_obj_[Andersens::CTypeObject] = ObjectMap::CTypeObject;
     aux_to_obj_[Andersens::ErrnoObject] = ObjectMap::ErrnoObject;
+    aux_to_obj_[Andersens::CLibObject] = ObjectMap::CLibObject;
+    aux_to_obj_[Andersens::TermInfoObject] = ObjectMap::TermInfoObject;
     aux_to_obj_[aux.PthreadSpecificNode] =
       ObjectMap::PthreadSpecificValue;
 

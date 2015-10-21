@@ -375,9 +375,11 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
   std::vector<DUG::DUGid> cfg_node_rep;
   // For each partition, calculate the SSA of any nodes in that partiton
   {
+    PerfTimer ssa_tmr;
     PerfTimerPrinter tmr(llvm::dbgs(), "calcParts");
     std::for_each(graph.part_cbegin(), graph.part_cend(),
-        [this, &graph, &ssa, &ssa_seg, &node_to_partition, &omap, &cfg_node_rep]
+        [this, &graph, &ssa, &ssa_seg, &node_to_partition, &omap, &cfg_node_rep,
+         &ssa_tmr]
         (const std::pair<const DUG::PartID, std::vector<ObjectMap::ObjID>> &pr) {  // NOLINT
       // clear the entries in cfg_node_rep (note this is faster then
       //     reallocating)
@@ -481,62 +483,65 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
       // This isn't a simple graph, I need to calculate full SSA
       } else {
         // Create a clone of the ControlFlowGraph for this partition's ssa
-        CFG::ControlFlowGraph part_graph =
-          ssa_seg.clone<CFG::Node>();
+        CFG::ControlFlowGraph part_graph;
+        {
+          PerfTimerTick ssa_tick(ssa_tmr);
 
-        // Update our part seg so we can use this
-        for (auto &pr : part_store) {
-          auto cfg_id = pr.second;
-          auto dug_id = pr.first;
+          part_graph = ssa_seg.clone<CFG::Node>();
+          // Update our part seg so we can use this
+          for (auto &pr : part_store) {
+            auto cfg_id = pr.second;
+            auto dug_id = pr.first;
 
-          // Get the node in the CFG
-          auto &node = part_graph.getNode<CFG::Node>(cfg_id);
+            // Get the node in the CFG
+            auto &node = part_graph.getNode<CFG::Node>(cfg_id);
 
-          // Set M and R
-          node.setM();
-          node.setR();
+            // Set M and R
+            node.setM();
+            node.setR();
 
-          // Possibly set C
-          if (ssa.isStrong(obj_id)) {
-            node.setC();
+            // Possibly set C
+            if (ssa.isStrong(obj_id)) {
+              node.setC();
+            }
+
+            // Denote this CFGid references this DUG entry
+            // FIXME:
+            // MAHHHH this is the wrong type of ID... so I'm forcing it...
+            //   because I'm ticked off!
+            dout("Adding def to node: " << node.id() << "\n");
+            node.addDef(ObjectMap::ObjID(dug_id.val()));
           }
 
-          // Denote this CFGid references this DUG entry
-          // FIXME:
-          // MAHHHH this is the wrong type of ID... so I'm forcing it...
-          //   because I'm ticked off!
-          dout("Adding def to node: " << node.id() << "\n");
-          node.addDef(ObjectMap::ObjID(dug_id.val()));
-        }
+          for (auto &pr : part_load) {
+            auto cfg_id = pr.second;
+            auto dug_id = pr.first;
 
-        for (auto &pr : part_load) {
-          auto cfg_id = pr.second;
-          auto dug_id = pr.first;
+            // Get the node in the CFG
+            auto &node = part_graph.getNode<CFG::Node>(cfg_id);
 
-          // Get the node in the CFG
-          auto &node = part_graph.getNode<CFG::Node>(cfg_id);
+            // Set R
+            node.setR();
 
-          // Set R
-          node.setR();
-
-          // Denote this CFG node maps to this DUG node
-          // FIXME:
-          // MAHHHH this is the wrong type of ID... so I'm forcing it...
-          //   because I'm ticked off!
-          dout("Adding use to node: " << node.id() << "\n");
-          node.addUse(ObjectMap::ObjID(dug_id.val()));
-        }
+            // Denote this CFG node maps to this DUG node
+            // FIXME:
+            // MAHHHH this is the wrong type of ID... so I'm forcing it...
+            //   because I'm ticked off!
+            dout("Adding use to node: " << node.id() << "\n");
+            node.addUse(ObjectMap::ObjID(dug_id.val()));
+          }
 
 #ifdef DO_SEG_PRINT
-        {
-          std::string part_file("part_graph");
-          part_file += std::to_string(part_id.val());
-          part_file += ".dot";
-          part_graph.printDotFile(part_file, *g_omap);
-        }
+          {
+            std::string part_file("part_graph");
+            part_file += std::to_string(part_id.val());
+            part_file += ".dot";
+            part_graph.printDotFile(part_file, *g_omap);
+          }
 #endif
-        // Now, calculate ssa form for this graph:
-        computeSSA(part_graph);
+          // Now, calculate ssa form for this graph:
+          computeSSA(part_graph);
+        }
 
         auto &part_ssa = part_graph;
 
@@ -742,6 +747,8 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
         });
       }
     });
+
+    ssa_tmr.printDuration(llvm::dbgs(), "ssa_tmr");
   }
 
   // We need to alert each load/store node which objects they may possibly
@@ -807,10 +814,8 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
     }
 
 
-    llvm::dbgs() << "inner_loop: timer duration: " <<
-      inner_loop.totalElapsed().count() <<  "\n";
-    llvm::dbgs() << "part_node_setup: timer duration: "
-      << part_node_setup.totalElapsed().count() <<  "\n";
+    inner_loop.printDuration(llvm::dbgs(), "inner_loop");
+    part_node_setup.printDuration(llvm::dbgs(), "part_node_setup");
   }
 
   return false;

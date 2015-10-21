@@ -178,7 +178,7 @@ class PtstoSet {
     }
 
     bool orOffs(const PtstoSet &rhs, int32_t offs,
-        const std::map<ObjectMap::ObjID, int32_t> struct_set) {
+        const std::map<ObjectMap::ObjID, int32_t> &struct_set) {
       bool ret = false;
       std::for_each(std::begin(rhs.ptsto_), std::end(rhs.ptsto_),
           [this, &ret, &offs, &struct_set]

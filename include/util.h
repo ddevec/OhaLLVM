@@ -91,6 +91,11 @@ class PerfTimer {
           return Duration::zero());
     }
 
+    void printDuration(llvm::raw_ostream &o, const std::string &name) const {
+      if_timers(
+      o << name << ": timer duration: " << totalElapsed().count() <<  "\n");
+    }
+
  private:
     TimePoint lastTime_;
     Duration totalTime_ = Duration::zero();
@@ -128,8 +133,7 @@ class PerfTimerPrinter {
     ~PerfTimerPrinter() {
       if_timers(
         timer_.stop();
-        o_ << name_ << ": timer duration: " << timer_.totalElapsed().count()
-            <<  "\n");
+        timer_.printDuration(o_, name_));
     }
 
  private:
