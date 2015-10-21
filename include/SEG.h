@@ -986,11 +986,6 @@ class SEG {
       new_succs = std::move(old_succs);
     }
 
-    template <typename node_type>
-    void addNode(const node_type &nd) {
-      nodes_.emplace_back(new node_type(nd));
-    }
-
     template <typename node_type, typename... va_args>
     NodeID addNode(va_args&&... args) {
       auto node_id = NodeID(nodes_.size());
@@ -1402,17 +1397,20 @@ template <typename node_type>
 SEG SEG::clone() const {
   SEG ret;
 
+  ret.nodes_.resize(nodes_.size());
   // Initialize ret to nullptr
   // We don't use node itr, because we want to include nullptrs
+  size_t idx = 0;
   std::for_each(std::begin(nodes_), std::end(nodes_),
-      [this, &ret]
+      [this, &ret, &idx]
       (const node_iter_type &pnode) {
     if (pnode != nullptr) {
       auto &my_node = cast<node_type>(*pnode);
-      ret.addNode(my_node);
+      ret.nodes_[idx] = std::unique_ptr<node_type>(new node_type(my_node));
     } else {
-      ret.nodes_.push_back(nullptr);
+      ret.nodes_[idx] = nullptr;
     }
+    idx++;
   });
 
   return std::move(ret);
