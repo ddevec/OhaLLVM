@@ -549,7 +549,8 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
         pr.second << "\n";
     */
 
-    if_debug_enabled(auto ret =) new_obj_to_cfg.emplace(new_obj_id, pr.second);
+    if_debug_enabled(auto ret =)
+      new_obj_to_cfg.emplace(new_obj_id, pr.second);
     assert(ret.second);
   });
   cfg.swapObjToCFG(new_obj_to_cfg);

@@ -370,7 +370,9 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
       // SEG assumes succs are clear when it starts...
       node.succs().clear();
     });
+    ssa_seg.cleanGraph();
   }
+
 
   std::vector<DUG::DUGid> cfg_node_rep;
   // For each partition, calculate the SSA of any nodes in that partiton
@@ -683,13 +685,16 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
           */
 
           // Put an edge from each pred in G to the part leader
-          std::for_each(std::begin(preds), std::end(preds),
-              [&graph, &delayed_edges, &cfg_node_rep, &dug_id,
-                &part_id, &part_ssa]
-              (const CFG::NodeID pred_id) {
+          for (auto &pred_id : preds) {
             auto pred_node_id = pred_id;
 
-            auto pred_cfg_id = part_ssa.getNode<CFG::Node>(pred_node_id).id();
+            auto ppred_cfg_node = part_ssa.tryGetNode<CFG::Node>(pred_node_id);
+            if (ppred_cfg_node == nullptr) {
+              continue;
+            }
+
+            auto &pred_cfg_node = *ppred_cfg_node;
+            auto pred_cfg_id = pred_cfg_node.id();
             dout("    have pred_node_id of: " << pred_cfg_id << "\n");
 
             // NOTE: if we were not doing a topo order we may have to
@@ -709,7 +714,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
                 part_id << ")-> " << dug_id << "}\n");
               graph.addEdge(pred_rep_id, dug_id, part_id);
             }
-          });
+          }
         });
 
         std::vector<std::tuple<CFG::CFGid, DUG::DUGid, DUG::PartID>>

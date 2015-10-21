@@ -333,6 +333,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     }
   }
 
+  /*
   if (true) {
     auto fcn = m.getFunction("deflateInit2_");
 
@@ -448,6 +449,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
       }
     });
   }
+  */
 
   if (fcn_name != "") {
     auto fcn = m.getFunction(fcn_name);

@@ -71,7 +71,13 @@ class RunTarjans {
       node_data.onStack = true;
 
       for (auto pred_id : node.preds()) {
-        auto &pred_node = seg_.getNode(pred_id);
+        auto ppred_node = seg_.tryGetNode(pred_id);
+        if (ppred_node == nullptr) {
+          continue;
+        }
+
+        auto &pred_node = *ppred_node;
+
         // If this node should be visited (allows us to exclude some nodes, like
         //   needed in Ramalingam's T4 transform)
         if (should_visit_(pred_node)) {
@@ -133,6 +139,50 @@ void T4(SEG &G, std::vector<SEG::NodeID> &topo_order) {
   dout("Finished T4\n");
 }
 
+// Taken from the sfs code base:
+// Remove p-nodes that are not reachable from an m-node (not an
+// official SEG transformation, but still useful); assumes that this
+// is after T4 and before T2
+void rm_undef(SEG &G, const std::vector<SEG::NodeID> &topo_order) {
+  // Do a topological traversal of P nodes
+  std::vector<SEG::NodeID> del_list;
+  for (auto node_id : topo_order) {
+    auto pnode = G.tryGetNode<CFG::Node>(node_id);
+    if (pnode == nullptr) {
+      continue;
+    }
+
+    auto &node = *pnode;
+
+    std::vector<SEG::NodeID> pred_list;
+    for (auto pred_id : node.preds()) {
+      auto ppred_node = G.tryGetNode<CFG::Node>(pred_id);
+      if (ppred_node == nullptr) {
+        continue;
+      }
+
+      auto &pred_node = *ppred_node;
+
+      // If this isn't a pointer to self
+      if (pred_node.id() != node_id) {
+        pred_list.push_back(pred_node.id());
+      }
+    }
+
+    // If the node has no NP preds, delete it
+    if (pred_list.empty()) {
+      del_list.push_back(node.id());
+    // otherwise, update the pred list to our new cleaner variant
+    } else {
+      node.replacePreds(std::move(pred_list));
+    }
+  }
+
+  for (auto del_id : del_list) {
+    G.removeNode(del_id);
+  }
+}
+
 // Now, for each P-node in G1 (output from T4) with precisely 1 predecessor,
 //   we combine that node with its predecessor
 void T2(SEG &G, const std::vector<SEG::NodeID> &topo_order) {
@@ -141,14 +191,26 @@ void T2(SEG &G, const std::vector<SEG::NodeID> &topo_order) {
   dout("Running T2\n");
   for (auto topo_id : topo_order) {
     dout("visiting node: " << xp_id << "\n");
-    auto &w_node = G.getNode<CFG::Node>(topo_id);
+    // NOTE: Node may have been deleted in rm_undefj
+    auto pw_node = G.tryGetNode<CFG::Node>(topo_id);
+    if (pw_node == nullptr) {
+      continue;
+    }
+
+    auto &w_node = *pw_node;
 
     bool multi_preds = false;
     SEG::NodeID saved_pred = SEG::NodeID::invalid();
 
     for (auto pred_id : w_node.preds()) {
       dout("  visiting raw_pred: " << pred_id << "\n");
-      auto &pred_node = G.getNode<CFG::Node>(pred_id);
+      // NOTE: once again, may have been deleted by rm_undef
+      auto ppred_node = G.tryGetNode<CFG::Node>(pred_id);
+      if (ppred_node == nullptr) {
+        continue;
+      }
+
+      auto &pred_node = *ppred_node;
       dout("  visiting pred: " << pred_node.id() << "\n");
 
       if (saved_pred == SEG::NodeID::invalid()) {
@@ -213,8 +275,10 @@ static void T6_visit(SEG &G, CFG::Node &node, std::vector<int8_t> &visit_info) {
     visit_info[node.id().val()] = 1;
 
     for (auto pred_id : node.preds()) {
-      auto &pred = G.getNode<CFG::Node>(pred_id);
-      T6_visit(G, pred, visit_info);
+      auto ppred = G.tryGetNode<CFG::Node>(pred_id);
+      if (ppred != nullptr) {
+        T6_visit(G, *ppred, visit_info);
+      }
     }
   }
 }
@@ -308,48 +372,6 @@ void T5(SEG &G) {
   //   p-nodes in topo-order
   RunTarjans<decltype(up_nodes), decltype(t5_visit)>(G, up_nodes, t5_visit);
 
-
-  // Now, visit each up-node in G in a topological order with repsect to the
-  //     up-nodes -- We use Gup for this
-  /*
-  std::for_each(Gup.topo_begin(), Gup.topo_end(),
-      [&G](CFG::NodeID topo_id) {
-    auto &nd = G.getNode<CFG::Node>(topo_id);
-    // This had better be a up-node...
-    assert(nd.isRep());
-    assert(nd.u() && nd.p());
-    dout("visiting node: " << topo_id << "\n");
-
-    bool multi_succs = false;
-    SEG::NodeID saved_succ = SEG::NodeID::invalid();
-
-    for (auto succ_id : nd.succs()) {
-      dout("  visiting raw_succ: " << succ_id << "\n");
-      auto &succ_node = G.getNode<CFG::Node>(succ_id);
-      dout("  visiting succ: " << succ_node.id() << "\n");
-
-      if (saved_succ == SEG::NodeID::invalid()) {
-        saved_succ = succ_node.id();
-      } else if (saved_succ != succ_node.id()) {
-        multi_succs = true;
-        break;
-      }
-    }
-
-    // We don't unite if the node has more than 1 pred
-    // We don't unite if we're our own predecessor
-    if (!multi_succs && saved_succ != nd.id()) {
-      auto &succ_node = G.getNode<CFG::Node>(saved_succ);
-
-      dout("!!Uniting: " << succ_node.id() << ", "
-          << nd.id() << "\n");
-      G.removeSucc(nd.id(), succ_node.id());
-      G.removePred(succ_node.id(), nd.id());
-      succ_node.unite(G, nd);
-    }
-  });
-  */
-
   dout("Finished T5\n");
 }
 //}}}
@@ -371,8 +393,8 @@ void Ramalingam(SEG &G) {
 
     // if_debug(G.printDotFile("G4.dot", *g_omap));
 
-    // Similar to sfs's rm_undef -- but no removal of r nodes
-    G.cleanGraph();
+    // Similar to sfs's rm_undef
+    rm_undef(G, topo_order);
 
     // T2 -- If a node is a p-node and has precisely one predecessor, it may be
     // merged with that predecessor
@@ -417,7 +439,9 @@ void Ramalingam(SEG &G) {
       auto succ_id = pnode->id();
       std::for_each(std::begin(preds), std::end(preds),
           [&G, &succ_id] (CFG::CFGid pred_id) {
-        G.addSucc(pred_id, succ_id);
+        if (G.tryGetNode(pred_id) != nullptr) {
+          G.addSucc(pred_id, succ_id);
+        }
       });
     });
   }

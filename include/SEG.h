@@ -163,6 +163,12 @@ class SEG {
           //{{{
          public:
             EdgeSet() = default;
+            explicit EdgeSet(std::vector<NodeID> v) : nodes_(std::move(v)) { }
+
+            EdgeSet(const EdgeSet &) = default;
+            EdgeSet &operator=(const EdgeSet &) = delete;
+            EdgeSet(EdgeSet &&) = default;
+            EdgeSet &operator=(EdgeSet &&) = default;
 
             void insert(NodeID id) {
               nodes_.push_back(id);
@@ -266,6 +272,11 @@ class SEG {
         // For llvm RTTI
         NodeKind getKind() const {
           return kind_;
+        }
+
+        void replacePreds(std::vector<NodeID> new_preds) {
+          // This should be efficient...
+          preds_ = EdgeSet(std::move(new_preds));
         }
 
         EdgeSet &preds() {
@@ -1005,30 +1016,22 @@ class SEG {
       auto &node = getNode(id);
 
       // Remove all edges to this node
-      // We need a temp container, as we can't remove while iterating...
-
-      std::set<NodeID> preds;
-      preds.insert(std::begin(node.preds()), std::end(node.preds()));
-      std::for_each(std::begin(preds), std::end(preds),
-          [this, &id](NodeID pred_id) {
+      for (auto pred_id : node.preds()) {
         auto pred_node = tryGetNode(pred_id);
-        if (pred_node != nullptr) {
+        if (pred_node != nullptr &&
+            pred_node->id() != node.id()) {
           pred_node->removeSucc(*this, id);
         }
-      });
+      }
 
       // Remove all edges from this node
-      std::set<NodeID> succs;
-      succs.insert(std::begin(node.succs()), std::end(node.succs()));
-      std::for_each(std::begin(succs), std::end(succs),
-          [this, &id](NodeID succ_id) {
-        // Don't do pointer to self... that was already done
+      for (auto succ_id : node.succs()) {
         auto succ_node = tryGetNode(succ_id);
-        if (succ_node != nullptr) {
+        if (succ_node != nullptr &&
+            succ_node->id() != node.id()) {
           succ_node->removePred(*this, id);
         }
-      });
-
+      }
 
       // Delete the node
       nodes_.at(node.id().val()).reset(nullptr);
@@ -1064,7 +1067,7 @@ class SEG {
 
     NodeID getRep(NodeID id) {
       auto ret = id;
-      auto &nd = nodes_.at(id.val());
+      auto &nd = nodes_[id.val()];
       if (nd == nullptr) {
         return NodeID::invalid();
       }
@@ -1088,7 +1091,7 @@ class SEG {
         return nullptr;
       }
 
-      auto &pnd = nodes_.at(rep.val());
+      auto &pnd = nodes_[rep.val()];
 
       return cast<node_type>(pnd.get());
     }
