@@ -25,6 +25,7 @@ class AllocInfo {
         callee->getName() != "valloc" &&
         callee->getName() != "realloc" &&
         callee->getName() != "memalign" &&
+        callee->getName() != "strdup" && // Does malloc of return value...
         callee->getName() != "fopen" &&
         callee->getName() != "popen" &&
         callee->getName() != "fdopen" &&
@@ -93,6 +94,7 @@ class AllocInfo {
           "", before);
     }
 
+    // FIXME: strdup... needs to call strlen?
     llvm::dbgs() << "callee->getName(): " << callee->getName() << "\n";
     assert(ret != nullptr);
     return ret;

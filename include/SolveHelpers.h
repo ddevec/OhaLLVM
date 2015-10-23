@@ -201,6 +201,10 @@ class PtstoSet {
       return ret;
     }
 
+    void intersectWith(const Bitmap &bmp) {
+      ptsto_ &= bmp;
+    }
+
     bool insersectsIgnoring(PtstoSet &rhs, ObjectMap::ObjID ignore) {
       bool ret = false;
 
@@ -639,7 +643,7 @@ class PtstoGraph {
       return ret;
     }
 
-    bool orPart(PtstoGraph &rhs,
+    bool orPart(const PtstoGraph &rhs,
         std::map<ObjID, __PartID> &part_map, __PartID part_id) {
       bool ret = false;
 
@@ -699,6 +703,10 @@ class PtstoGraph {
       return data_.cend();
     }
     */
+
+    bool empty() const {
+      return data_.empty();
+    }
 
 #ifndef SPECSFS_IS_TEST
     friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,

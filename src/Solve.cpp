@@ -138,6 +138,11 @@ void DUG::CopyNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
   auto &struct_list = dug.getStructInfo();
   bool change = dest_pts.orOffs(src_pts, offset(), struct_list);
 
+  // Enforce any dynamic constraints
+  if (dynConstraints_ != nullptr) {
+    dest_pts.intersectWith(*dynConstraints_);
+  }
+
   logout("D " << dest() << " " << dest_pts << "\n");
   dout("  pts_top[" << dest() << "] is now: " << dest_pts << "\n");
 
@@ -152,8 +157,104 @@ void DUG::CopyNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
   }
 }
 
+void DUG::LoadNode::processShared(DUG &dug, TopLevelPtsto &pts_top,
+    Worklist &work, const std::vector<uint32_t> &priority,
+    PtstoGraph &in) {
+  assert(!isDUGRep());
+  dout("Process load start\n");
+  // add a ptsto from src to the values contained in our partition set from the
+  //    top level varaible dest
+  // Add all successors to worklist
+  //
+  // For each variable potentially pointed to by dest (from top)
+  //   For each object potentially pointed to by that variable (from our IN set)
+  //     Add that edge to dest
+  //
+  // If we added any edges:
+  //   Add all successors to work
+  PtstoSet &src_pts = pts_top.at(src());
+  dout("value at src() (" << src() << ")\n");
+  dout("value at dest() (" << dest() << ")\n");
+  PtstoSet &dest_pts = pts_top.at(dest());
+  dout("SHARED\n");
+  dout("Load is " << rep() << "\n");
+
+  logout("SHARED\n");
+  logout("n " << id() << "\n");
+  logout("t " << 11 << "\n");
+
+  logout("r " << rep() << "\n");
+  logout("s " << src() << " " << src_pts << "\n");
+  logout("d " << dest() << " " << dest_pts << "\n");
+
+  logout("i " << in << "\n");
+
+  bool changed = false;
+  std::for_each(std::begin(src_pts), std::end(src_pts),
+      [this, &dug, &work, &changed, &dest_pts, &in]
+      (DUG::ObjID id) {
+    dout("  id is: " << id << "\n");
+    dout("  in is: " << in << "\n");
+
+    auto &pts = in.at(id);
+
+    dout("  pts is: " << pts << "\n");
+
+    changed |= (dest_pts |= pts);
+  });
+
+  // Enforce any dynamic constraints
+  if (dynConstraints_ != nullptr) {
+    dest_pts.intersectWith(*dynConstraints_);
+  }
+
+  logout("D " << dest() << " " << dest_pts << "\n");
+
+  if_debug(
+    dout("  pts_top[" << dest() << "] is now: ");
+    std::for_each(std::begin(dest_pts), std::end(dest_pts),
+        [this](DUG::ObjID obj_id) {
+      dout(" " << obj_id);
+    });
+    dout("\n"));
+
+  // Also propigate address taken info
+  // We need to update the ptsto of all of our part_successors
+  if (in.hasChanged()) {
+    std::for_each(std::begin(part_succs_), std::end(part_succs_),
+        [this, &dug, &work, &priority, &pts_top, &in]
+        (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
+      auto part_id = part_pr.first;
+      auto dug_id = part_pr.second;
+
+      auto &nd = dug.getNode(dug_id);
+
+      bool ch = nd.in().orPart(in, dug.objToPartMap(), part_id);
+
+      if (ch) {
+        work.push(&nd, priority[nd.id().val()]);
+      }
+    });
+  }
+
+  dout("  Load dest is: " << dest() << "\n");
+  dout("  Load src is: " << src() << "\n");
+  // If our input set has changed, we alert our succs
+  if (changed) {
+    std::for_each(succ_begin(), succ_end(),
+        [&dug, &work, &priority](DUG::DUGid succ_id) {
+      auto &nd = dug.getNode(succ_id);
+      dout("  Pushing nd to work: " << nd.id() << "\n");
+      work.push(&nd, priority[nd.id().val()]);
+    });
+  }
+  dout("ENDSHARED\n");
+  logout("ENDSHARED\n");
+}
+
 void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
     const std::vector<uint32_t> &priority) {
+  assert(isDUGRep());
   dout("Process load start\n");
   // add a ptsto from src to the values contained in our partition set from the
   //    top level varaible dest
@@ -193,6 +294,11 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
     changed |= (dest_pts |= pts);
   });
 
+  // Enforce any dynamic constraints
+  if (dynConstraints_ != nullptr) {
+    dest_pts.intersectWith(*dynConstraints_);
+  }
+
   logout("D " << dest() << " " << dest_pts << "\n");
 
   if_debug(
@@ -213,22 +319,44 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
   // If our input set has changed, we alert our succs
   if (in().hasChanged()) {
     std::for_each(std::begin(part_succs_), std::end(part_succs_),
-        [this, &dug, &work, &priority]
+        [this, &dug, &work, &priority, &pts_top]
         (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
       auto part_id = part_pr.first;
       auto dug_id = part_pr.second;
 
       auto &nd = dug.getNode(dug_id);
 
-      bool ch = nd.in().orPart(in_, dug.objToPartMap(), part_id);
+      auto pld_nd = dyn_cast<DUG::LoadNode>(&nd);
+      if (pld_nd != nullptr && !pld_nd->isDUGRep()) {
+        auto &ld_nd = *pld_nd;
 
-      if (ch) {
-        work.push(&nd, priority[nd.id().val()]);
+        ld_nd.processShared(dug, pts_top, work, priority, in_);
+      } else {
+        bool ch = nd.in().orPart(in_, dug.objToPartMap(), part_id);
+
+        if (ch) {
+          work.push(&nd, priority[nd.id().val()]);
+        }
       }
     });
 
     // Clear our changed info
     in().resetChanged();
+  // If in hasn't changed, we still have to run all shared, in case their inputs
+  //   changed
+  } else {
+    std::for_each(std::begin(part_succs_), std::end(part_succs_),
+        [this, &dug, &work, &priority, &pts_top]
+        (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
+      auto dug_id = part_pr.second;
+      auto &nd = dug.getNode(dug_id);
+      auto pld_nd = dyn_cast<DUG::LoadNode>(&nd);
+      if (pld_nd != nullptr && !pld_nd->isDUGRep()) {
+        auto &ld_nd = *pld_nd;
+
+        ld_nd.processShared(dug, pts_top, work, priority, in_);
+      }
+    });
   }
 
   if (changed) {
@@ -314,33 +442,53 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
     // FIXME: Only do this for changed info?
     // For each successor partition of this store
     std::for_each(std::begin(part_succs_), std::end(part_succs_),
-        [this, &work, &dug, &priority]
+        [this, &work, &dug, &priority, &pts_top]
         (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
       auto part_id = part_pr.first;
       auto dug_id = part_pr.second;
       auto &nd = dug.getNode(dug_id);
+      assert(nd.id() == dug_id);
 
       dout("  part_id is: " << part_id << "\n");
 
       dout("  Checking node: " << dug_id << "\n");
 
+      // dout("  before in for nd is: " << nd.in() << "\n");
 
-      dout("  before in for nd is: " << nd.in() << "\n");
+      auto pld_nd = dyn_cast<DUG::LoadNode>(&nd);
+      if (pld_nd != nullptr && !pld_nd->isDUGRep()) {
+        auto &ld_nd = *pld_nd;
+        ld_nd.processShared(dug, pts_top, work, priority, out_);
+      } else {
+        // Update the input set of the successor node
+        bool c = nd.in().orPart(out_, dug.objToPartMap(), part_id);
 
-      // Update the input set of the successor node
-      bool c = nd.in().orPart(out_, dug.objToPartMap(), part_id);
+        // dout("  after in for nd is: " << nd.in() << "\n");
 
-      dout("  after in for nd is: " << nd.in() << "\n");
-
-      if (c) {
-        dout("    Pushing nd to work: " << nd.id() << " (with prio: " <<
-            priority[nd.id().val()] << ")\n");
-        // Propigate info?
-        work.push(&nd, priority[nd.id().val()]);
+        if (c) {
+          dout("    Pushing nd to work: " << nd.id() << " (with prio: " <<
+              priority[nd.id().val()] << ")\n");
+          // Propigate info?
+          work.push(&nd, priority[nd.id().val()]);
+        }
       }
     });
 
     out_.resetChanged();
+  // Still have to run shared nodes
+  } else {
+    std::for_each(std::begin(part_succs_), std::end(part_succs_),
+        [this, &work, &dug, &priority, &pts_top]
+        (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
+      auto dug_id = part_pr.second;
+      auto &nd = dug.getNode(dug_id);
+
+      auto pld_nd = dyn_cast<DUG::LoadNode>(&nd);
+      if (pld_nd != nullptr && !pld_nd->isDUGRep()) {
+        auto &ld_nd = *pld_nd;
+        ld_nd.processShared(dug, pts_top, work, priority, out_);
+      }
+    });
   }
 }
 
@@ -487,3 +635,4 @@ void DUG::ConstPartNode::process(DUG &dug, TopLevelPtsto &pts_top,
     }
   });
 }
+

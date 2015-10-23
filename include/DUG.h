@@ -7,6 +7,7 @@
 
 #include <cstdint>
 
+#include <algorithm>
 #include <functional>
 #include <list>
 #include <map>
@@ -76,6 +77,25 @@ class DUGNode : public SEG::Node {
       return strong_;
     }
 
+    void addConstraintsWithAliases(const std::set<ObjectMap::ObjID> &pts_set,
+        const ObjectMap &omap) {
+      if (dynConstraints_ == nullptr) {
+        dynConstraints_ = std::unique_ptr<Bitmap>(new Bitmap());
+      }
+
+      for (auto &cons : pts_set) {
+        auto pr = omap.findObjAliases(cons);
+
+        if (pr.first) {
+          for (auto field : pr.second) {
+            dynConstraints_->set(field.val());
+          }
+        }
+
+        dynConstraints_->set(cons.val());
+      }
+    }
+
     //}}}
 
  protected:
@@ -84,6 +104,9 @@ class DUGNode : public SEG::Node {
     ObjectMap::ObjID src_;
     int32_t offset_;
     bool strong_ = false;
+
+    // Our output ptsto can only be a subset of this set
+    std::unique_ptr<Bitmap> dynConstraints_ = nullptr;
     //}}}
   //}}}
 };
@@ -438,6 +461,22 @@ class DUG {
       return DUG_.getNumNodes();
     }
 
+    SEG &getSEG() {
+      return DUG_;
+    }
+
+    const DUGNode &getRep(DUG::DUGid dug_id) {
+      auto &node = DUG_.getNode<DUG::PartNode>(dug_id);
+      if (node.isDUGRep()) {
+        return node;
+      } else {
+        auto &ret = cast<DUG::PartNode>(getRep(node.getDUGRep()));
+        node.setDUGRep(ret.id());
+
+        return ret;
+      }
+    }
+
     const DUGNode &getNode(ObjectMap::ObjID oid) const {
       return DUG_.getNode<DUGNode>(nodeMap_.at(oid));
     }
@@ -693,7 +732,82 @@ class DUG {
       }
 
       virtual void setupPartGraph(const std::vector<ObjectMap::ObjID> &vars) {
+        assert(isDUGRep());
         in_ = PtstoGraph(vars);
+      }
+
+      void erasePartSucc(DUG::DUGid id) {
+        // Swap out elm w/ end, then pop end
+        for (size_t i = 0; i < part_succs_.size(); i++) {
+          while (part_succs_[i].second == id) {
+            part_succs_[i] = part_succs_.back();
+            part_succs_.pop_back();
+          }
+        }
+      }
+
+      void erasePartSucc(const std::vector<DUG::DUGid> &srcs) {
+        auto succ_sorter_erase = [] (
+            const std::pair<DUG::PartID, DUG::DUGid> &p1,
+            const std::pair<DUG::PartID, DUG::DUGid> &p2) -> bool {
+          bool ret = p1.second < p2.second;
+          return ret;
+        };
+
+        auto succ_sorter_unique = [] (
+            const std::pair<DUG::PartID, DUG::DUGid> &p1,
+            const std::pair<DUG::PartID, DUG::DUGid> &p2) -> bool {
+          bool ret = p1.second == p2.second;
+          return ret;
+        };
+
+        // Create a vector of pairs
+        std::vector<std::pair<DUG::PartID, DUG::DUGid>> elms;
+        for (auto elm : srcs) {
+          elms.push_back(std::make_pair(DUG::PartID::invalid(), elm));
+        }
+
+        std::sort(std::begin(elms), std::end(elms), succ_sorter_erase);
+        auto it = std::unique(std::begin(elms), std::end(elms),
+            succ_sorter_unique);
+        elms.erase(it, std::end(elms));
+
+        uniqSuccs();
+
+        /* Can't use this, b/c it only removes 1 elm per elm in elms
+        std::set_difference(std::begin(part_succs_), std::end(part_succs_),
+            std::begin(elms), std::end(elms),
+            std::back_inserter(tmp_succs), succ_sorter_erase);
+        */
+        std::vector<std::pair<DUG::PartID, DUG::DUGid>> new_part_succs;
+        size_t elm_pos = 0;
+        for (size_t i = 0; i < part_succs_.size(); i++) {
+          // If we need to advance elm, b/c part_succ is larger
+          while (elms[elm_pos].second < part_succs_[i].second) {
+            elm_pos++;
+            if (elm_pos == elms.size()) {
+              break;
+            }
+          }
+          if (elms[elm_pos].second != part_succs_[i].second) {
+            new_part_succs.push_back(part_succs_[i]);
+          }
+        }
+
+        part_succs_.swap(new_part_succs);
+      }
+
+      void uniqSuccs() {
+        auto succ_sorter = [] (const std::pair<DUG::PartID, DUG::DUGid> &p1,
+            const std::pair<DUG::PartID, DUG::DUGid> &p2) {
+          if (p1.second == p2.second) {
+            return p1.first < p2.first;
+          }
+          return p1.second < p2.second;
+        };
+        std::sort(std::begin(part_succs_), std::end(part_succs_), succ_sorter);
+        auto it = std::unique(std::begin(part_succs_), std::end(part_succs_));
+        part_succs_.erase(it, std::end(part_succs_));
       }
 
       static bool classof(const SEG::Node *node) {
@@ -701,10 +815,45 @@ class DUG {
           node->getKind() < NodeKind::PartNodeEnd;
       }
 
+      void setDUGRep(DUG::DUGid new_rep) {
+        // We shouldn't have our rep set if we have part data...
+        assert(in_.empty());
+        dugRep_ = new_rep;
+      }
+
+      DUG::DUGid getDUGRep() const {
+        return dugRep_;
+      }
+
+      bool isDUGRep() const {
+        return dugRep_ == DUG::DUGid::invalid();
+      }
+
+      void unite(SEG &, SEG::Node &n) {
+        auto &node = cast<PartNode>(n);
+        // Okay, we are not using the SEG rep stuff here, we have our own rep
+        //   info
+        node.dugRep_ = id();
+        assert(dugRep_ == DUG::DUGid::invalid());
+
+        // NOTE: I intentionally don't call unite down the chain.  We don't want
+        //   to merge any other aspect of our node, just the rep
+      }
+
+      std::vector<std::pair<DUG::PartID, DUG::DUGid>> &getPartSuccs() {
+        return part_succs_;
+      }
+
+      const std::vector<std::pair<DUG::PartID, DUG::DUGid>> &
+      getPartSuccs() const {
+        return part_succs_;
+      }
+
      protected:
         // Successor partitons
         std::vector<std::pair<DUG::PartID, DUG::DUGid>> part_succs_;
 
+        DUG::DUGid dugRep_ = DUG::DUGid::invalid();
         PtstoGraph in_;
       //}}}
     };
@@ -748,6 +897,10 @@ class DUG {
         void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
             const std::vector<uint32_t> &priority) override;
 
+        void processShared(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
+            const std::vector<uint32_t> &priority,
+            PtstoGraph &addr_taken_pts);
+
         static bool classof(const SEG::Node *node) {
           return node->getKind() == NodeKind::LoadNode;
         }
@@ -759,6 +912,7 @@ class DUG {
         ObjectMap::ObjID dest() const override {
           return realDest_;
         }
+
       //}}}
 
      private:

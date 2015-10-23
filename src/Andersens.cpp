@@ -569,10 +569,16 @@ bool Andersens::AddConstraintsForExternalCall(CallSite CS, Function *F) {
 
   // Term info stuffs... meh
   if (F->getName() == "tigetstr" ||
-      F->getName() == "tiparm") {
+      F->getName() == "tparm") {
     Constraints.push_back(Constraint(Constraint::AddressOf,
           getNode(CS.getInstruction()),
           TermInfoObject));
+  }
+
+  if (F->getName() == "strerror") {
+    Constraints.push_back(Constraint(Constraint::AddressOf,
+          getNode(CS.getInstruction()),
+          CLibObject));
   }
 
   if (F->getName() == "__errno_location") {

@@ -114,14 +114,16 @@ bool SpecSFS::addDynPtstoInfo(llvm::Module &m, DUG &dug,
                   // DONT replace alloc nodes! I need the allocations!
                   if (!llvm::isa<DUG::AllocNode>(dug_node)) {
                     // If its a PartNode, we need to go through some headache
+                    /*
                     llvm::dbgs() << "replacing node: " << dug_node.id() <<
                       ", val_id: " << val_id << ", with const pststo:";
                     for (auto pts : ptsto_set) {
                       llvm::dbgs() << " " << pts;
                     }
                     llvm::dbgs() << "\n";
+                    */
 
-                    dug.replaceWithConstantNode(dug_node.id(), ptsto_set);
+                    dug_node.addConstraintsWithAliases(ptsto_set, omap);
                   }
                 }
               }

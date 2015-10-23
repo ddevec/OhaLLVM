@@ -333,8 +333,9 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
       F->getName() == "atol" || F->getName() == "atoll" ||
       F->getName() == "remove" || F->getName() == "unlink" ||
       F->getName() == "rename" || F->getName() == "memcmp" ||
-      F->getName() == "llvm.memset" ||
+      F->getName() == "llvm.memset" || F->getName() == "llvm.va_copy" ||
       F->getName() == "system" ||
+      F->getName() == "setbuf" ||
       F->getName() == "strcmp" || F->getName() == "strncmp" ||
       F->getName() == "execl" || F->getName() == "execlp" ||
       F->getName() == "execle" || F->getName() == "execv" ||
@@ -372,7 +373,19 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
       F->getName() == "close" || F->getName() == "abort" ||
       F->getName() == "atexit" || F->getName() == "error" ||
       F->getName() == "umask" || F->getName() == "free" ||
-      F->getName() == "setfscreatecon" ||
+      F->getName() == "setfscreatecon" || F->getName() == "strspn" ||
+      F->getName() == "strcspn" ||
+      F->getName() == "bsearch" || F->getName() == "clock" ||
+      // FIXME: well, this is actually ugly, wrt the cfg
+      F->getName() == "_setjmp" ||
+      F->getName() == "longjmp" ||
+      // End jump fixme
+      F->getName() == "getpagesize" ||
+      // FIXME: gcc stuffs?
+      F->getName() == "obstack_free" || F->getName() == "_obstack_newchunk" ||
+      F->getName() == "_obstack_begin" ||
+      F->getName() == "_obstack_memory_used" ||
+      // END GCC Stuffs
       F->getName() == "__ctype_get_mb_cur_max" ||
       F->getName() == "iswprint" || F->getName() == "mbsinit" ||
       // Although this copies the strings, it doesn't move pointers
@@ -428,6 +441,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
   // Ignore memset, it modifies the array, but not the ptsto
   if (F->getName().find("llvm.memset") == 0 ||
       F->getName().find("llvm.bswap") == 0 ||
+      F->getName().find("llvm.expect") == 0 ||
       F->getName().find("llvm.pow") == 0) {
     return true;
   }
@@ -556,9 +570,19 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
     return true;
   }
 
+  // Strerror, c stdlib
+  if (F->getName() == "strerror") {
+    // Set the output to be terminfo static data
+    cg.add(ConstraintType::AddressOf,
+        omap.getValue(CS.getInstruction()),
+        ObjectMap::CLibObject);
+    return true;
+  }
+
   // strtoll maddness
   // stores arg0 in arg1
   if (F->getName() == "strtoll" ||
+      F->getName() == "strtoul" ||
       F->getName() == "strtol") {
     auto st_id = omap.createPhonyID();
     cg.add(ConstraintType::Store, st_id,
@@ -1245,6 +1269,21 @@ static void idLoadInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
 
     // Add this to the uses
     addCFGLoad(cfg, next_id, ld_id);
+  } else if (auto ptr_t =
+      dyn_cast<llvm::PointerType>(ld.getOperand(0)->getType())) {
+    if (llvm::isa<llvm::PointerType>(ptr_t->getElementType()) &&
+        llvm::isa<llvm::IntegerType>(ld.getType())) {
+      // Ld is an int value... those may alias.  So we instead create a
+      //   phony id
+      auto ld_id = omap.getValue(&ld);
+
+      cg.add(ConstraintType::Load, ld_id,
+          omap.getValue(ld.getOperand(0)),
+          ObjectMap::IntValue);
+
+      addCFGLoad(cfg, next_id, ld_id);
+    }
+  /*
   } else if (llvm::isa<llvm::PointerType>(ld.getOperand(0)->getType()) &&
       llvm::isa<llvm::IntegerType>(ld.getType())) {
     // Ld is an int value... those will alias.  So we instead create a phony id
@@ -1255,6 +1294,7 @@ static void idLoadInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
         ObjectMap::IntValue);
 
     addCFGLoad(cfg, next_id, ld_id);
+  */
   } else if (llvm::isa<llvm::StructType>(ld.getType())) {
     llvm::errs() << "FIXME: Unhandled struct load!\n";
   }
