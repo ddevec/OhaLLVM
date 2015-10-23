@@ -60,7 +60,10 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
     void *addr);
 void __DynPtsto_main_init2(int32_t obj_id, int argc, char **argv) {
   for (int i = 0; i < argc; i++) {
-    __DynPtsto_do_malloc(obj_id, (strlen(argv[i])+1)*8, argv[i]);
+    // FIXME: this is hacky
+    // The data pointed to by argv is part of the argv object, which is argv
+    //   value + 1...
+    __DynPtsto_do_malloc(obj_id+1, (strlen(argv[i])+1)*8, argv[i]);
   }
   __DynPtsto_do_malloc(obj_id, (sizeof(*argv)*argc+1)*8, argv);
 }

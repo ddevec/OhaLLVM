@@ -774,6 +774,7 @@ class DUG {
 
         uniqSuccs();
 
+
         /* Can't use this, b/c it only removes 1 elm per elm in elms
         std::set_difference(std::begin(part_succs_), std::end(part_succs_),
             std::begin(elms), std::end(elms),
@@ -783,13 +784,12 @@ class DUG {
         size_t elm_pos = 0;
         for (size_t i = 0; i < part_succs_.size(); i++) {
           // If we need to advance elm, b/c part_succ is larger
-          while (elms[elm_pos].second < part_succs_[i].second) {
+          while (elm_pos < elms.size() &&
+              elms[elm_pos].second < part_succs_[i].second) {
             elm_pos++;
-            if (elm_pos == elms.size()) {
-              break;
-            }
           }
-          if (elms[elm_pos].second != part_succs_[i].second) {
+          if (elm_pos >= elms.size() ||
+              elms[elm_pos].second != part_succs_[i].second) {
             new_part_succs.push_back(part_succs_[i]);
           }
         }

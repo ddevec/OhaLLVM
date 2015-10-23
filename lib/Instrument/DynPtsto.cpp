@@ -151,12 +151,12 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
 
 
     int32_t fcn_num_allocas = 0;
+    std::vector<llvm::Instruction *> ret_list;
 
     for (auto &bb : fcn) {
       // Create list to hold all malloc/free Value*s that needs instrumenting
       // within this function
       std::vector<llvm::Instruction *> alloca_list;
-      std::vector<llvm::Instruction *> ret_list;
       std::vector<llvm::Instruction *> malloc_list;
       std::vector<llvm::Instruction *> free_list;
 
@@ -259,28 +259,6 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
         visit_insn->insertAfter(i8_ptr_val);
       }
 
-      // If we have one or more allocs, we need a call and ret pair
-      if (fcn_num_allocas > 0) {
-        // First, for calls
-        // Get external function
-        auto call_fcn = m.getFunction(CallInstName);
-        std::vector<llvm::Value *> args;
-        // NOTE: This should be the first function
-        //    (before the alloc instr calls)
-        auto &first_insn = *std::begin(fcn.getEntryBlock());
-        llvm::CallInst::Create(call_fcn,
-            args, "", &first_insn);
-        // for rets
-        // First, get the external function
-        auto ret_fcn = m.getFunction(RetInstName);
-        // Then, call for each ret
-        for (auto val : ret_list) {
-          // No args, just pops the last alloc frame...
-          llvm::CallInst::Create(ret_fcn,
-              args, "", val);
-        }
-      }
-
       // for allocas
       // First get the external function
       auto alloc_fcn = m.getFunction(AllocaInstName);
@@ -377,6 +355,28 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
             malloc_fcn, args);
 
         malloc_inst_call->insertAfter(i8_ptr_val);
+      }
+    }
+
+    // If we have one or more allocs, we need a call and ret pair
+    if (fcn_num_allocas > 0) {
+      // First, for calls
+      // Get external function
+      auto call_fcn = m.getFunction(CallInstName);
+      std::vector<llvm::Value *> args;
+      // NOTE: This should be the first function
+      //    (before the alloc instr calls)
+      auto &first_insn = *std::begin(fcn.getEntryBlock());
+      llvm::CallInst::Create(call_fcn,
+          args, "", &first_insn);
+      // for rets
+      // First, get the external function
+      auto ret_fcn = m.getFunction(RetInstName);
+      // Then, call for each ret
+      for (auto val : ret_list) {
+        // No args, just pops the last alloc frame...
+        llvm::CallInst::Create(ret_fcn,
+            args, "", val);
       }
     }
 

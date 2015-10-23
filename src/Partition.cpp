@@ -28,33 +28,6 @@
 
 // Anon namespace...
 namespace {
-__attribute__((unused))
-static std::pair<const llvm::Value *, const llvm::Value *>
-getSrcDestValue(ObjectMap::ObjID obj_id, const ObjectMap &omap,
-    const DUG &dug) {
-  auto src = omap.valueAtID(obj_id);
-
-  const llvm::Value *dest;
-  // A global init constraint will have a phony id -- a null value,
-  // Instead look up in the DUG, and get the val based on the src
-  if (src == nullptr) {
-    auto &nd = dug.getNode(obj_id);
-
-    src = omap.valueAtID(nd.src());
-    dest = omap.valueAtID(nd.dest());
-  } else if (auto pld = dyn_cast<const llvm::LoadInst>(src)) {
-    src = pld->getPointerOperand();
-    dest = src;
-  } else if (auto pst = dyn_cast<const llvm::StoreInst>(src)) {
-    src = pst->getOperand(0);
-    dest = pst->getOperand(1);
-  } else {
-    llvm_unreachable("Isn't a load, store, or GV?");
-  }
-
-  return std::make_pair(src, dest);
-}
-
 class DUGAccessEquiv {
  public:
     DUGAccessEquiv() = default;
@@ -120,7 +93,7 @@ class DUGAccessEquiv {
 }  // namespace
 
 // Computes "access equivalent" partitions as described in "Flow-Sensitive
-// Pointer ANalysis for Millions fo Lines of Code"
+// Pointer Analysis for Millions fo Lines of Code"
 bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
     ObjectMap &omap) {
   // Okay, heres what we do...
@@ -134,11 +107,7 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
   //   parts[equiv] += v;
   //
   // parts now holds all access equivalent partitons
-
-  // Note I break naming scheme to AE here to match paper description of
-  //   algorithm
   dout("Running computePartitions\n");
-
 
   dout("Doing AE creation loop\n");
 

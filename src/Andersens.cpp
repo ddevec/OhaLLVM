@@ -753,6 +753,10 @@ void Andersens::CollectConstraints(Module &M) {
 
   // Setup argv
   Constraints.push_back(Constraint(Constraint::AddressOf, ArgvValue,
+        ArgvValue));
+  Constraints.push_back(Constraint(Constraint::AddressOf, ArgvObject,
+        ArgvObject));
+  Constraints.push_back(Constraint(Constraint::Store, ArgvValue,
         ArgvObject));
   Constraints.push_back(Constraint(Constraint::AddressOf, CTypeObject,
         CTypeObject));
@@ -823,10 +827,14 @@ void Andersens::CollectConstraints(Module &M) {
              I != E; ++I) {
           if (isa<PointerType>(I->getType())) {
             Constraints.push_back(Constraint(Constraint::AddressOf, getNode(I),
+                  ArgvValue));
+            /*
+            Constraints.push_back(Constraint(Constraint::AddressOf, getNode(I),
                   getObject(I)));
 
             Constraints.push_back(Constraint(Constraint::Store,
                   getNode(I), ArgvValue));
+            */
           }
         }
       }

@@ -162,7 +162,7 @@ static void identifyAUXFcnCallRetInfo(CFG &cfg,
       CFG::CFGid call_id = cfg.nextNode();
       CFG::CFGid ret_id = cfg.nextNode();
 
-      llvm::dbgs() << "Getting info for target: " << *ci << "\n";
+      // llvm::dbgs() << "Getting info for target: " << *ci << "\n";
       auto fcn_targets = dyn_info->getTargets(ci);
 
       for (auto fcn : fcn_targets) {
@@ -1809,8 +1809,25 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
 
   // Constraints for argv
   // The argv value always points to the argv object
-  cg.add(ConstraintType::AddressOf, ObjectMap::ArgvValue,
-      ObjectMap::ArgvObjectValue);
+  // Do store here...
+  {
+    auto st_id = omap.createPhonyID();
+    cg.add(ConstraintType::AddressOf, st_id,
+      ObjectMap::ArgvObjectValue, ObjectMap::ArgvObjectValue);
+    cg.add(ConstraintType::AddressOf, st_id,
+      ObjectMap::ArgvValue, ObjectMap::ArgvValue);
+
+    cg.add(ConstraintType::Store, st_id,
+      ObjectMap::ArgvObjectValue, ObjectMap::ArgvValue);
+
+    auto node_id = cfg.nextNode();
+
+    cfg.addPred(node_id, CFG::CFGArgvBegin);
+
+    addCFGStore(cfg, &node_id, st_id);
+
+    cfg.addPred(CFG::CFGArgvEnd, node_id);
+  }
 
   // Constraints for ctype values
   cg.add(ConstraintType::AddressOf, ObjectMap::CTypeObject,
@@ -1941,6 +1958,10 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
               //   cannot be passed into main... I think
               // NOTE: We also need to add a new phony object which
               //   argv[i]/envp[i] pts to
+              auto val_id = omap.getValue(&arg);
+              cg.add(ConstraintType::AddressOf, val_id,
+                ObjectMap::ArgvValue);
+              /*  old argv behavior
               auto obj_id = omap.getObject(&arg);
               auto val_id = omap.getValue(&arg);
               cg.add(ConstraintType::AddressOf, val_id, obj_id);
@@ -1957,6 +1978,7 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
               addCFGStore(cfg, &node_id, st_id);
 
               cfg.addPred(CFG::CFGArgvEnd, node_id);
+              */
             }
           });
         }

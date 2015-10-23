@@ -326,6 +326,10 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
 
       auto &nd = dug.getNode(dug_id);
 
+      dout("  part_id is: " << part_id << "\n");
+
+      dout("  Checking node: " << dug_id << "\n");
+
       auto pld_nd = dyn_cast<DUG::LoadNode>(&nd);
       if (pld_nd != nullptr && !pld_nd->isDUGRep()) {
         auto &ld_nd = *pld_nd;
@@ -335,6 +339,8 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
         bool ch = nd.in().orPart(in_, dug.objToPartMap(), part_id);
 
         if (ch) {
+          dout("    Pushing nd to work: " << nd.id() << " (with prio: " <<
+              priority[nd.id().val()] << ")\n");
           work.push(&nd, priority[nd.id().val()]);
         }
       }
