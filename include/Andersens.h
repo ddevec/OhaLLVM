@@ -382,13 +382,15 @@ class Andersens : public llvm::ModulePass,
     UniversalSet = 0,
     NullPtr      = 1,
     NullObject   = 2,
-    ArgvObject   = 3,
+    ArgvValueObject   = 3,
     ArgvValue    = 4,
     LocaleObject = 5,
     CTypeObject  = 6,
     ErrnoObject  = 7,
     CLibObject   = 8,
     TermInfoObject = 9,
+    ArgvObject   = 10,
+    ArgvObjectObject    = 11,
     NumberSpecialNodes
   };
 

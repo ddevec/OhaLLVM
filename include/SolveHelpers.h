@@ -183,7 +183,7 @@ class PtstoSet {
       std::for_each(std::begin(rhs.ptsto_), std::end(rhs.ptsto_),
           [this, &ret, &offs, &struct_set]
           (const int32_t &val) {
-        auto or_offs = offs;
+        int32_t or_offs = offs;
 
         // If this isn't a structure, don't treat it with an offset
         auto it = struct_set.find(ObjectMap::ObjID(val));
@@ -573,7 +573,7 @@ class PtstoGraph {
 
     PtstoSet &at(ObjID id) {
       auto it = std::lower_bound(std::begin(data_), std::end(data_), id);
-      assert(it != std::end(data_));
+      assert(it != std::end(data_) && it->id() == id);
       return it->pts();
     }
 

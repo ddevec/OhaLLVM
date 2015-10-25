@@ -56,12 +56,14 @@ class ObjectMap {
       eAggregateValue = 4,
       ePthreadSpecificValue = 5,
       eArgvValue = 6,
-      eArgvObjectValue = 7,
+      eArgvValueObject = 7,
       eLocaleObject = 8,
       eCTypeObject = 9,
       eErrnoObject = 10,
       eCLibObject = 11,
       eTermInfoObject = 12,
+      eArgvObject = 13,
+      eArgvObjectObject = 14,
       eNumDefaultObjs
     } DefaultObjs;
 
@@ -73,12 +75,14 @@ class ObjectMap {
     static const ObjID UniversalValue;
     static const ObjID PthreadSpecificValue;
     static const ObjID ArgvValue;
-    static const ObjID ArgvObjectValue;
+    static const ObjID ArgvValueObject;
     static const ObjID LocaleObject;
     static const ObjID CTypeObject;
     static const ObjID ErrnoObject;
     static const ObjID CLibObject;
     static const ObjID TermInfoObject;
+    static const ObjID ArgvObject;
+    static const ObjID ArgvObjectObject;
     //}}}
 
     static constexpr ObjID getOffsID(ObjID id, int32_t offs) {
@@ -383,10 +387,14 @@ class ObjectMap {
         o << "(UniversalValue)";
       } else if (id == PthreadSpecificValue) {
         o << "(PthreadSpecificValue)";
-      } else if (id == ArgvObjectValue) {
-        o << "(Argv object)";
+      } else if (id == ArgvValueObject) {
+        o << "(Argv val object)";
       } else if (id == ArgvValue) {
         o << "(Argv)";
+      } else if (id == ArgvObject) {
+        o << "(Argv object)";
+      } else if (id == ArgvObjectObject) {
+        o << "(Argv obj object)";
       } else if (id == LocaleObject) {
         o << "(locale)";
       } else if (id == CTypeObject) {

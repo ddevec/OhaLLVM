@@ -186,7 +186,11 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     special_aux_.emplace(ObjectMap::NullValue, Andersens::NullPtr);
     special_aux_.emplace(ObjectMap::NullObjectValue, Andersens::NullObject);
     special_aux_.emplace(ObjectMap::ArgvValue, Andersens::ArgvValue);
-    special_aux_.emplace(ObjectMap::ArgvObjectValue, Andersens::ArgvObject);
+    special_aux_.emplace(ObjectMap::ArgvValueObject,
+        Andersens::ArgvValueObject);
+    special_aux_.emplace(ObjectMap::ArgvObject, Andersens::ArgvObject);
+    special_aux_.emplace(ObjectMap::ArgvObjectObject,
+        Andersens::ArgvObjectObject);
     special_aux_.emplace(ObjectMap::IntValue, aux.IntNode);
     special_aux_.emplace(ObjectMap::UniversalValue, Andersens::UniversalSet);
     special_aux_.emplace(ObjectMap::LocaleObject, Andersens::LocaleObject);
@@ -215,7 +219,9 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     aux_to_obj_[Andersens::NullPtr] = ObjectMap::NullValue;
     aux_to_obj_[Andersens::NullObject] = ObjectMap::NullObjectValue;
     aux_to_obj_[Andersens::ArgvValue] = ObjectMap::ArgvValue;
-    aux_to_obj_[Andersens::ArgvObject] = ObjectMap::ArgvObjectValue;
+    aux_to_obj_[Andersens::ArgvObject] = ObjectMap::ArgvObject;
+    aux_to_obj_[Andersens::ArgvValueObject] = ObjectMap::ArgvValueObject;
+    aux_to_obj_[Andersens::ArgvObjectObject] = ObjectMap::ArgvObjectObject;
     assert(aux.IntNode < aux_to_obj_.size());
     aux_to_obj_[aux.IntNode] = ObjectMap::IntValue;
     aux_to_obj_[Andersens::UniversalSet] = ObjectMap::UniversalValue;
@@ -247,8 +253,11 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   // Now, fill in the indirect function calls
   {
     PerfTimerPrinter indir_timer(llvm::dbgs(), "addIndirectCalls");
-    const auto &dyn_indir_info = getAnalysis<IndirFunctionInfo>();
-    if (addIndirectCalls(cg, cfg, aux, &dyn_indir_info, omap)) {
+    auto dyn_indir_info = &getAnalysis<IndirFunctionInfo>();
+    if (!unused_fcns.hasInfo()) {
+      dyn_indir_info = nullptr;
+    }
+    if (addIndirectCalls(cg, cfg, aux, dyn_indir_info, omap)) {
       error("AddIndirectCalls failure!");
     }
   }

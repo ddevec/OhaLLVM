@@ -244,5 +244,9 @@ create_opt_test(glbl_const_init
     glbl_const_init.c
   )
 
+create_test(test_argv
+    test_argv.c
+  )
+
 add_subdirectory(dce)
 
