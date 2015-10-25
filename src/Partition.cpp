@@ -2,7 +2,7 @@
  * Copyright (C) 2015 David Devecsery
  */
 
-#define SPECSFS_DEBUG
+// #define SPECSFS_DEBUG
 // #define DO_SEG_PRINT
 
 #include <algorithm>
@@ -212,7 +212,6 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
         continue;
       }
 
-      llvm::dbgs() << "Looking at obj_id: " << obj_id << "\n";
       const llvm::SparseBitVector<> *paux_ptsto;
       // Specially handle our special object ids...
       if (omap.isSpecial(obj_id)) {
@@ -221,13 +220,9 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
         // dout("Got Special ptsto: " << obj_id << "\n");
       } else {
         // If not special, just get the pointsto
-        llvm::dbgs() << "Got initial val: " << ValPrint(obj_id) << "\n";
         auto val = omap.valueAtID(obj_id);
         if (val == nullptr) {
           auto &nd = dug.getNode(obj_id);
-
-          llvm::dbgs() << "Got new val: (" << nd.dest() << ") "
-            << ValPrint(nd.dest()) << "\n";
 
           val = omap.valueAtID(nd.dest());
         }

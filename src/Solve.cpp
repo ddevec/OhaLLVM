@@ -2,7 +2,7 @@
  * Copyright (C) 2015 David Devecsery
  */
 
-#define SPECSFS_DEBUG
+// #define SPECSFS_DEBUG
 // #define SPECSFS_LOGDEBUG
 
 #include <algorithm>
