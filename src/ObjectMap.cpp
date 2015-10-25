@@ -35,9 +35,9 @@ const ObjectMap::ObjID ObjectMap::ArgvValue =
     ObjectMap::ObjID(
         static_cast<int32_t>(ObjectMap::ObjEnum::eArgvValue));
 
-const ObjectMap::ObjID ObjectMap::ArgvObjectValue =
+const ObjectMap::ObjID ObjectMap::ArgvValueObject =
     ObjectMap::ObjID(
-        static_cast<int32_t>(ObjectMap::ObjEnum::eArgvObjectValue));
+        static_cast<int32_t>(ObjectMap::ObjEnum::eArgvValueObject));
 
 const ObjectMap::ObjID ObjectMap::LocaleObject =
     ObjectMap::ObjID(
@@ -58,6 +58,14 @@ const ObjectMap::ObjID ObjectMap::CLibObject =
 const ObjectMap::ObjID ObjectMap::TermInfoObject =
     ObjectMap::ObjID(
         static_cast<int32_t>(ObjectMap::ObjEnum::eTermInfoObject));
+
+const ObjectMap::ObjID ObjectMap::ArgvObject =
+    ObjectMap::ObjID(
+        static_cast<int32_t>(ObjectMap::ObjEnum::eArgvObject));
+
+const ObjectMap::ObjID ObjectMap::ArgvObjectObject =
+    ObjectMap::ObjID(
+        static_cast<int32_t>(ObjectMap::ObjEnum::eArgvObjectObject));
 
 ObjectMap::ObjectMap() {
   for (int32_t i = 0; i < static_cast<int32_t>(ObjEnum::eNumDefaultObjs);

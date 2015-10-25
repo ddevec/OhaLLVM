@@ -613,7 +613,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
   if (F->getName() == "getenv") {
     cg.add(ConstraintType::AddressOf,
       omap.getValue(CS.getInstruction()),
-      ObjectMap::ArgvObjectValue);
+      ObjectMap::ArgvValueObject);
     return true;
   }
 
@@ -1551,7 +1551,6 @@ static void processBlock(const UnusedFunctions &unused_fcns,
 
     // If this is main, we add an edge from glbl_init to it
     if (BB.getParent()->getName() == "main") {
-      // cfg.addEdge(CFG::CFGArgvBegin, CFG::ArgvEnd);
       cfg.addPred(next_id, CFG::CFGArgvEnd);
       cfg.addPred(next_id, CFG::CFGInit);
     }
@@ -1811,14 +1810,15 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
   // The argv value always points to the argv object
   // Do store here...
   {
-    auto st_id = omap.createPhonyID();
-    cg.add(ConstraintType::AddressOf, st_id,
-      ObjectMap::ArgvObjectValue, ObjectMap::ArgvObjectValue);
-    cg.add(ConstraintType::AddressOf, st_id,
-      ObjectMap::ArgvValue, ObjectMap::ArgvValue);
+    cg.add(ConstraintType::AddressOf,
+      ObjectMap::ArgvValue, ObjectMap::ArgvValueObject);
+    cg.add(ConstraintType::AddressOf,
+        ObjectMap::ArgvObject, ObjectMap::ArgvObjectObject);
 
+    auto st_id = omap.createPhonyID();
     cg.add(ConstraintType::Store, st_id,
-      ObjectMap::ArgvObjectValue, ObjectMap::ArgvValue);
+      ObjectMap::ArgvObject, ObjectMap::ArgvValue);
+    llvm::dbgs() << " Made argvobj store node: " << st_id << "\n";
 
     auto node_id = cfg.nextNode();
 
@@ -1952,7 +1952,8 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
         // Any arguments for main have their own objects...
         if (fcn.getName() == "main") {
           std::for_each(fcn.arg_begin(), fcn.arg_end(),
-              [&cg, &omap, &cfg](const llvm::Argument &arg) {
+              [&cg, &omap, &cfg]
+              (const llvm::Argument &arg) {
             if (llvm::isa<llvm::PointerType>(arg.getType())) {
               // NOTE: We don't have to add value for type because structures
               //   cannot be passed into main... I think
@@ -1960,7 +1961,7 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
               //   argv[i]/envp[i] pts to
               auto val_id = omap.getValue(&arg);
               cg.add(ConstraintType::AddressOf, val_id,
-                ObjectMap::ArgvValue);
+                ObjectMap::ArgvValueObject);
               /*  old argv behavior
               auto obj_id = omap.getObject(&arg);
               auto val_id = omap.getValue(&arg);

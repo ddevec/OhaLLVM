@@ -247,7 +247,7 @@ void Andersens::IdentifyObjects(Module &M) {
 
   // Object #3 always represents the argv object (the object pointed to by argv
   // in main)
-  assert(NumObjects == ArgvObject && "Something changed!");
+  assert(NumObjects == ArgvValueObject && "Something changed!");
   ++NumObjects;
 
   // Object #4 always represents the argv value
@@ -274,20 +274,29 @@ void Andersens::IdentifyObjects(Module &M) {
   assert(NumObjects == TermInfoObject && "Something changed!");
   ++NumObjects;
 
+  // Object #3 always represents the argv object (the object pointed to by argv
+  // in main)
+  assert(NumObjects == ArgvObject && "Something changed!");
+  ++NumObjects;
+
+  // Object #4 always represents the argv value
+  assert(NumObjects == ArgvObjectObject && "Something changed!");
+  ++NumObjects;
+
   // its place may change
-  IntNode = 10;
+  IntNode = 12;
   // Object #3 always represents the int object (all ints)
   assert(NumObjects == IntNode && "Something changed!");
   ++NumObjects;
 
   // its place may change
-  AggregateNode = 11;
+  AggregateNode = 13;
   // Object #4 always represents the aggregate object (all aggregates)
   assert(NumObjects == AggregateNode && "Something changed!");
   ++NumObjects;
 
   // its place may change
-  PthreadSpecificNode = 12;
+  PthreadSpecificNode = 14;
   // Object #4 always represents the pthread_specific object
   assert(NumObjects == PthreadSpecificNode && "Something changed!");
   ++NumObjects;
@@ -753,11 +762,13 @@ void Andersens::CollectConstraints(Module &M) {
 
   // Setup argv
   Constraints.push_back(Constraint(Constraint::AddressOf, ArgvValue,
-        ArgvValue));
+        ArgvValueObject));
   Constraints.push_back(Constraint(Constraint::AddressOf, ArgvObject,
-        ArgvObject));
+        ArgvObjectObject));
   Constraints.push_back(Constraint(Constraint::Store, ArgvValue,
         ArgvObject));
+
+  // Setup ctype
   Constraints.push_back(Constraint(Constraint::AddressOf, CTypeObject,
         CTypeObject));
 
@@ -827,7 +838,7 @@ void Andersens::CollectConstraints(Module &M) {
              I != E; ++I) {
           if (isa<PointerType>(I->getType())) {
             Constraints.push_back(Constraint(Constraint::AddressOf, getNode(I),
-                  ArgvValue));
+                  ArgvValueObject));
             /*
             Constraints.push_back(Constraint(Constraint::AddressOf, getNode(I),
                   getObject(I)));
@@ -2701,6 +2712,12 @@ void Andersens::PrintNode(const Node *N) const {
     return;
   } else if (N == &GraphNodes[ArgvValue]) {
     errs() << "<argv>";
+    return;
+  } else if (N == &GraphNodes[ArgvValueObject]) {
+    errs() << "<argv val object>";
+    return;
+  } else if (N == &GraphNodes[ArgvObjectObject]) {
+    errs() << "<argv obj object>";
     return;
   } else if (N == &GraphNodes[LocaleObject]) {
     errs() << "<locale>";
