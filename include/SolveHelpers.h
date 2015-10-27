@@ -169,6 +169,10 @@ class PtstoSet {
       ptsto_.clear();
     }
 
+    bool operator==(const PtstoSet &rhs) {
+      return ptsto_ == rhs.ptsto_;
+    }
+
     bool operator|=(const PtstoSet &rhs) {
       return ptsto_ |= rhs.ptsto_;
     }
@@ -201,8 +205,8 @@ class PtstoSet {
       return ret;
     }
 
-    void intersectWith(const Bitmap &bmp) {
-      ptsto_ &= bmp;
+    bool intersectWith(const Bitmap &bmp) {
+      return (ptsto_ &= bmp);
     }
 
     bool insersectsIgnoring(PtstoSet &rhs, ObjectMap::ObjID ignore) {

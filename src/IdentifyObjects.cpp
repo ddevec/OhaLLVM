@@ -50,8 +50,8 @@ typedef ID<aux_id, int32_t, -1> AuxID;
 static void identifyAUXFcnCallRetInfo(CFG &cfg,
     ObjectMap &omap, const Andersens &aux,
     const IndirFunctionInfo *dyn_info) {
-  // If we don't have dynamic info:
-  if (dyn_info == nullptr || !dyn_info->hasInfo()) {
+  // If we don't have dynamic info, or we're explicitly not using it:
+  if (!do_spec || dyn_info == nullptr || !dyn_info->hasInfo()) {
     // The mapping of andersen's values to functions
     std::map<AuxID, ObjectMap::ObjID> anders_to_fcn;
 
@@ -334,8 +334,16 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
       F->getName() == "remove" || F->getName() == "unlink" ||
       F->getName() == "rename" || F->getName() == "memcmp" ||
       F->getName() == "llvm.memset" || F->getName() == "llvm.va_copy" ||
-      F->getName() == "system" ||
-      F->getName() == "setbuf" ||
+      F->getName() == "system" || F->getName() == "link" ||
+      F->getName() == "setuid" || F->getName() == "setgid" ||
+      F->getName() == "seteuid" || F->getName() == "setegid" ||
+      F->getName() == "geteuid" || F->getName() == "getegid" ||
+      F->getName() == "__sigsetjmp" || F->getName() == "getpid" ||
+      F->getName() == "setvbuf" || F->getName() == "setbuf" ||
+      F->getName() == "siglongjmp" || F->getName() == "ftruncate" ||
+      F->getName() == "closedir" || F->getName() == "putenv" ||
+      F->getName() == "kill" || F->getName() == "frexp" ||
+      F->getName() == "__isnan" ||
       F->getName() == "strcmp" || F->getName() == "strncmp" ||
       F->getName() == "execl" || F->getName() == "execlp" ||
       F->getName() == "execle" || F->getName() == "execv" ||
@@ -560,6 +568,13 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
     }
   }
 
+  // Result = Arg3
+  if (F->getName() == "gcvt") {
+    cg.add(ConstraintType::Copy,
+        omap.getValue(CS.getInstruction()),
+        omap.getValue(CS.getArgument(2)));
+    return true;
+  }
   // term info stuffs...
   if (F->getName() == "tigetstr" ||
       F->getName() == "tparm") {
@@ -570,8 +585,10 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
     return true;
   }
 
-  // Strerror, c stdlib
-  if (F->getName() == "strerror") {
+  // c stdlib returning fcns
+  if (F->getName() == "strerror" ||
+      F->getName() == "gmtime" ||
+      F->getName() == "readdir") {
     // Set the output to be terminfo static data
     cg.add(ConstraintType::AddressOf,
         omap.getValue(CS.getInstruction()),
@@ -666,7 +683,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
         // llvm::Function *ParentF = I->getParent()->getParent();
         assert(I->getParent()->getParent()->getFunctionType()->isVarArg()
             && "va_start in non-vararg function!");
-        llvm::dbgs() << "FIXME: ???VARAG???\n";
+        llvm::dbgs() << "FIXME: ???VARARG???\n";
         /*
         llvm::Value *Arg = II->getArgOperand(0);
         auto TempArg = omap.createPhonyID();
@@ -1021,6 +1038,13 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
         // Map it to int stores (i2p)
         auto node_id = omap.createPhonyID();
         auto dest_id = omap.getValue(FargI);
+
+        /*
+        llvm::dbgs() << "instr is: " << *CS.getInstruction() << "\n";
+        llvm::dbgs() << "dest is: " << F->getName() << "\n";
+        llvm::dbgs() << "ArgI is: " << (*ArgI)->getName() << "\n";
+        llvm::dbgs() << "FargI is: " << FargI->getName() << "\n";
+        */
 
         cg.add(ConstraintType::Copy, node_id, ObjectMap::IntValue,
             dest_id);
@@ -1400,14 +1424,30 @@ static void idP2IInst(ConstraintGraph &cg, ObjectMap &omap,
     const llvm::Instruction &inst) {
   // ddevec - FIXME: Could trace through I2P here, by keeping a listing
   //    of i2ps...
-  // sfs does this, Andersens doesn't.  I don't think its a sound approach, as
-  // something external may modify any int reference passed to it (where we're
-  // unaware of what's in it) and screw up our tracking
-  // Instead I'm just going to go w/ the Andersen's, approach, give it an
-  // int value
-  cg.add(ConstraintType::Copy,
-      ObjectMap::IntValue,
-      omap.getValue(inst.getOperand(0)));
+  // sfs does this, Andersens doesn't.
+
+  auto val = omap.getValue(inst.getOperand(0));
+  cg.addP2ICast(&inst, val);
+
+  // If this I instruction is only used by I2P instrs, don't make a constraint
+  // for it...
+  bool non_i2p = false;
+  std::for_each(inst.use_begin(), inst.use_end(),
+      [&non_i2p] (const llvm::User *use) {
+    if (!llvm::isa<llvm::IntToPtrInst>(use)) {
+      non_i2p = true;
+      /*
+      auto inst = cast<llvm::Instruction>(use);
+      llvm::dbgs() << "have non-i2p use: " <<
+        inst->getParent()->getParent()->getName() << ": " << *use << "\n";
+      */
+    }
+  });
+
+  if (non_i2p) {
+    cg.add(ConstraintType::Copy,
+        ObjectMap::IntValue, val);
+  }
 }
 
 static void idI2PInst(ConstraintGraph &cg, ObjectMap &omap,
@@ -1419,9 +1459,17 @@ static void idI2PInst(ConstraintGraph &cg, ObjectMap &omap,
   // unaware of what's in it) and screw up our tracking
   // Instead I'm just going to go w/ the Andersen's, approach, give it an
   // int value
+
+  auto dest_val = omap.getValue(&inst);
+  auto src_val = ObjectMap::IntValue;
+
+  auto it = cg.findP2ICast(inst.getOperand(0));
+  if (it != cg.p2icast_end()) {
+    src_val = it->second;
+  }
+
   cg.add(ConstraintType::Copy,
-      getValueUpdate(cg, omap, &inst),
-      ObjectMap::IntValue);
+      dest_val, src_val);
 }
 
 static void idBitcastInst(ConstraintGraph &cg, ObjectMap &omap,
@@ -1519,7 +1567,7 @@ static void processBlock(const UnusedFunctions &unused_fcns,
     ObjectMap &omap, const llvm::BasicBlock &BB, CFG::CFGid parent_id) {
   // If this block is never used, don't process it! -- This includes adding
   //   edges from/to parents
-  if (!unused_fcns.isUsed(&BB)) {
+  if (do_spec && !unused_fcns.isUsed(&BB)) {
     return;
   }
 
@@ -1826,6 +1874,13 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
     addCFGStore(cfg, &node_id, st_id);
 
     cfg.addPred(CFG::CFGArgvEnd, node_id);
+
+    // FIXME: Andersen's can get confused by some I2P operations which store
+    // argv into an intptr when it was expecting the universal value (this is
+    // because my constraints pass this information more precisely than
+    // andersens),  So I add an alias to clean that up, until I can teach
+    // andersens to handle it cleanly
+    omap.addObjAlias(ObjectMap::UniversalValue, ObjectMap::ArgvObjectObject);
   }
 
   // Constraints for ctype values
@@ -1899,8 +1954,8 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
   // Functions {{{
   // Now that we've dealt with globals, move on to functions
   for (auto &fcn : M) {
-    // NOTE: In the absense of profile info isUsed reports conservatively
-    if (unused_fcns.isUsed(fcn)) {
+    // Will analyse function if it do_spec is false, or isUsed is also true
+    if (!do_spec || unused_fcns.isUsed(fcn)) {
       auto obj_id = omap.getObject(&fcn);
       // graph.associateNode(obj_id, &fcn);
 
@@ -1915,8 +1970,8 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
 
   // Now we deal with the actual internals of functions
   for (auto &fcn : M) {
-    // NOTE: In the absense of profile info isUsed reports conservatively
-    if (unused_fcns.isUsed(fcn)) {
+    // NOTE: In the absence of profile info isUsed reports conservatively
+    if (!do_spec || unused_fcns.isUsed(fcn)) {
       // If this function may be used externally -- aka I can't track the uses
       //   of it
       if (!fcn.hasLocalLinkage() || analyzeUsesOfFunction(fcn)) {

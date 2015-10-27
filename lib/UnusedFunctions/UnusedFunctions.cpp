@@ -16,13 +16,13 @@ void UnusedFunctions::getAnalysisUsage(llvm::AnalysisUsage &AU) const {
 bool UnusedFunctions::runOnModule(llvm::Module &m) {
   // llvm::dbgs() << "In runOnModule!\n";
 
-  auto &PI = getAnalysis<llvm::ProfileInfo>();
-
   int used_fcns = 0;
   int unused_fcns = 0;
 
   int used_bbs = 0;
   int unused_bbs = 0;
+
+  auto &PI = getAnalysis<llvm::ProfileInfo>();
 
   // Check for unused functions
   for (auto &fcn : m) {
@@ -66,7 +66,7 @@ bool UnusedFunctions::runOnModule(llvm::Module &m) {
 
 
   if (used_fcns == 0) {
-    llvm::dbgs() << "UnusedFunctions: No logfile found\n";
+    llvm::dbgs() << "UnusedFunctions: No logfile loaded\n";
     allUsed_ = true;
   } else {
     llvm::dbgs() << "UnusedFunctions: Successfully Loaded\n";

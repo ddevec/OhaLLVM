@@ -473,6 +473,11 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
     }
 
     if (HUCalc::isNonPtr(src_rep_node) || HUCalc::isNonPtr(dest_rep_node)) {
+      // If this constriant had a node in the cfg, remove it
+      if (cons.type() == ConstraintType::Load ||
+          cons.type() == ConstraintType::Store) {
+        cfg.eraseObjToCFG(rep_obj_id);
+      }
       // llvm::dbgs() << __LINE__ << " Deleting rep: " << cons.rep() << "\n";
       graph.removeConstraint(id);
       continue;
@@ -483,6 +488,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
         cons.src() == cons.dest() && cons.offs() == 0) {
       // llvm::dbgs() << __LINE__ << " Deleting rep: " << cons.rep() << "\n";
       // llvm::dbgs() << "  With dest: " << cons.dest() << "\n";
+        assert(id.val() != 120638);
       graph.removeConstraint(id);
       continue;
     }
@@ -499,6 +505,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
       } else {
         // llvm::dbgs() << __LINE__ << " Deleting rep: " << cons.rep() << "\n";
         // llvm::dbgs() << "  With dest: " << cons.dest() << "\n";
+        assert(id.val() != 120638);
         graph.removeConstraint(id);
       }
     }

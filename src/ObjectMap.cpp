@@ -20,12 +20,12 @@ const ObjectMap::ObjID ObjectMap::NullObjectValue =
 const ObjectMap::ObjID ObjectMap::IntValue =
     ObjectMap::ObjID(static_cast<int32_t>(ObjectMap::ObjEnum::eIntValue));
 
-const ObjectMap::ObjID ObjectMap::AggregateValue =
-    ObjectMap::ObjID(static_cast<int32_t>(ObjectMap::ObjEnum::eAggregateValue));
-
 const ObjectMap::ObjID ObjectMap::UniversalValue =
     ObjectMap::ObjID(
         static_cast<int32_t>(ObjectMap::ObjEnum::eUniversalValue));
+
+const ObjectMap::ObjID ObjectMap::AggregateValue =
+    ObjectMap::ObjID(static_cast<int32_t>(ObjectMap::ObjEnum::eAggregateValue));
 
 const ObjectMap::ObjID ObjectMap::PthreadSpecificValue =
     ObjectMap::ObjID(

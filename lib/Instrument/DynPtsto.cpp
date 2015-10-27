@@ -35,6 +35,12 @@
 #include "include/AllocInfo.h"
 #include "include/lib/UnusedFunctions.h"
 
+static llvm::cl::opt<bool>
+  print_dyn_ptsto("dyn-ptsto-print-stats", llvm::cl::init(false),
+      llvm::cl::value_desc("bool"),
+      llvm::cl::desc("if set DynPtstoLoader will print the ptstos counts "
+        "gathered from the run"));
+
 static llvm::cl::opt<std::string>
   DynPtstoFilename("dyn-ptsto-file", llvm::cl::init("dyn_ptsto.log"),
       llvm::cl::value_desc("filename"),
@@ -754,54 +760,19 @@ void DynPtstoLoader::getAnalysisUsage(llvm::AnalysisUsage &au) const {
   au.setPreservesAll();
 }
 
-void DynPtstoLoader::setupSpecSFSids(llvm::Module &M) {
-  // Set up our alias analysis
-  // -- This is required for the llvm AliasAnalysis interface
-  // InitializeAliasAnalysis(this);
-
-  // Clear the def-use graph
-  // It should already be cleared, but I'm paranoid
-  ConstraintGraph cg;
-  CFG cfg;
-  ObjectMap &omap = omap_;
-
-  if (identifyObjects(omap, M)) {
-    abort();
-  }
-
-  const UnusedFunctions &unused_fcns =
-      getAnalysis<UnusedFunctions>();
-
-  ObjectMap::replaceDbgOmap(omap);
-  if (createConstraints(cg, cfg, omap, M, unused_fcns)) {
-    abort();
-  }
-
-  // Also add indirect info... this means we have to wait for Andersen's
-  Andersens aux;
-  // Get AUX info, in this instance we choose Andersens
-  if (aux.runOnModule(M)) {
-    // Andersens had better not change M!
-    abort();
-  }
-
-  // Now, fill in the indirect function calls
-  if (addIndirectCalls(cg, cfg, aux, nullptr, omap)) {
-    abort();
-  }
-}
-
-bool DynPtstoLoader::runOnModule(llvm::Module &m) {
-  // Setup ObjectMap ids using the SpecSFS identifiers...
-  setupSpecSFSids(m);
-
+bool DynPtstoLoader::runOnModule(llvm::Module &) {
   std::ifstream logfile(DynPtstoFilename);
+  llvm::dbgs() << "Loading DynPtstoFile: " << DynPtstoFilename << "\n";
   if (!logfile.is_open()) {
-    llvm::dbgs() << "DynPtstoLoader: no logfile found!\n";
+    llvm::dbgs() << "DynPtstoLoader: no logfile loaded!\n";
     hasInfo_ = false;
   } else {
     llvm::dbgs() << "DynPtstoLoader: Successfully Loaded\n";
     hasInfo_ = true;
+
+    // Setup ObjectMap ids using the SpecSFS identifiers...
+    // setupSpecSFSids(m);
+
 
     for (std::string line; std::getline(logfile, line, ':'); ) {
       ObjectMap::ObjID call_id = ObjectMap::ObjID(stoi(line));
@@ -825,6 +796,47 @@ bool DynPtstoLoader::runOnModule(llvm::Module &m) {
         }
 
         converter >> obj_int_val;
+      }
+    }
+
+    if (print_dyn_ptsto) {
+      int64_t total_variables = 0;
+      int64_t total_ptstos = 0;
+
+      int32_t num_objects[10] = {};
+
+      size_t max_objects = 0;
+      int32_t num_max = 0;
+
+      for (auto &pr : valToObjs_) {
+        auto &ptsto = pr.second;
+        auto ptsto_size = ptsto.size();
+        total_variables++;
+        total_ptstos += ptsto_size;
+
+        if (ptsto_size < 10) {
+          num_objects[ptsto_size]++;
+        }
+
+        if (ptsto_size > max_objects) {
+          max_objects = ptsto_size;
+          num_max = 0;
+        }
+
+        if (ptsto_size == max_objects) {
+          num_max++;
+        }
+      }
+
+      llvm::dbgs() << "Number tracked values: " << total_variables << "\n";
+      llvm::dbgs() << "Number tracked ptstos: " << total_ptstos << "\n";
+
+      llvm::dbgs() << "Max ptsto is: " << max_objects << ", with num_max: " <<
+        num_max << "\n";
+
+      llvm::dbgs() << "lowest ptsto counts:\n";
+      for (int i = 0; i < 10; i++) {
+        llvm::dbgs() << "  [" << i << "]:  " << num_objects[i] << "\n";
       }
     }
   }

@@ -18,7 +18,10 @@
 #include "llvm/Function.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
+
+extern llvm::cl::opt<bool> do_spec;
 
 // The actual SFS module, most of the work is done via the ObjectMap and Def-Use
 // Graph (DUG), these methods mostly operate on them.

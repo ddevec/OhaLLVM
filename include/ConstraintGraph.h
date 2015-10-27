@@ -46,11 +46,9 @@ class Constraint {
     Constraint(ConstraintType type, ObjID src, ObjID dest, ObjID rep,
         int32_t offs) :
         src_(src), dest_(dest), rep_(rep), type_(type), offs_(offs) {
+      assert(!(src == ObjectMap::ObjID(2) &&
+            dest == ObjectMap::ObjID(51912)));
       // We shouldn't copy from the UV to null val... its bad
-      /*
-      assert(!(src == ObjectMap::UniversalValue &&
-            dest == ObjectMap::ObjID(79309)));
-      */
       assert(!(type == ConstraintType::Copy &&
           src == ObjectMap::UniversalValue &&
           dest == ObjectMap::NullValue));
@@ -253,6 +251,27 @@ class ConstraintGraph {
     size_t constraintSize() const {
       return constraints_.size();
     }
+
+    typedef std::map<const llvm::Value *, ObjID>::const_iterator
+      p2icast_iterator;
+
+    p2icast_iterator findP2ICast(const llvm::Value *i_val) const {
+      return P2ICast_.find(i_val);
+    }
+
+    bool addP2ICast(const llvm::Value *i_val, ObjID p_val) {
+      auto ret = P2ICast_.emplace(i_val, p_val);
+      assert(ret.second);
+      return ret.second;
+    }
+
+    p2icast_iterator p2icast_end() const {
+      return std::end(P2ICast_);
+    }
+
+    p2icast_iterator p2icast_begin() const {
+      return std::begin(P2ICast_);
+    }
     //}}}
 
     // Graph print debugging {{{
@@ -294,6 +313,11 @@ class ConstraintGraph {
  private:
     // Private data {{{
     std::vector<std::unique_ptr<Constraint>> constraints_;
+
+    // Tracks casts from pointers to integers, to help improve the accuracy of
+    //   I2P casts
+    std::map<const llvm::Value *, ObjID> P2ICast_;
+
     //}}}
   //}}}
 };

@@ -27,9 +27,11 @@ class AllocInfo {
         callee->getName() != "memalign" &&
         callee->getName() != "strdup" && // Does malloc of return value...
         callee->getName() != "fopen" &&
+        callee->getName() != "tmpfile" &&
         callee->getName() != "popen" &&
         callee->getName() != "fdopen" &&
         callee->getName() != "fopen64" &&
+        callee->getName() != "opendir" &&
         callee->getName() != "_Znwj" &&  // operator new(unsigned int)
         callee->getName() != "_Znwm" &&  // operator new(unsigned long)
         callee->getName() != "_Znaj" &&  // operator new[](unsigned int)
@@ -45,6 +47,7 @@ class AllocInfo {
   //   instructions will be inserted directly before callee
   static llvm::Value *getMallocSizeArg(llvm::Module &m,
       llvm::CallInst *ci, const llvm::Function *callee) {
+    auto i64_type = llvm::IntegerType::get(m.getContext(), 64);
     bool do_mult = false;
     llvm::Value *ret = nullptr;
     llvm::Instruction *before = nullptr;
@@ -71,12 +74,36 @@ class AllocInfo {
 
       ret = llvm::BinaryOperator::Create(
           llvm::Instruction::Mul, a0, a1, "", ci);
-      before = cast<llvm::Instruction>(ret);
+      before = cast<llvm::Instruction>(ci);
+      do_mult = true;
+    }
+
+    // Freaking strdup...
+    if (callee->getName() == "strdup") {
+      auto str_val = ci->getArgOperand(0);
+
+      // Now call strlen...
+      auto strlen_fcn = m.getFunction("strlen");
+      // I may have to create an external linkage for this in some instances...
+      //   ugh
+      assert(strlen_fcn != nullptr);
+
+      std::vector<llvm::Value *> args;
+      args.push_back(str_val);
+
+      auto strlen_ret = llvm::CallInst::Create(strlen_fcn, args, "", ci);
+
+      ret = llvm::BinaryOperator::Create(
+          llvm::Instruction::Add,
+          strlen_ret, llvm::ConstantInt::get(i64_type, 1),
+          "", ci);
+      before = cast<llvm::Instruction>(ci);
       do_mult = true;
     }
 
     // fopen...
     if (callee->getName() == "fopen" ||
+        callee->getName() == "tmpfile" ||
         callee->getName() == "fopen64" ||
         callee->getName() == "popen" ||
         callee->getName() == "fdopen") {
@@ -86,8 +113,15 @@ class AllocInfo {
       do_mult = false;
     }
 
+    // diropen...
+    if (callee->getName() == "opendir") {
+      // Allocate a new file struct... calc size of file struct...
+      auto file_type = m.getTypeByName("struct._dirstream");
+      ret = LLVMHelper::calcTypeOffset(m, file_type, ci);
+      do_mult = false;
+    }
+
     if (do_mult) {
-      auto i64_type = llvm::IntegerType::get(m.getContext(), 64);
       ret = llvm::BinaryOperator::Create(
           llvm::Instruction::Mul, ret, 
           llvm::ConstantInt::get(i64_type, 8),
@@ -95,7 +129,10 @@ class AllocInfo {
     }
 
     // FIXME: strdup... needs to call strlen?
-    llvm::dbgs() << "callee->getName(): " << callee->getName() << "\n";
+    if (ret == nullptr) {
+      llvm::dbgs() << "getMallocSizeArg() has nullptr ret for: " <<
+        callee->getName() << "\n";
+    }
     assert(ret != nullptr);
     return ret;
   }
@@ -104,6 +141,7 @@ class AllocInfo {
     if (callee->getName() != "free" &&
         callee->getName() != "fclose" &&
         callee->getName() != "realloc" &&
+        callee->getName() != "closedir" &&
         callee->getName() != "pclose") {
       return false;
     }
@@ -121,7 +159,8 @@ class AllocInfo {
 
     // Need to bitcast to i8*...
     if (callee->getName() == "fclose" ||
-        callee->getName() == "pclose") {
+        callee->getName() == "pclose" ||
+        callee->getName() == "closedir") {
       auto i8_ptr_type = llvm::PointerType::get(
           llvm::IntegerType::get(m.getContext(), 8), 0);
       auto arg = ci->getArgOperand(0);

@@ -42,6 +42,19 @@ static llvm::cl::opt<std::string>
       llvm::cl::desc("if set specsfs will print the ptsto set for this function"
         " at the end of execution"));
 
+static llvm::cl::opt<bool>
+  do_spec_diff("specsfs-do-spec-diff", llvm::cl::init(false),
+      llvm::cl::value_desc("bool"),
+      llvm::cl::desc("if set specsfs will print the ptstos counts which would "
+        "have been identified by a speculative sfs run (for reporting "
+        "improvment numbers)"));
+
+llvm::cl::opt<bool>
+  do_spec("specsfs-do-spec", llvm::cl::init(false),
+      llvm::cl::value_desc("bool"),
+      llvm::cl::desc("Determines if specsfs should include speculative dynamic "
+        "runtime information"));
+
 static llvm::cl::opt<std::string>
   glbl_name("specsfs-debug-glbl", llvm::cl::init(""),
       llvm::cl::value_desc("string"),
@@ -112,6 +125,12 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   // Set up our alias analysis
   // -- This is required for the llvm AliasAnalysis interface
   InitializeAliasAnalysis(this);
+
+  if (do_spec) {
+    llvm::dbgs() << "do-spec is true!\n";
+  } else {
+    llvm::dbgs() << "no do-spec!\n";
+  }
 
   if (fcn_name != "") {
     llvm::dbgs() << "Got debug function: " << fcn_name << "\n";
@@ -254,7 +273,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   {
     PerfTimerPrinter indir_timer(llvm::dbgs(), "addIndirectCalls");
     auto dyn_indir_info = &getAnalysis<IndirFunctionInfo>();
-    if (!unused_fcns.hasInfo()) {
+    if (!do_spec || !unused_fcns.hasInfo()) {
       dyn_indir_info = nullptr;
     }
     if (addIndirectCalls(cg, cfg, aux, dyn_indir_info, omap)) {
@@ -283,8 +302,8 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   }
 
   // Now that we've filled in the top level constraint graph, we add in dynamic
-  //   info
-  {
+  //   info (If we're using speculative optimizations)
+  if (do_spec) {
     PerfTimerPrinter dyn_timer(llvm::dbgs(), "Dynamic Ptsto Info");
     if (addDynPtstoInfo(m, graph, cfg, omap)) {
       error("DynPtstoInfo addition failure!");
@@ -518,6 +537,108 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     });
   }
 
+  if (do_spec_diff) {
+    // STATS!
+    int64_t total_variables = 0;
+    int64_t total_ptstos = 0;
+
+    int32_t num_objects[10] = {};
+
+    size_t max_objects = 0;
+    int32_t num_max = 0;
+
+    auto &uf = getAnalysis<UnusedFunctions>();
+
+    auto obj_update_fcn = [this, &total_variables, &total_ptstos, &num_objects,
+         &max_objects, &num_max, &omap]
+           (const llvm::Value *val) {
+      auto val_id = omap.getValue(val);
+
+      // Statistics
+      auto &ptsto = pts_top_.at(val_id);
+      size_t ptsto_size = ptsto.size();
+
+      total_variables++;
+      total_ptstos += ptsto_size;
+
+      if (ptsto_size < 10) {
+        num_objects[ptsto_size]++;
+      }
+
+      if (ptsto_size > max_objects) {
+        max_objects = ptsto_size;
+        num_max = 0;
+      }
+
+      if (ptsto_size == max_objects) {
+        num_max++;
+      }
+    };
+
+    // Woot, time to walk the CFG!
+    for (auto &fcn : m) {
+      if (uf.isUsed(fcn)) {
+        std::for_each(fcn.arg_begin(), fcn.arg_end(),
+            [&obj_update_fcn, &omap]
+            (const llvm::Argument &arg) {
+          if (llvm::isa<llvm::PointerType>(arg.getType())) {
+            obj_update_fcn(&arg);
+          }
+        });
+      }
+      for (auto &bb : fcn) {
+        if (!uf.isUsed(bb)) {
+          continue;
+        }
+
+        for (auto &inst : bb) {
+          if (llvm::isa<llvm::PointerType>(inst.getType())) {
+            obj_update_fcn(&inst);
+          }
+        }
+      }
+    }
+    /*
+    std::for_each(pts_top_.cbegin(), pts_top_.cend(),
+        [&omap, &total_variables, &total_ptstos, &max_objects, &num_objects,
+          &num_max]
+        (const TopLevelPtsto::PtsPair &pr) {
+      for (uint32_t i = 0; i < pr.pts().size(); i++) {
+        // Statistics
+        auto &ptsto = pr.pts()[i];
+        size_t ptsto_size = ptsto.size();
+
+        total_variables++;
+        total_ptstos += ptsto_size;
+
+        if (ptsto_size < 10) {
+          num_objects[ptsto_size]++;
+        }
+
+        if (ptsto_size > max_objects) {
+          max_objects = ptsto_size;
+          num_max = 0;
+        }
+
+        if (ptsto_size == max_objects) {
+          num_max++;
+        }
+      }
+    });
+    */
+
+    llvm::dbgs() << "Number tracked values: " << total_variables << "\n";
+    llvm::dbgs() << "Number tracked ptstos: " << total_ptstos << "\n";
+
+    llvm::dbgs() << "Max ptsto is: " << max_objects << ", with num_max: " <<
+      num_max << "\n";
+
+    llvm::dbgs() << "lowest ptsto counts:\n";
+    for (int i = 0; i < 10; i++) {
+      llvm::dbgs() << "  [" << i << "]:  " << num_objects[i] << "\n";
+    }
+  }
+
 #if !defined(SPECSFS_NODEBUG) && defined(SPECSFS_PRINT_RESULTS)
   llvm::dbgs() << "Printing the rep mappings for top level variales:\n";
   for (auto &pr : obj_to_rep_) {
@@ -577,54 +698,6 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   });
 #endif
 
-#ifndef SPECSFS_NOSTATS
-  // STATS!
-  int64_t total_variables = 0;
-  int64_t total_ptstos = 0;
-
-  int32_t num_objects[10] = {};
-
-  size_t max_objects = 0;
-  int32_t num_max = 0;
-
-  std::for_each(pts_top_.cbegin(), pts_top_.cend(),
-      [&omap, &total_variables, &total_ptstos, &max_objects, &num_objects,
-        &num_max]
-      (const TopLevelPtsto::PtsPair &pr) {
-    for (uint32_t i = 0; i < pr.pts().size(); i++) {
-      // Statistics
-      auto &ptsto = pr.pts()[i];
-      size_t ptsto_size = ptsto.size();
-
-      total_variables++;
-      total_ptstos += ptsto_size;
-
-      if (ptsto_size < 10) {
-        num_objects[ptsto_size]++;
-      }
-
-      if (ptsto_size > max_objects) {
-        max_objects = ptsto_size;
-        num_max = 0;
-      }
-
-      if (ptsto_size == max_objects) {
-        num_max++;
-      }
-    }
-  });
-
-  llvm::dbgs() << "Number tracked values: " << total_variables << "\n";
-  llvm::dbgs() << "Number tracked ptstos: " << total_ptstos << "\n";
-
-  llvm::dbgs() << "Max ptsto is: " << max_objects << ", with num_max: " <<
-    num_max << "\n";
-
-  llvm::dbgs() << "lowest ptsto counts:\n";
-  for (int i = 0; i < 10; i++) {
-    llvm::dbgs() << "  [" << i << "]:  " << num_objects[i] << "\n";
-  }
-#endif
 
   /*
   if (alias(Location(nullptr), Location(nullptr)) != MayAlias) {

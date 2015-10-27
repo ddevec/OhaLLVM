@@ -8,7 +8,7 @@
 #include <cstring>
 
 #include <iostream>
-#include <map>
+#include <unordered_map>
 #include <set>
 #include <string>
 #include <vector>
@@ -28,13 +28,28 @@ class AddrRange {
       return (start_ < r.start_ && end_ <= r.start_);
     }
 
+    bool operator==(const AddrRange &r) const {
+      // NOTE: end is not inclusive
+      return (start_ == r.start_);
+    }
+
  private:
+    friend struct std::hash<AddrRange>;
     intptr_t start_;
     intptr_t end_;
 };
 
-std::map<AddrRange, int32_t> addr_to_objid;
-std::map<int32_t, std::set<int32_t>> valid_to_objids;
+namespace std {
+template <>
+struct hash<AddrRange> {
+  std::size_t operator()(const AddrRange &k) const {
+    return (std::hash<intptr_t>()(k.start_));
+  }
+};
+}  // namespace std
+
+std::unordered_map<AddrRange, int32_t> addr_to_objid;
+std::unordered_map<int32_t, std::set<int32_t>> valid_to_objids;
 std::vector<std::vector<void *>> stack_allocs;
 
 extern "C" {
@@ -93,7 +108,7 @@ void __DynPtsto_do_alloca(int32_t obj_id, int64_t size,
   size /= 8;
   // Handle alloca
   // Add addresses to stack frame
-  std::cout << "stacking: (" << obj_id << ") " << addr << std::endl;
+  // std::cout << "stacking: (" << obj_id << ") " << addr << std::endl;
   stack_allocs.back().push_back(addr);
   // Add ptstos to ptsto map
 #ifndef NDEBUG
@@ -107,7 +122,7 @@ void __DynPtsto_do_ret() {
   // Remove all ptstos on stack from map
   const std::vector<void *> &cur_frame = stack_allocs.back();
   for (auto addr : cur_frame) {
-    std::cout << "popping: " << addr << std::endl;
+    // std::cout << "popping: " << addr << std::endl;
 #ifndef NDEBUG
     auto ret =
 #endif
@@ -124,8 +139,10 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
   // Size is in bits...
   size /= 8;
   // Add ptsto to map
+  /*
   std::cout << "mallocing: (" << obj_id << ") " << addr << ", "
     << size << std::endl;
+  */
   // auto ret =
   addr_to_objid.emplace(AddrRange(addr, size), obj_id);
   // assert(ret.second);
@@ -133,7 +150,7 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
 
 void __DynPtsto_do_free(void *addr) {
   // Remove ptsto from map
-  std::cout << "freeing: " << addr << std::endl;
+  // std::cout << "freeing: " << addr << std::endl;
   addr_to_objid.erase(AddrRange(addr));
 }
 
@@ -145,8 +162,10 @@ void __DynPtsto_do_visit(int32_t val_id, void *addr) {
     int32_t obj_id = addr_to_objid.at(AddrRange(addr));
     valid_to_objids[val_id].insert(obj_id);
   } else {
+    /*
     std::cout << "  !!Found unmapped addr: " << addr <<
       " val_id: " << val_id << std::endl;
+    */
     // abort();
   }
 }
