@@ -13,6 +13,7 @@
 #include <execinfo.h>
 
 #include <algorithm>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -303,11 +304,10 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
 
   // Now that we've filled in the top level constraint graph, we add in dynamic
   //   info (If we're using speculative optimizations)
+  std::map<ObjectMap::ObjID, Bitmap> dyn_pts;
   if (do_spec) {
     PerfTimerPrinter dyn_timer(llvm::dbgs(), "Dynamic Ptsto Info");
-    if (addDynPtstoInfo(m, graph, cfg, omap)) {
-      error("DynPtstoInfo addition failure!");
-    }
+    dyn_pts = addDynPtstoInfo(m, graph, cfg, omap);
   }
 
   {
@@ -330,7 +330,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   // Finally, solve the graph
   {
     PerfTimerPrinter solve_timer(llvm::dbgs(), "solve");
-    if (solve(graph, omap)) {
+    if (solve(graph, std::move(dyn_pts))) {
       error("Solve failure!");
     }
   }

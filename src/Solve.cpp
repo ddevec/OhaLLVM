@@ -6,6 +6,7 @@
 // #define SPECSFS_LOGDEBUG
 
 #include <algorithm>
+#include <map>
 #include <utility>
 #include <vector>
 
@@ -18,7 +19,8 @@ int32_t dbg_dugnodeid(DUGNode *node) {
   return node->id().val();
 }
 
-bool SpecSFS::solve(DUG &dug, ObjectMap &) {
+bool SpecSFS::solve(DUG &dug,
+    std::map<ObjectMap::ObjID, Bitmap> dyn_constraints) {
   // Add allocs to worklist -- The ptstoset for the alloc will be updated on
   //   solve evaluation
   std::vector<ObjectMap::ObjID> dests;
@@ -48,7 +50,7 @@ bool SpecSFS::solve(DUG &dug, ObjectMap &) {
 
   // Assign a 0 prio entry for each node
   priority.assign(dug.getNumNodes(), 0);
-  TopLevelPtsto pts_top(dests);
+  TopLevelPtsto pts_top(dests, std::move(dyn_constraints));
 
   // Solve the graph
   int32_t vtime = 1;
@@ -138,11 +140,6 @@ void DUG::CopyNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
   auto &struct_list = dug.getStructInfo();
   bool change = dest_pts.orOffs(src_pts, offset(), struct_list);
 
-  // Enforce any dynamic constraints
-  if (dynConstraints_ != nullptr) {
-    dest_pts.intersectWith(*dynConstraints_);
-  }
-
   logout("D " << dest() << " " << dest_pts << "\n");
   dout("  pts_top[" << dest() << "] is now: " << dest_pts << "\n");
 
@@ -202,11 +199,6 @@ void DUG::LoadNode::processShared(DUG &dug, TopLevelPtsto &pts_top,
 
     changed |= (dest_pts |= pts);
   });
-
-  // Enforce any dynamic constraints
-  if (dynConstraints_ != nullptr) {
-    dest_pts.intersectWith(*dynConstraints_);
-  }
 
   logout("D " << dest() << " " << dest_pts << "\n");
 
@@ -293,11 +285,6 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
 
     changed |= (dest_pts |= pts);
   });
-
-  // Enforce any dynamic constraints
-  if (dynConstraints_ != nullptr) {
-    dest_pts.intersectWith(*dynConstraints_);
-  }
 
   logout("D " << dest() << " " << dest_pts << "\n");
 

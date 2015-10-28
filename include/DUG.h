@@ -77,25 +77,6 @@ class DUGNode : public SEG::Node {
       return strong_;
     }
 
-    void addConstraintsWithAliases(const std::set<ObjectMap::ObjID> &pts_set,
-        const ObjectMap &omap) {
-      if (dynConstraints_ == nullptr) {
-        dynConstraints_ = std::unique_ptr<Bitmap>(new Bitmap());
-      }
-
-      for (auto &cons : pts_set) {
-        auto pr = omap.findObjAliases(cons);
-
-        if (pr.first) {
-          for (auto field : pr.second) {
-            dynConstraints_->set(field.val());
-          }
-        }
-
-        dynConstraints_->set(cons.val());
-      }
-    }
-
     //}}}
 
  protected:

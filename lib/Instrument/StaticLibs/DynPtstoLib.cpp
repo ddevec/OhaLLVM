@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include <iostream>
+#include <map>
 #include <unordered_map>
 #include <set>
 #include <string>
@@ -48,8 +49,10 @@ struct hash<AddrRange> {
 };
 }  // namespace std
 
-std::unordered_map<AddrRange, int32_t> addr_to_objid;
+std::map<AddrRange, int32_t> addr_to_objid;
 std::unordered_map<int32_t, std::set<int32_t>> valid_to_objids;
+// std::unordered_map<AddrRange, int32_t> addr_to_objid;
+// std::unordered_map<int32_t, std::set<int32_t>> valid_to_objids;
 std::vector<std::vector<void *>> stack_allocs;
 
 extern "C" {
@@ -73,27 +76,26 @@ void __DynPtsto_do_finish() {
 
 void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
     void *addr);
-void __DynPtsto_main_init2(int32_t obj_id, int argc, char **argv) {
+void __DynPtsto_main_init2(int32_t obj_id, int32_t argv_dest_id,
+    int argc, char **argv) {
   for (int i = 0; i < argc; i++) {
-    // FIXME: this is hacky
-    // The data pointed to by argv is part of the argv object, which is argv
-    //   value + 1...
-    __DynPtsto_do_malloc(obj_id+1, (strlen(argv[i])+1)*8, argv[i]);
+    __DynPtsto_do_malloc(argv_dest_id, (strlen(argv[i])+1)*8, argv[i]);
   }
+
   __DynPtsto_do_malloc(obj_id, (sizeof(*argv)*argc+1)*8, argv);
 }
 
-void __DynPtsto_main_init3(int32_t obj_id, int argc, char **argv,
-    char **envp) {
+void __DynPtsto_main_init3(int32_t obj_id, int32_t argv_dest_id,
+    int argc, char **argv, char **envp) {
   // Init envp
   int i;
   for (i = 0; envp[i] != nullptr; i++) {
-    __DynPtsto_do_malloc(obj_id, (strlen(envp[i])+1)*8, envp[i]);
+    __DynPtsto_do_malloc(argv_dest_id, (strlen(envp[i])+1)*8, envp[i]);
   }
   __DynPtsto_do_malloc(obj_id, (sizeof(*envp)*i)*8, envp);
 
   // Do std init
-  __DynPtsto_main_init2(obj_id, argc, argv);
+  __DynPtsto_main_init2(obj_id, argv_dest_id, argc, argv);
 }
 
 void __DynPtsto_do_call() {
@@ -162,11 +164,9 @@ void __DynPtsto_do_visit(int32_t val_id, void *addr) {
     int32_t obj_id = addr_to_objid.at(AddrRange(addr));
     valid_to_objids[val_id].insert(obj_id);
   } else {
-    /*
-    std::cout << "  !!Found unmapped addr: " << addr <<
-      " val_id: " << val_id << std::endl;
-    */
-    // abort();
+    // FIXME: 3 is the universal value... I should have this imported somewhere
+    //   instead of hardcoded...
+    valid_to_objids[val_id].insert(3);
   }
 }
 

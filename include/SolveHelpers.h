@@ -151,39 +151,83 @@ class Worklist {
 class PtstoSet {
   //{{{
  public:
+    PtstoSet() = default;
+    explicit PtstoSet(const Bitmap &dyn_pts) :
+        dynPtsto_(std::unique_ptr<Bitmap>(new Bitmap(dyn_pts))) { }
+
+    PtstoSet(const PtstoSet &rhs) {
+      ptsto_ = rhs.ptsto_;
+      if (rhs.dynPtsto_ != nullptr) {
+        dynPtsto_ = std::unique_ptr<Bitmap>(new Bitmap(*rhs.dynPtsto_));
+      } else {
+        dynPtsto_ = nullptr;
+      }
+    }
+    PtstoSet(PtstoSet &&) = default;
+
+    PtstoSet &operator=(const PtstoSet &rhs) {
+      ptsto_ = rhs.ptsto_;
+      dynPtsto_ = std::unique_ptr<Bitmap>(new Bitmap(*rhs.dynPtsto_));
+      return *this;
+    }
+    PtstoSet &operator=(PtstoSet &&) = default;
+
     typedef typename SEG::NodeID NodeID;
     bool set(ObjectMap::ObjID id) {
       return ptsto_.test_and_set(id.val());
     }
 
-    bool assign(const PtstoSet &rhs) {
-      bool ret = (ptsto_ != rhs.ptsto_);
+    void setDynSet(const Bitmap &dyn_set) {
+      dynPtsto_ = std::unique_ptr<Bitmap>(new Bitmap(dyn_set));
+    }
 
+    bool assign(const PtstoSet &rhs) {
+      Bitmap init = ptsto_;
       ptsto_.clear();
       ptsto_ |= rhs.ptsto_;
 
-      return ret;
+      clearDynPtsto();
+
+      return (init != ptsto_);
     }
 
     void clear() {
       ptsto_.clear();
     }
 
-    bool operator==(const PtstoSet &rhs) {
+    bool operator==(const PtstoSet &rhs) const {
       return ptsto_ == rhs.ptsto_;
     }
 
+    bool operator!=(const PtstoSet &rhs) const {
+      return ptsto_ != rhs.ptsto_;
+    }
+
     bool operator|=(const PtstoSet &rhs) {
-      return ptsto_ |= rhs.ptsto_;
+      Bitmap init = ptsto_;
+
+      bool ch = ptsto_ |= rhs.ptsto_;
+
+      if (ch) {
+        clearDynPtsto();
+      }
+
+      return (init != ptsto_);
     }
 
     bool operator|=(ObjectMap::ObjID &id) {
-      return ptsto_.test_and_set(id.val());
+      Bitmap init = ptsto_;
+      bool ch = ptsto_.test_and_set(id.val());
+      if (ch) {
+        clearDynPtsto();
+      }
+      return (init != ptsto_);
     }
 
     bool orOffs(const PtstoSet &rhs, int32_t offs,
         const std::map<ObjectMap::ObjID, int32_t> &struct_set) {
       bool ret = false;
+      Bitmap init = ptsto_;
       std::for_each(std::begin(rhs.ptsto_), std::end(rhs.ptsto_),
           [this, &ret, &offs, &struct_set]
           (const int32_t &val) {
@@ -202,7 +246,11 @@ class PtstoSet {
         ret |= ptsto_.test_and_set(val + or_offs);
       });
 
-      return ret;
+      if (ret) {
+        clearDynPtsto();
+      }
+
+      return (init != ptsto_);
     }
 
     bool intersectWith(const Bitmap &bmp) {
@@ -384,7 +432,17 @@ class PtstoSet {
 #endif
 
  private:
+    bool clearDynPtsto() {
+      bool ret = false;
+      if (dynPtsto_ != nullptr) {
+        ret = (ptsto_ &= *dynPtsto_);
+      }
+
+      return ret;
+    }
+
     Bitmap ptsto_;
+    std::unique_ptr<Bitmap> dynPtsto_ = nullptr;
   //}}}
 };
 
@@ -398,6 +456,7 @@ class TopLevelPtsto {
       //{{{
      public:
         explicit PtsPair(ObjID id) : id_(id) { }
+
         ObjID id() const {
           return id_;
         }
@@ -426,7 +485,9 @@ class TopLevelPtsto {
 
     TopLevelPtsto() = default;
 
-    explicit TopLevelPtsto(const std::vector<ObjID> &objs) {
+    TopLevelPtsto(const std::vector<ObjID> &objs,
+        std::map<ObjID, Bitmap> dyn_sets) :
+          dynConstraints_(std::move(dyn_sets)) {
       assert(is_sorted(std::begin(objs), std::end(objs)));
       assert(std::adjacent_find(std::begin(objs), std::end(objs))
           == std::end(objs));
@@ -451,7 +512,13 @@ class TopLevelPtsto {
 
       assert(offset >= 0);
       if (vec.size() < (uint32_t)offset+1) {
-        vec.resize(offset+1);
+        auto it = dynConstraints_.find(id);
+        if (it == std::end(dynConstraints_)) {
+          vec.resize(offset+1);
+        } else {
+          PtstoSet base_pts(it->second);
+          vec.resize(offset+1, PtstoSet(base_pts));
+        }
       }
 
       return vec[offset];
@@ -541,6 +608,7 @@ class TopLevelPtsto {
 
  private:
     // std::map<ObjID, std::vector<PtstoSet>> data_;
+    std::map<ObjectMap::ObjID, Bitmap> dynConstraints_;
     std::vector<PtsPair> data_;
   //}}}
 };

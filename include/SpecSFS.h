@@ -82,8 +82,8 @@ class SpecSFS : public llvm::ModulePass,
 
   // Takes dynamic pointsto information, as well as hot/cold basic block
   //   information, and trims the edges of the DUG appropriately
-  bool addDynPtstoInfo(llvm::Module &m, DUG &graph, CFG &cfg,
-      ObjectMap &omap);
+  std::map<ObjectMap::ObjID, Bitmap>
+  addDynPtstoInfo(llvm::Module &m, DUG &graph, CFG &cfg, ObjectMap &omap);
 
 
   // Computes partitons based on the conservative address-taken info, the
@@ -98,7 +98,8 @@ class SpecSFS : public llvm::ModulePass,
 
   // Solves the remaining graph, providing full flow-sensitive inclusion-based
   // points-to analysis
-  bool solve(DUG &, ObjectMap &omap);
+  bool solve(DUG &dug,
+      std::map<ObjectMap::ObjID, Bitmap> dyn_constraints);
 
  protected:
   // Identifies all objects in the module, adds them to graph

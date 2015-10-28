@@ -597,6 +597,7 @@ void InstrDynPtsto::addExternalFunctions(llvm::Module &m) {
     std::vector<llvm::Type *> main2_type_args;
     main2_type_args.push_back(i32_type);
     main2_type_args.push_back(i32_type);
+    main2_type_args.push_back(i32_type);
     main2_type_args.push_back(i8_ptr_type->getPointerTo());
     // Create the function type
     auto main2_fcn_type = llvm::FunctionType::get(
@@ -612,6 +613,7 @@ void InstrDynPtsto::addExternalFunctions(llvm::Module &m) {
   {
     // Create the args
     std::vector<llvm::Type *> main3_type_args;
+    main3_type_args.push_back(i32_type);
     main3_type_args.push_back(i32_type);
     main3_type_args.push_back(i32_type);
     main3_type_args.push_back(i8_ptr_type->getPointerTo());
@@ -672,7 +674,9 @@ void InstrDynPtsto::addInitializationCalls(llvm::Module &m) {
     // Set first arg to call to be objid for argvval
     auto i32_type = llvm::IntegerType::get(m.getContext(), 32);
     main_args.push_back(llvm::ConstantInt::get(i32_type,
-          ObjectMap::ArgvValue.val()));
+          ObjectMap::ArgvValueObject.val()));
+    main_args.push_back(llvm::ConstantInt::get(i32_type,
+          ObjectMap::ArgvObjectObject.val()));
 
     std::for_each(main_fcn->arg_begin(), main_fcn->arg_end(),
         [&main_args] (llvm::Argument &arg) {
@@ -680,14 +684,14 @@ void InstrDynPtsto::addInitializationCalls(llvm::Module &m) {
     });
 
     // Note all main_args size comps are +1 due to the obj_id arg
-    if (main_args.size() != 1) {
+    if (main_args.size() != 2) {
       llvm::Function *main_init_fcn;
 
-      if (main_args.size() == 2) {
+      if (main_args.size() == 3) {
         llvm_unreachable("Main has 1 arg?");
-      } else if (main_args.size() == 3) {
-        main_init_fcn = m.getFunction(MainInit2Name);
       } else if (main_args.size() == 4) {
+        main_init_fcn = m.getFunction(MainInit2Name);
+      } else if (main_args.size() == 5) {
         main_init_fcn = m.getFunction(MainInit3Name);
       } else {
         llvm_unreachable("Main has more than 3 args?");
@@ -785,6 +789,7 @@ bool DynPtstoLoader::runOnModule(llvm::Module &) {
 
       int32_t obj_int_val;
       converter >> obj_int_val;
+      bool do_del = false;
       while (!converter.fail()) {
         auto obj_id = ObjectMap::ObjID(obj_int_val);
 
@@ -795,7 +800,20 @@ bool DynPtstoLoader::runOnModule(llvm::Module &) {
           assert(ret.second);
         }
 
+        // If we have a universal value, we don't maintain dyn ptsto constraints
+        //   for this variable
+        if (obj_id == ObjectMap::UniversalValue) {
+          do_del = true;
+          break;
+        }
+
         converter >> obj_int_val;
+      }
+
+      // If we have a universal value, we don't maintain dyn ptsto constraints
+      //   for this variable
+      if (do_del) {
+        valToObjs_.erase(call_id);
       }
     }
 

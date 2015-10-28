@@ -3,6 +3,7 @@
  */
 
 #include <algorithm>
+#include <map>
 #include <set>
 #include <utility>
 #include <vector>
@@ -50,7 +51,8 @@ class CostApprox {
     double totalDynInsts_ = 0.0;
 };
 
-bool SpecSFS::addDynPtstoInfo(llvm::Module &m, DUG &dug,
+std::map<ObjectMap::ObjID, Bitmap>
+SpecSFS::addDynPtstoInfo(llvm::Module &m, DUG &,
     CFG &, ObjectMap &omap) {
   // Okay, here we go... dynamic cold path point-to info
 
@@ -73,21 +75,11 @@ bool SpecSFS::addDynPtstoInfo(llvm::Module &m, DUG &dug,
   // To check if ProfileInfo is valid...
   const auto &unused_fcn = getAnalysis<UnusedFunctions>();
 
+  std::map<ObjectMap::ObjID, Bitmap> top_level_constraints;
+
   // If we have the dynamic information do the optimization
   if (unused_fcn.hasInfo() && dyn_ptsto.hasInfo()) {
     CostApprox ca(m, prof_info);
-
-    std::vector<std::vector<DUG::DUGid>> dug_providers(omap.size());
-
-    for (auto &pnode : dug) {
-      auto &node = cast<DUGNode>(*pnode);
-
-      // Store nodes do not modify top-level values directly...
-      // All other nodes do
-      if (!llvm::isa<DUG::StoreNode>(node)) {
-        dug_providers[node.dest().val()].push_back(node.id());
-      }
-    }
 
     // For each function
     for (auto &fcn : m) {
@@ -102,28 +94,23 @@ bool SpecSFS::addDynPtstoInfo(llvm::Module &m, DUG &dug,
               // node w/ the constant ptr info
               if (llvm::isa<llvm::PointerType>(instr.getType())) {
                 auto val_id = omap.getValue(&instr);
-                // Rewrite all nodes that provide this value:
-                auto &providers = dug_providers[val_id.val()];
-                for (auto &dug_id : providers) {
-                  auto &dug_node = dug.getNode(dug_id);
-                  assert(!llvm::isa<DUG::ConstNode>(dug_node));
-                  assert(!llvm::isa<DUG::ConstPartNode>(dug_node));
 
-                  auto &ptsto_set = dyn_ptsto.getPtsto(val_id);
+                // NOTE: in the instance I encounter an unknown value in my
+                //   dynamic ptsto analysis, I will drop that ptsto, so
+                //   hasPtsto is needed...
+                if (dyn_ptsto.hasPtsto(val_id)) {
+                  // Add dyn_ptsto info for this top level variable
+                  auto &dyn_bmp = top_level_constraints[val_id];
+                  for (auto &cons : dyn_ptsto.getPtsto(val_id)) {
+                    auto pr = omap.findObjAliases(cons);
 
-                  // DONT replace alloc nodes! I need the allocations!
-                  if (!llvm::isa<DUG::AllocNode>(dug_node)) {
-                    // If its a PartNode, we need to go through some headache
-                    /*
-                    llvm::dbgs() << "replacing node: " << dug_node.id() <<
-                      ", val_id: " << val_id << ", with const pststo:";
-                    for (auto pts : ptsto_set) {
-                      llvm::dbgs() << " " << pts;
+                    if (pr.first) {
+                      for (auto field : pr.second) {
+                        dyn_bmp.set(field.val());
+                      }
                     }
-                    llvm::dbgs() << "\n";
-                    */
 
-                    dug_node.addConstraintsWithAliases(ptsto_set, omap);
+                    dyn_bmp.set(cons.val());
                   }
                 }
               }
@@ -134,6 +121,6 @@ bool SpecSFS::addDynPtstoInfo(llvm::Module &m, DUG &dug,
     }
   }
 
-  return false;
+  return std::move(top_level_constraints);
 }
 
