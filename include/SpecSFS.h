@@ -6,9 +6,11 @@
 #define INCLUDE_SPECSFS_H_
 
 #include <map>
+#include <memory>
 #include <vector>
 
 #include "include/Andersens.h"
+#include "include/Assumptions.h"
 #include "include/DUG.h"
 #include "include/ObjectMap.h"
 #include "include/lib/UnusedFunctions.h"
@@ -126,6 +128,24 @@ class SpecSFS : public llvm::ModulePass,
   // Private data {{{
   ObjectMap omap_;
   TopLevelPtsto pts_top_;
+
+  std::vector<std::unique_ptr<Assumption>> specAssumptions_;
+
+  void addSpeculativeAssumption(std::unique_ptr<Assumption> a) {
+    specAssumptions_.emplace_back(std::move(a));
+  }
+
+  void identifyAUXFcnCallRetInfo(CFG &cfg,
+      ObjectMap &omap, const Andersens &aux,
+      const IndirFunctionInfo *dyn_info);
+  void scanFcn(const UnusedFunctions &unused_fcns,
+      ConstraintGraph &cg, CFG &cfg,
+      ObjectMap &omap, const llvm::Function &fcn);
+
+  void processBlock(const UnusedFunctions &unused_fcns,
+    ConstraintGraph &cg, CFG &cfg,
+    std::map<const llvm::BasicBlock *, CFG::CFGid> &seen,
+    ObjectMap &omap, const llvm::BasicBlock &BB, CFG::CFGid parent_id);
 
   // FIXME: Should put in another entity? oh well...
   // std::map<int, ObjectMap::ObjID> aux_to_obj_;

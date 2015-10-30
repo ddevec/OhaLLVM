@@ -353,12 +353,10 @@ PtstoAssumption::calcDependencies(
     auto free_pr = free_locations.equal_range(obj_id);
     std::for_each(free_pr.first, free_pr.second,
         [&ret, &omap]
-        (const std::pair<const ObjectMap::ObjID, ObjectMap::ObjID> &pr) {
-      auto free_obj_id = pr.second;
-      auto free_inst = cast<llvm::Instruction>(omap.valueAtID(free_obj_id));
+        (const std::pair<const ObjectMap::ObjID, llvm::Value *> &pr) {
+      auto free_inst = pr.second;
 
-      ret.emplace_back(new FreeInst(
-          const_cast<llvm::Instruction *>(free_inst)));
+      ret.emplace_back(new FreeInst(cast<llvm::Instruction>(free_inst)));
     });
   }
   return ret;

@@ -46,6 +46,21 @@ class CostApprox {
       return ret;
     }
 
+    bool costIsLow(const std::vector<std::unique_ptr<InstrumentationSite>>
+        &inst_site_vec) {
+      double total_cost = 0;
+
+      for (auto &pinst : inst_site_vec) {
+        auto bb = pinst->getBB();
+
+        total_cost += pinst->approxCost() * pi_.getExecutionCount(bb);
+      }
+
+      total_cost /= totalDynInsts_;
+
+      return total_cost < TimeThreshold;
+    }
+
  private:
     llvm::ProfileInfo &pi_;
     double totalDynInsts_ = 0.0;
@@ -100,17 +115,27 @@ SpecSFS::addDynPtstoInfo(llvm::Module &m, DUG &,
                 //   hasPtsto is needed...
                 if (dyn_ptsto.hasPtsto(val_id)) {
                   // Add dyn_ptsto info for this top level variable
-                  auto &dyn_bmp = top_level_constraints[val_id];
-                  for (auto &cons : dyn_ptsto.getPtsto(val_id)) {
-                    auto pr = omap.findObjAliases(cons);
 
-                    if (pr.first) {
-                      for (auto field : pr.second) {
-                        dyn_bmp.set(field.val());
+                  std::unique_ptr<Assumption> ptsto_aspn(new PtstoAssumption(
+                        val_id, dyn_ptsto.getPtsto(val_id)));
+
+                  auto approx_deps = ptsto_aspn->getApproxDependencies(omap, m);
+
+                  if (ca.costIsLow(approx_deps)) {
+                    auto &dyn_bmp = top_level_constraints[val_id];
+                    for (auto &cons : dyn_ptsto.getPtsto(val_id)) {
+                      auto pr = omap.findObjAliases(cons);
+
+                      if (pr.first) {
+                        for (auto field : pr.second) {
+                          dyn_bmp.set(field.val());
+                        }
                       }
+
+                      dyn_bmp.set(cons.val());
                     }
 
-                    dyn_bmp.set(cons.val());
+                    addSpeculativeAssumption(std::move(ptsto_aspn));
                   }
                 }
               }

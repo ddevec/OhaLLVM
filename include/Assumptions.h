@@ -9,8 +9,6 @@
 #include <set>
 #include <vector>
 
-#include "include/SpecSFS.h"
-
 #include "include/util.h"
 #include "include/ObjectMap.h"
 
@@ -26,7 +24,7 @@
 //
 // Lets have a "calc dependencies" routine
 
-typedef std::unordered_multimap<ObjectMap::ObjID, ObjectMap::ObjID,
+typedef std::unordered_multimap<ObjectMap::ObjID, llvm::Value *,
         ObjectMap::ObjID::hasher> free_location_multimap;
 
 // InstrumentationSite classes {{{
@@ -43,6 +41,8 @@ class InstrumentationSite {  //{{{
 
     virtual int64_t approxCost() = 0;
     virtual bool doInstrument(llvm::Module &m);
+
+    virtual llvm::BasicBlock *getBB() const = 0;
 
     static bool classof(const InstrumentationSite *) {
       return true;
@@ -94,6 +94,10 @@ class AllocInst : public InstrumentationSite {  //{{{
       return is->getKind() == InstrumentationSite::Kind::AllocInst;
     }
 
+    llvm::BasicBlock *getBB() const override {
+      return allocInst_->getParent();
+    }
+
  private:
     llvm::Instruction *allocInst_;
     ObjectMap::ObjID allocObj_;
@@ -142,6 +146,10 @@ class FreeInst : public InstrumentationSite {  //{{{
       return is->getKind() == InstrumentationSite::Kind::FreeInst;
     }
 
+    llvm::BasicBlock *getBB() const override {
+      return freeInst_->getParent();
+    }
+
  private:
     llvm::Instruction *freeInst_;
 };
@@ -179,6 +187,10 @@ class AssignmentInst : public InstrumentationSite {  //{{{
       return is->getKind() == InstrumentationSite::Kind::AssignmentInst;
     }
 
+    llvm::BasicBlock *getBB() const override {
+      return assignInst_->getParent();
+    }
+
  private:
     llvm::Instruction *assignInst_;
     ObjectMap::ObjID assignVal_;
@@ -212,6 +224,10 @@ class VisitInst : public InstrumentationSite {  //{{{
       return is->getKind() == InstrumentationSite::Kind::VisitInst;
     }
 
+    llvm::BasicBlock *getBB() const override {
+      return bb_;
+    }
+
  private:
     llvm::BasicBlock *bb_;
 };
@@ -241,15 +257,10 @@ class Assumption {  //{{{
       return calcDependencies(obj, m, free_locations);
     }
 
-    int64_t estimateCost(const ObjectMap &omap, const llvm::Module &m) {
-      int64_t approx_cost = 0;
 
-      for (auto &pinst : approxDependencies(omap, m)) {
-        // FIXME: only do this for costs we haven't already taken?
-        approx_cost += pinst->approxCost();
-      }
-
-      return approx_cost;
+    std::vector<std::unique_ptr<InstrumentationSite>>
+    getApproxDependencies(const ObjectMap &omap, const llvm::Module &m) {
+      return approxDependencies(omap, m);
     }
 
  private:

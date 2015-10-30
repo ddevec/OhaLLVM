@@ -39,15 +39,13 @@
 #include "llvm/Support/raw_ostream.h"
 
 
-// Private namespace for file-local info {{{
-namespace {
 
 // Using AUX with CFG helpers {{{
 // ID to keep track of anders return values
 struct aux_id { };
 typedef ID<aux_id, int32_t, -1> AuxID;
 
-static void identifyAUXFcnCallRetInfo(CFG &cfg,
+void SpecSFS::identifyAUXFcnCallRetInfo(CFG &cfg,
     ObjectMap &omap, const Andersens &aux,
     const IndirFunctionInfo *dyn_info) {
   // If we don't have dynamic info, or we're explicitly not using it:
@@ -154,7 +152,7 @@ static void identifyAUXFcnCallRetInfo(CFG &cfg,
   } else {
     std::for_each(cfg.indirect_cbegin(), cfg.indirect_cend(),
         // We take different arguments, depending on if we're debugging...
-        [&cfg, &omap, &dyn_info]
+        [this, &cfg, &omap, &dyn_info]
         (const std::pair<ConstraintGraph::ObjID, CFG::CFGid> &pair) {
       const llvm::CallInst *ci =
         cast<llvm::CallInst>(omap.valueAtID(pair.first));
@@ -165,8 +163,21 @@ static void identifyAUXFcnCallRetInfo(CFG &cfg,
       // llvm::dbgs() << "Getting info for target: " << *ci << "\n";
       auto fcn_targets = dyn_info->getTargets(ci);
 
+      // Manage speculative assumptions:
+      {
+        std::set<ObjectMap::ObjID> pts_ids;
+        for (auto fcn : fcn_targets) {
+          pts_ids.insert(omap.getObject(fcn));
+        }
+        std::unique_ptr<Assumption> ptsto_aspn(new PtstoAssumption(
+              pair.first, pts_ids));
+
+        addSpeculativeAssumption(std::move(ptsto_aspn));
+      }
+
       for (auto fcn : fcn_targets) {
         auto fcn_id = omap.getFunction(cast<llvm::Function>(fcn));
+
         cfg.addIndirFcn(pair.first, fcn_id);
 
         auto fcn_start_id = cfg.getFunctionStart(fcn_id);
@@ -186,9 +197,6 @@ static void identifyAUXFcnCallRetInfo(CFG &cfg,
     });
   }
 }
-
-
-//}}}
 
 // Functions/Variables helping me track internal values {{{
 /*
@@ -1561,13 +1569,16 @@ static void idInsertInst(ConstraintGraph &cg, ObjectMap &omap,
 //}}}
 
 // Instruction parsing helpers {{{
-static void processBlock(const UnusedFunctions &unused_fcns,
+void SpecSFS::processBlock(const UnusedFunctions &unused_fcns,
     ConstraintGraph &cg, CFG &cfg,
     std::map<const llvm::BasicBlock *, CFG::CFGid> &seen,
     ObjectMap &omap, const llvm::BasicBlock &BB, CFG::CFGid parent_id) {
   // If this block is never used, don't process it! -- This includes adding
   //   edges from/to parents
   if (do_spec && !unused_fcns.isUsed(&BB)) {
+    addSpeculativeAssumption(std::unique_ptr<Assumption>(
+          new DeadCodeAssumption(const_cast<llvm::BasicBlock *>(&BB))));
+
     return;
   }
 
@@ -1692,14 +1703,14 @@ static void processBlock(const UnusedFunctions &unused_fcns,
 
   // Process all of our successor blocks (In DFS order)
   std::for_each(succ_begin(&BB), succ_end(&BB),
-      [&cg, &cfg, &seen, &omap, next_id, &unused_fcns]
+      [this, &cg, &cfg, &seen, &omap, next_id, &unused_fcns]
       (const llvm::BasicBlock *succBB) {
     processBlock(unused_fcns, cg, cfg, seen, omap, *succBB, next_id);
   });
 }
 
-void scanFcn(const UnusedFunctions &unused_fcns, ConstraintGraph &cg, CFG &cfg,
-    ObjectMap &omap, const llvm::Function &fcn) {
+void SpecSFS::scanFcn(const UnusedFunctions &unused_fcns, ConstraintGraph &cg,
+    CFG &cfg, ObjectMap &omap, const llvm::Function &fcn) {
   // SFS adds instructions to graph, we've already added them?
   //   So we don't need to worry about it
   // Add instructions to graph
@@ -1719,7 +1730,6 @@ void scanFcn(const UnusedFunctions &unused_fcns, ConstraintGraph &cg, CFG &cfg,
 }
 //}}}
 
-}  // End private namespace
 //}}}
 
 bool SpecSFS::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
@@ -2083,6 +2093,13 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
         }
       */
       }
+    } else if (do_spec && !unused_fcns.isUsed(fcn)) {
+      // Add a visit assumption to our assumptions for the entry block of this
+      //   function
+      auto &bb = fcn.getEntryBlock();
+
+      addSpeculativeAssumption(std::unique_ptr<Assumption>(
+            new DeadCodeAssumption(const_cast<llvm::BasicBlock *>(&bb))));
     }
   }
   //}}}

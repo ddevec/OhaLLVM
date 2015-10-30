@@ -111,10 +111,8 @@ void SpecSFS::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   usage.addRequired<llvm::AliasAnalysis>();
   usage.setPreservesAll();
   // For DCE
-  // FIXME: This info is actually provided by ProfileInfo?
   usage.addRequired<UnusedFunctions>();
   // For indirect function following
-  // FIXME: Can probably just use DynPtstoLoader...
   usage.addRequired<IndirFunctionInfo>();
   // For dynamic ptsto removal
   usage.addRequired<DynPtstoLoader>();
