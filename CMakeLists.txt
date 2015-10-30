@@ -103,13 +103,15 @@ set(SPECSFS_SOURCES
   src/Partition.cpp
   src/Solve.cpp
 
+  # Dynamic assumption stuff
+  src/Assumptions.cpp
   src/DynPtstoOpt.cpp
 
   # Instrumentation passes
   lib/Instrument/IndirFcnTarget.cpp
   lib/Instrument/DynPtsto.cpp
 
-  #uhh
+  #uhh, testing stuff
   lib/TestAA.cpp
   )
 
@@ -121,6 +123,7 @@ set(SPECSFS_HEADERS
   Debug.h
 
   SolveHelpers.h
+  Assumptions.h
 
   ObjectMap.h
   DUG.h

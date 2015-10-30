@@ -515,6 +515,7 @@ void InstrDynPtsto::addExternalFunctions(llvm::Module &m) {
         llvm::GlobalValue::ExternalLinkage,
         AllocaInstName, &m);
   }
+
   // CallInst(void)
   {
     // Create the args
@@ -529,6 +530,7 @@ void InstrDynPtsto::addExternalFunctions(llvm::Module &m) {
         llvm::GlobalValue::ExternalLinkage,
         CallInstName, &m);
   }
+
   // RetInst(void)
   {
     // Create the args
@@ -543,6 +545,7 @@ void InstrDynPtsto::addExternalFunctions(llvm::Module &m) {
         llvm::GlobalValue::ExternalLinkage,
         RetInstName, &m);
   }
+
   // MallocInst(i32 obj_id, i64 size, i8 *ret)
   {
     // Create the args
@@ -560,6 +563,7 @@ void InstrDynPtsto::addExternalFunctions(llvm::Module &m) {
         llvm::GlobalValue::ExternalLinkage,
         MallocInstName, &m);
   }
+
   // FreeInst(i8 *ptr)
   {
     // Create the args
@@ -575,6 +579,7 @@ void InstrDynPtsto::addExternalFunctions(llvm::Module &m) {
         llvm::GlobalValue::ExternalLinkage,
         FreeInstName, &m);
   }
+
   // VisitInst(i32 val_id, i8 *ptr)
   {
     // Create the args
@@ -591,6 +596,7 @@ void InstrDynPtsto::addExternalFunctions(llvm::Module &m) {
         llvm::GlobalValue::ExternalLinkage,
         VisitInstName, &m);
   }
+
   // InitMainArgs2(i32 argc, char **argv)
   {
     // Create the args
@@ -609,6 +615,7 @@ void InstrDynPtsto::addExternalFunctions(llvm::Module &m) {
         llvm::GlobalValue::ExternalLinkage,
         MainInit2Name, &m);
   }
+
   // InitMainArgs3(i32 argc, char **argv, char **envp)
   {
     // Create the args

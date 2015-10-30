@@ -698,7 +698,6 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   });
 #endif
 
-
   /*
   if (alias(Location(nullptr), Location(nullptr)) != MayAlias) {
     llvm::dbgs() << "?\n";
