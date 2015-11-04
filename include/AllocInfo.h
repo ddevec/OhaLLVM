@@ -150,7 +150,8 @@ class AllocInfo {
   }
 
   static llvm::Value *getFreeArg(llvm::Module &m,
-      llvm::CallInst *ci, const llvm::Function *callee) {
+      llvm::CallInst *ci, const llvm::Function *callee,
+      bool allow_cast = true) {
     // Arg pos 0
     if (callee->getName() == "free" ||
         callee->getName() == "realloc") {
@@ -164,8 +165,12 @@ class AllocInfo {
       auto i8_ptr_type = llvm::PointerType::get(
           llvm::IntegerType::get(m.getContext(), 8), 0);
       auto arg = ci->getArgOperand(0);
-      return new llvm::BitCastInst(arg, i8_ptr_type,
-          "", ci);
+      if (allow_cast) {
+        return new llvm::BitCastInst(arg, i8_ptr_type,
+            "", ci);
+      } else {
+        return arg;
+      }
     }
 
     llvm_unreachable("Unknown free pos?");

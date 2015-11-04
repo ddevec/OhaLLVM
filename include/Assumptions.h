@@ -5,6 +5,7 @@
 #ifndef INCLUDE_ASSUMPTIONS_H_
 #define INCLUDE_ASSUMPTIONS_H_
 
+#include <map>
 #include <memory>
 #include <set>
 #include <vector>
@@ -27,6 +28,98 @@
 typedef std::unordered_multimap<ObjectMap::ObjID, llvm::Value *,
         ObjectMap::ObjID::hasher> free_location_multimap;
 
+class SetCache {  //{{{
+ public:
+  SetCache() = default;
+
+  // Dedups some ids
+  int32_t getID(const std::set<ObjectMap::ObjID> &pts_set) {
+    /*
+    llvm::dbgs() << "Doing find on mappings!\n";
+    llvm::dbgs() << "  mappings.size() is: " << mappings_.size() << "\n";
+    llvm::dbgs() << "  pts_set is:";
+    for (auto obj_id : pts_set) {
+      llvm::dbgs() << " " << obj_id;
+    }
+    llvm::dbgs() << "\n";
+    */
+
+    auto it = mappings_.find(pts_set);
+    if (it == std::end(mappings_)) {
+      auto ret = mappings_.emplace(pts_set, curID_);
+      assert(ret.second);
+      curID_++;
+
+      it = ret.first;
+    }
+
+    return it->second;
+  }
+
+  void addGVUse(ObjectMap::ObjID gv) {
+    gvUse_.insert(gv);
+  }
+
+  bool gvUsed(ObjectMap::ObjID gv) const {
+    return (gvUse_.find(gv) != std::end(gvUse_));
+  }
+
+  // Iterator... {{{
+  class const_iterator :
+    public std::map<std::set<ObjectMap::ObjID>, int32_t>::const_iterator {
+   public:
+     typedef std::map<std::set<ObjectMap::ObjID>, int32_t>::const_iterator
+       base_iter;
+
+     const_iterator() = default;
+     explicit const_iterator(base_iter s) :
+       base_iter(s) { }
+
+     const std::set<ObjectMap::ObjID> *operator->() {
+       return &(base_iter::operator->()->first);
+     }
+
+     const std::set<ObjectMap::ObjID> &operator*() {
+       return base_iter::operator*().first;
+     }
+  };
+  //}}}
+
+  typedef std::set<ObjectMap::ObjID>::const_iterator
+    const_gv_iterator;
+
+  void addRet(llvm::Function *fcn) {
+    retFcns_.insert(fcn);
+  }
+
+  bool hasRet(llvm::Function *fcn) {
+    return (retFcns_.find(fcn) != std::end(retFcns_));
+  }
+
+  const_iterator begin() const {
+    return const_iterator(std::begin(mappings_));
+  }
+
+  const_iterator end() const {
+    return const_iterator(std::begin(mappings_));
+  }
+
+  const_gv_iterator gv_begin() const {
+    return std::begin(gvUse_);
+  }
+
+  const_gv_iterator gv_end() const {
+    return std::end(gvUse_);
+  }
+
+ private:
+  std::set<llvm::Function *> retFcns_;
+  std::set<ObjectMap::ObjID> gvUse_;
+  std::map<std::set<ObjectMap::ObjID>, int32_t> mappings_;
+  int32_t curID_ = 0;
+};
+//}}}
+
 // InstrumentationSite classes {{{
 class InstrumentationSite {  //{{{
  public:
@@ -34,10 +127,12 @@ class InstrumentationSite {  //{{{
       AllocInst,
       FreeInst,
       AssignmentInst,
+      SetCheckInst,
       VisitInst
     };
 
     virtual bool operator<(const InstrumentationSite &is) const = 0;
+    virtual bool operator==(const InstrumentationSite &is) const = 0;
 
     virtual int64_t approxCost() = 0;
     virtual bool doInstrument(llvm::Module &m);
@@ -52,11 +147,18 @@ class InstrumentationSite {  //{{{
       return kind_;
     }
 
+    friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
+        const InstrumentationSite &fi) {
+      fi.printInst(o);
+      return o;
+    }
+
  private:
     Kind kind_;
 
  protected:
     explicit InstrumentationSite(Kind kind) : kind_(kind) { }
+    virtual void printInst(llvm::raw_ostream &o) const;
 };
 //}}}
 
@@ -80,6 +182,16 @@ class AllocInst : public InstrumentationSite {  //{{{
       return allocInst_ < ai.allocInst_;
     }
 
+    bool operator==(const InstrumentationSite &is) const override {
+      if (getKind() != is.getKind()) {
+        return false;
+      }
+
+      auto &ai = cast<AllocInst>(is);
+
+      return allocObj_ == ai.allocObj_ && allocInst_ == ai.allocInst_;
+    }
+
     int64_t approxCost() override {
       return 1;
     }
@@ -101,6 +213,11 @@ class AllocInst : public InstrumentationSite {  //{{{
  private:
     llvm::Instruction *allocInst_;
     ObjectMap::ObjID allocObj_;
+
+ protected:
+    virtual void printInst(llvm::raw_ostream &o) const {
+      o << "AllocInst " << allocObj_ << ": " << *allocInst_;
+    }
 };
 //}}}
 
@@ -122,9 +239,9 @@ class DoubleAllocInst : public AllocInst {  //{{{
 
 class FreeInst : public InstrumentationSite {  //{{{
  public:
-    explicit FreeInst(llvm::Instruction *free_inst) :
+    explicit FreeInst(llvm::Instruction *free_inst, SetCache &set_cache) :
       InstrumentationSite(InstrumentationSite::Kind::FreeInst),
-      freeInst_(free_inst) { }
+      freeInst_(free_inst), setCache_(set_cache) { }
 
     bool operator<(const InstrumentationSite &is) const override {
       if (getKind() != is.getKind()) {
@@ -134,6 +251,16 @@ class FreeInst : public InstrumentationSite {  //{{{
       auto &fi = cast<FreeInst>(is);
 
       return freeInst_ < fi.freeInst_;
+    }
+
+    bool operator==(const InstrumentationSite &is) const override {
+      if (getKind() != is.getKind()) {
+        return false;
+      }
+
+      auto &fi = cast<FreeInst>(is);
+
+      return freeInst_ == fi.freeInst_;
     }
 
     int64_t approxCost() override {
@@ -152,6 +279,12 @@ class FreeInst : public InstrumentationSite {  //{{{
 
  private:
     llvm::Instruction *freeInst_;
+    SetCache &setCache_;
+
+ protected:
+    virtual void printInst(llvm::raw_ostream &o) const {
+      o << "FreeInst " << *freeInst_;
+    }
 };
 //}}}
 
@@ -177,6 +310,16 @@ class AssignmentInst : public InstrumentationSite {  //{{{
       return assignInst_ < ai.assignInst_;
     }
 
+    bool operator==(const InstrumentationSite &is) const override {
+      if (getKind() != is.getKind()) {
+        return false;
+      }
+
+      auto &ai = cast<AssignmentInst>(is);
+
+      return assignVal_ == ai.assignVal_ && assignInst_ == ai.assignInst_;
+    }
+
     int64_t approxCost() override {
       return 1;
     }
@@ -194,6 +337,76 @@ class AssignmentInst : public InstrumentationSite {  //{{{
  private:
     llvm::Instruction *assignInst_;
     ObjectMap::ObjID assignVal_;
+
+ protected:
+    virtual void printInst(llvm::raw_ostream &o) const {
+      o << "AssignmentInst " << assignVal_ << ": " << *assignInst_;
+    }
+};
+//}}}
+
+// Checks to see if a value is allocated within a certain object set
+class SetCheckInst : public InstrumentationSite {  //{{{
+ public:
+    SetCheckInst(llvm::Value *assign_inst,
+        std::set<ObjectMap::ObjID> check_set,
+        SetCache &set_cache) :
+      InstrumentationSite(InstrumentationSite::Kind::SetCheckInst),
+      assignInst_(assign_inst), checkSet_(check_set),
+      setCache_(set_cache) { }
+
+    bool operator<(const InstrumentationSite &is) const override {
+      if (getKind() != is.getKind()) {
+        return getKind() < is.getKind();
+      }
+
+      auto &ai = cast<SetCheckInst>(is);
+
+      if (assignInst_ != ai.assignInst_) {
+        return assignInst_ < ai.assignInst_;
+      }
+
+      return checkSet_ < ai.checkSet_;
+    }
+
+    bool operator==(const InstrumentationSite &is) const override {
+      if (getKind() != is.getKind()) {
+        return false;
+      }
+
+      auto &ai = cast<SetCheckInst>(is);
+
+      return assignInst_ == ai.assignInst_ && checkSet_ == ai.checkSet_;
+    }
+
+    int64_t approxCost() override {
+      return 1;
+    }
+
+    bool doInstrument(llvm::Module &m) override;
+
+    static bool classof(const InstrumentationSite *is) {
+      return is->getKind() == InstrumentationSite::Kind::SetCheckInst;
+    }
+
+    llvm::BasicBlock *getBB() const override {
+      if (auto arg = dyn_cast<llvm::Argument>(assignInst_)) {
+        return &arg->getParent()->getEntryBlock();
+      }
+
+      return cast<llvm::Instruction>(assignInst_)->getParent();
+    }
+
+ private:
+    llvm::Value *assignInst_;
+    std::set<ObjectMap::ObjID> checkSet_;
+
+    SetCache &setCache_;
+
+ protected:
+    virtual void printInst(llvm::raw_ostream &o) const {
+      o << "SetCheckInst " << *assignInst_;
+    }
 };
 //}}}
 
@@ -214,6 +427,16 @@ class VisitInst : public InstrumentationSite {  //{{{
       return bb_ < vi.bb_;
     }
 
+    bool operator==(const InstrumentationSite &is) const override {
+      if (getKind() != is.getKind()) {
+        return false;
+      }
+
+      auto &vi = cast<VisitInst>(is);
+
+      return bb_ == vi.bb_;
+    }
+
     int64_t approxCost() override {
       return 1;
     }
@@ -230,10 +453,14 @@ class VisitInst : public InstrumentationSite {  //{{{
 
  private:
     llvm::BasicBlock *bb_;
+
+ protected:
+    virtual void printInst(llvm::raw_ostream &o) const {
+      o << "VisitInst: " << bb_->getName();
+    }
 };
 //}}}
 //}}}
-
 
 // Assumption classes {{{
 class Assumption {  //{{{
@@ -252,14 +479,14 @@ class Assumption {  //{{{
     }
 
     std::vector<std::unique_ptr<InstrumentationSite>> getInstrumentation(
-        const ObjectMap &obj, llvm::Module &m,
-        const free_location_multimap &free_locations) const {
-      return calcDependencies(obj, m, free_locations);
+        ObjectMap &obj, llvm::Module &m,
+        const free_location_multimap &free_locations, SetCache &cache) const {
+      return calcDependencies(obj, m, free_locations, cache);
     }
 
 
     std::vector<std::unique_ptr<InstrumentationSite>>
-    getApproxDependencies(const ObjectMap &omap, const llvm::Module &m) {
+    getApproxDependencies(ObjectMap &omap, const llvm::Module &m) {
       return approxDependencies(omap, m);
     }
 
@@ -273,22 +500,23 @@ class Assumption {  //{{{
     // NOTE: We may need a ptsto analysis to know the real dependencies
     virtual std::vector<std::unique_ptr<InstrumentationSite>>
       approxDependencies(
-        const ObjectMap &omap, const llvm::Module &m) const = 0;
+        ObjectMap &omap, const llvm::Module &m) const = 0;
 
     // For some forms of instrumentation we'll need to know the ptsto set to
     //   calc the true dependencies
     virtual std::vector<std::unique_ptr<InstrumentationSite>> calcDependencies(
-        const ObjectMap &omap, llvm::Module &m,
-        const free_location_multimap &free_locations) const = 0;
+        ObjectMap &omap, llvm::Module &m,
+        const free_location_multimap &free_locations,
+        SetCache &cache) const = 0;
 };
 //}}}
 
 class PtstoAssumption : public Assumption {  //{{{
  public:
-    PtstoAssumption(ObjectMap::ObjID val_id,
+    PtstoAssumption(llvm::Value *inst,
         const std::set<ObjectMap::ObjID> &ptstos) :
           Assumption(Assumption::Kind::DynPtsto),
-          objID_(val_id), ptstos_(ptstos) { }
+          instOrArg_(inst), ptstos_(ptstos) { }
 
 
     static bool classof(const Assumption *a) {
@@ -296,20 +524,22 @@ class PtstoAssumption : public Assumption {  //{{{
     }
 
  private:
-    ObjectMap::ObjID objID_;
+    // ObjectMap::ObjID objID_;
+    llvm::Value *instOrArg_;
     std::set<ObjectMap::ObjID> ptstos_;
 
  protected:
     std::vector<std::unique_ptr<InstrumentationSite>>
       calcDependencies(
-        const ObjectMap &omap, llvm::Module &m,
-        const free_location_multimap &free_locations) const override;
+        ObjectMap &omap, llvm::Module &m,
+        const free_location_multimap &free_locations,
+        SetCache &) const override;
 
     // To approx dependencies we make 2 alloc dependencies, and one inst
     // dependency.. we assume the cost of allow ~= the cost of free
     std::vector<std::unique_ptr<InstrumentationSite>>
       approxDependencies(
-        const ObjectMap &omap, const llvm::Module &m) const override;
+        ObjectMap &omap, const llvm::Module &m) const override;
 };
 //}}}
 
@@ -328,14 +558,25 @@ class DeadCodeAssumption : public Assumption {  //{{{
  protected:
     std::vector<std::unique_ptr<InstrumentationSite>>
       calcDependencies(
-        const ObjectMap &obj, llvm::Module &m,
-        const free_location_multimap &free_locations) const override;
+        ObjectMap &obj, llvm::Module &m,
+        const free_location_multimap &free_locations,
+        SetCache &) const override;
 
     // Approx dependencies == calcDependencies in this instance
     std::vector<std::unique_ptr<InstrumentationSite>> approxDependencies(
-        const ObjectMap &obj, const llvm::Module &m) const override;
+        ObjectMap &obj, const llvm::Module &m) const override;
 };
 //}}}
+//}}}
+
+// Helper functions {{{
+llvm::Function *getAllocaFunction(llvm::Module &m);
+llvm::Function *getAllocFunction(llvm::Module &m);
+llvm::Function *getRetFunction(llvm::Module &m);
+llvm::Function *getCallFunction(llvm::Module &m);
+llvm::Function *getFreeFunction(llvm::Module &m);
+llvm::Function *getAssignFunction(llvm::Module &m);
+llvm::Function *getVisitFunction(llvm::Module &m);
 //}}}
 
 #endif  // INCLUDE_ASSUMPTIONS_H_

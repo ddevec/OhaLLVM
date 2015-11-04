@@ -22,7 +22,7 @@
 class CostApprox {
  public:
     // 1/10000?
-    static constexpr double TimeThreshold = .0001;
+    static constexpr double TimeThreshold = .00001;
     CostApprox(const llvm::Module &m, llvm::ProfileInfo &pi) :
           pi_(pi) {
       for (auto &fcn : m) {
@@ -107,7 +107,17 @@ SpecSFS::addDynPtstoInfo(llvm::Module &m, DUG &,
             for (auto &instr : bb) {
               // If we have an instruction returning a pointer, modify its
               // node w/ the constant ptr info
-              if (llvm::isa<llvm::PointerType>(instr.getType())) {
+              if (llvm::isa<llvm::PointerType>(instr.getType()) &&
+                  !llvm::isa<llvm::AllocaInst>(instr)) {
+                if (auto ci = dyn_cast<llvm::CallInst>(&instr)) {
+                  auto fcn = LLVMHelper::getFcnFromCall(ci);
+
+                  if (fcn != nullptr && AllocInfo::fcnIsMalloc(fcn)) {
+                    continue;
+                  }
+                }
+
+
                 auto val_id = omap.getValue(&instr);
 
                 // NOTE: in the instance I encounter an unknown value in my
@@ -116,8 +126,9 @@ SpecSFS::addDynPtstoInfo(llvm::Module &m, DUG &,
                 if (dyn_ptsto.hasPtsto(val_id)) {
                   // Add dyn_ptsto info for this top level variable
 
+                  // Don't add dyn_ptsto info for alloc instructions
                   std::unique_ptr<Assumption> ptsto_aspn(new PtstoAssumption(
-                        val_id, dyn_ptsto.getPtsto(val_id)));
+                        &instr, dyn_ptsto.getPtsto(val_id)));
 
                   auto approx_deps = ptsto_aspn->getApproxDependencies(omap, m);
 

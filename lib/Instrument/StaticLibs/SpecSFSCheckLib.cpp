@@ -2,19 +2,39 @@
  * Copyright (C) 2015 David Devecsery
  */
 
+#include <execinfo.h>
+
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 
-#include <fstream>
+#include <algorithm>
 #include <iostream>
 #include <map>
 #include <unordered_map>
 #include <set>
-#include <sstream>
 #include <string>
 #include <vector>
+
+static int64_t malloc_cnt = 0;
+static int64_t free_cnt = 0;
+static int64_t alloca_cnt = 0;
+static int64_t visit_cnt = 0;
+/*
+__attribute__((constructor))
+void init(void) {
+}
+
+__attribute__((destructor))
+void fini(void) {
+  std::cout << "malloc count: " << malloc_cnt << std::endl;
+  std::cout << "free count: " << free_cnt << std::endl;
+  std::cout << "alloca count: " << alloca_cnt << std::endl;
+  std::cout << "visit count: " << visit_cnt << std::endl;
+}
+*/
+
 
 class AddrRange {
  public:
@@ -43,83 +63,43 @@ class AddrRange {
 };
 
 std::map<AddrRange, int32_t> addr_to_objid;
-std::unordered_map<int32_t, std::set<int32_t>> valid_to_objids;
 std::vector<std::vector<void *>> stack_allocs;
 
 extern "C" {
 
-void __DynPtsto_do_init() { }
+void __specsfs_alloc_fcn(int32_t obj_id, void *addr, int64_t size);
 
-void __DynPtsto_do_finish() {
-  std::string outfilename("dyn_ptsto.log");
-
-  // If there is already an outfilename, merge the two
-  {
-    std::ifstream logfile(outfilename);
-    if (logfile.is_open()) {
-      for (std::string line; std::getline(logfile, line, ':'); ) {
-        // First parse the first int till the :
-        int32_t call_id = stoi(line);
-
-        auto &fcn_set = valid_to_objids[call_id];
-
-        std::getline(logfile, line);
-        // Now split the line...
-        std::stringstream converter(line);
-        int32_t fcn_id;
-        converter >> fcn_id;
-        while (!converter.fail()) {
-          fcn_set.insert(fcn_id);
-          converter >> fcn_id;
-        }
-      }
-    }
-  }
-
-  FILE *out = fopen(outfilename.c_str(), "w");
-  // Print to the logfile
-  for (auto &val_pr : valid_to_objids) {
-    fprintf(out, "%u:", val_pr.first);
-
-    for (auto &obj_id : val_pr.second) {
-      fprintf(out, " %d", obj_id);
-    }
-    fprintf(out, "\n");
-  }
-}
-
-void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
-    void *addr);
-void __DynPtsto_main_init2(int32_t obj_id, int32_t argv_dest_id,
+void __specsfs_main_init2(int32_t obj_id, int32_t argv_dest_id,
     int argc, char **argv) {
   for (int i = 0; i < argc; i++) {
-    __DynPtsto_do_malloc(argv_dest_id, (strlen(argv[i])+1)*8, argv[i]);
+    __specsfs_alloc_fcn(argv_dest_id, argv[i], (strlen(argv[i])+1)*8);
   }
 
-  __DynPtsto_do_malloc(obj_id, (sizeof(*argv)*argc+1)*8, argv);
+  __specsfs_alloc_fcn(obj_id, argv, (sizeof(*argv)*argc+1)*8);
 }
 
-void __DynPtsto_main_init3(int32_t obj_id, int32_t argv_dest_id,
+void __specsfs_main_init3(int32_t obj_id, int32_t argv_dest_id,
     int argc, char **argv, char **envp) {
   // Init envp
   int i;
   for (i = 0; envp[i] != nullptr; i++) {
-    __DynPtsto_do_malloc(argv_dest_id, (strlen(envp[i])+1)*8, envp[i]);
+    __specsfs_alloc_fcn(argv_dest_id, envp[i], (strlen(envp[i])+1)*8);
   }
-  __DynPtsto_do_malloc(obj_id, (sizeof(*envp)*i)*8, envp);
+  __specsfs_alloc_fcn(obj_id, envp, (sizeof(*envp)*i)*8);
 
   // Do std init
-  __DynPtsto_main_init2(obj_id, argv_dest_id, argc, argv);
+  __specsfs_main_init2(obj_id, argv_dest_id, argc, argv);
 }
 
-void __DynPtsto_do_call() {
+void __specsfs_do_call() {
   // Push a frame on the "stack"
   stack_allocs.emplace_back();
 }
 
 
-void __DynPtsto_do_alloca(int32_t obj_id, int64_t size,
-    void *addr) {
+void __specsfs_alloca_fcn(int32_t obj_id, void *addr,
+    int64_t size) {
+  alloca_cnt++;
   // Size is in bits...
   size /= 8;
   // Handle alloca
@@ -134,7 +114,7 @@ void __DynPtsto_do_alloca(int32_t obj_id, int64_t size,
   assert(ret.second);
 }
 
-void __DynPtsto_do_ret() {
+void __specsfs_ret_fcn() {
   // Remove all ptstos on stack from map
   const std::vector<void *> &cur_frame = stack_allocs.back();
   for (auto addr : cur_frame) {
@@ -150,8 +130,9 @@ void __DynPtsto_do_ret() {
   stack_allocs.pop_back();
 }
 
-void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
-    void *addr) {
+void __specsfs_alloc_fcn(int32_t obj_id, void *addr,
+    int64_t size) {
+  malloc_cnt++;
   // Size is in bits...
   size /= 8;
   // Add ptsto to map
@@ -164,12 +145,14 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
   // assert(ret.second);
 }
 
-void __DynPtsto_do_free(void *addr) {
+void __specsfs_free_fcn(void *addr) {
+  free_cnt++;
   // Remove ptsto from map
   // std::cout << "freeing: " << addr << std::endl;
   addr_to_objid.erase(AddrRange(addr));
 }
 
+/*
 void __DynPtsto_do_visit(int32_t val_id, void *addr) {
   // Record that this val_id pts to this addr
   // std::cout << "visit: Addr is " << addr << std::endl;
@@ -183,5 +166,72 @@ void __DynPtsto_do_visit(int32_t val_id, void *addr) {
     valid_to_objids[val_id].insert(3);
   }
 }
+*/
+
+__attribute__((unused))
+static void print_trace(void) {
+  void *array[10];
+  size_t size;
+  char **strings;
+  size_t i;
+
+  size = backtrace(array, 10);
+  strings = backtrace_symbols(array, size);
+
+  std::cerr << "BACKTRACE:" << std::endl;
+  for (i = 0; i < size; i++) {
+    std::cerr << "\t" << strings[i] << std::endl;
+  }
+
+  free(strings);
+}
+
+void __specsfs_set_check_fcn(int32_t id,
+    void *addr, int32_t set[], int32_t set_size) {
+  visit_cnt++;
+  // Don't check nulls, they are fine
+  if (addr == nullptr) {
+    return;
+  }
+
+  /*
+  std::cerr << "Checking set:";
+  for (int i = 0; i < set_size; i++) {
+    std::cerr << " " << set[i];
+  }
+  std::cerr << std::endl;
+  */
+
+  int32_t obj_id = -1;
+  auto it = addr_to_objid.find(AddrRange(addr));
+  bool found = false;
+  if (it != std::end(addr_to_objid)) {
+    obj_id = addr_to_objid.at(AddrRange(addr));
+    /*
+    std::cerr << "objid is: " << obj_id << std::endl;
+    std::cerr << "set is:";
+    for (int i = 0; i < set_size; i++) {
+      std::cerr << " " << set[i];
+    }
+    std::cerr << std::endl;
+    */
+    found = std::binary_search(set, set+set_size, obj_id);
+  }
+
+  if (!found) {
+    std::cerr << "set_check_fcn abort!" << std::endl;
+    std::cerr << "obj_id is: " << obj_id << std::endl;
+    std::cerr << "addr is: " << addr << std::endl;
+    std::cerr << "set is:";
+    for (int i = 0; i < set_size; i++) {
+      std::cerr << " " << set[i];
+    }
+    std::cerr << std::endl;
+    std::cerr << "id is: " << id << std::endl;
+    print_trace();
+    abort();
+  }
+}
 
 }
+

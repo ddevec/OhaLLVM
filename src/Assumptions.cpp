@@ -30,10 +30,13 @@ static const std::string AllocFcnName = "__specsfs_alloc_fcn";
 static const std::string AllocaFcnName = "__specsfs_alloca_fcn";
 static const std::string FreeFcnName = "__specsfs_free_fcn";
 static const std::string RetFcnName = "__specsfs_ret_fcn";
+static const std::string CallFcnName = "__specsfs_do_call";
 static const std::string AssignFcnName = "__specsfs_assign_fcn";
+static const std::string SetCheckFcnName = "__specsfs_set_check_fcn";
 static const std::string VisitFcnName = "abort";
 
-static llvm::Function *getAllocaFunction(llvm::Module &m) {
+// Getting external funcion names {{{
+llvm::Function *getAllocaFunction(llvm::Module &m) {
   auto void_type = llvm::Type::getVoidTy(m.getContext());
   auto i32_type = llvm::IntegerType::get(m.getContext(), 32);
   auto i64_type = llvm::IntegerType::get(m.getContext(), 64);
@@ -59,7 +62,7 @@ static llvm::Function *getAllocaFunction(llvm::Module &m) {
   return ret;
 }
 
-static llvm::Function *getAllocFunction(llvm::Module &m) {
+llvm::Function *getAllocFunction(llvm::Module &m) {
   auto void_type = llvm::Type::getVoidTy(m.getContext());
   auto i32_type = llvm::IntegerType::get(m.getContext(), 32);
   auto i64_type = llvm::IntegerType::get(m.getContext(), 64);
@@ -85,7 +88,7 @@ static llvm::Function *getAllocFunction(llvm::Module &m) {
   return ret;
 }
 
-static llvm::Function *getRetFunction(llvm::Module &m) {
+llvm::Function *getRetFunction(llvm::Module &m) {
   auto void_type = llvm::Type::getVoidTy(m.getContext());
 
   auto ret = m.getFunction(RetFcnName);
@@ -103,7 +106,7 @@ static llvm::Function *getRetFunction(llvm::Module &m) {
   return ret;
 }
 
-static llvm::Function *getFreeFunction(llvm::Module &m) {
+llvm::Function *getFreeFunction(llvm::Module &m) {
   auto void_type = llvm::Type::getVoidTy(m.getContext());
   auto i8_ptr_type = llvm::PointerType::get(
       llvm::IntegerType::get(m.getContext(), 8), 0);
@@ -124,7 +127,55 @@ static llvm::Function *getFreeFunction(llvm::Module &m) {
   return ret;
 }
 
-static llvm::Function *getAssignFunction(llvm::Module &m) {
+llvm::Function *getCallFunction(llvm::Module &m) {
+  auto void_type = llvm::Type::getVoidTy(m.getContext());
+
+  auto ret = m.getFunction(CallFcnName);
+  if (ret == nullptr) {
+    std::vector<llvm::Type *> ret_fcn_args;
+    auto ret_fcn_type = llvm::FunctionType::get(
+        void_type,
+        ret_fcn_args,
+        false);
+    ret = llvm::Function::Create(
+        ret_fcn_type,
+        llvm::GlobalValue::ExternalLinkage,
+        CallFcnName, &m);
+  }
+  return ret;
+}
+
+llvm::Function *getSetCheckFunction(llvm::Module &m) {
+  auto void_type = llvm::Type::getVoidTy(m.getContext());
+  auto i32_type = llvm::IntegerType::get(m.getContext(), 32);
+  auto i8_ptr_type = llvm::PointerType::get(
+      llvm::IntegerType::get(m.getContext(), 8), 0);
+  auto i32_ptr_type = llvm::PointerType::get(
+      llvm::IntegerType::get(m.getContext(), 32), 0);
+
+  auto ret = m.getFunction(SetCheckFcnName);
+  if (ret == nullptr) {
+    std::vector<llvm::Type *> ret_fcn_args;
+    // FIXME: for dbg
+    ret_fcn_args.push_back(i32_type);
+    ret_fcn_args.push_back(i8_ptr_type);
+    // We just give it any int32_t array type?
+    ret_fcn_args.push_back(i32_ptr_type);
+    // size
+    ret_fcn_args.push_back(i32_type);
+    auto ret_fcn_type = llvm::FunctionType::get(
+        void_type,
+        ret_fcn_args,
+        false);
+    ret = llvm::Function::Create(
+        ret_fcn_type,
+        llvm::GlobalValue::ExternalLinkage,
+        SetCheckFcnName, &m);
+  }
+  return ret;
+}
+
+llvm::Function *getAssignFunction(llvm::Module &m) {
   auto void_type = llvm::Type::getVoidTy(m.getContext());
   auto i32_type = llvm::IntegerType::get(m.getContext(), 32);
   auto i8_ptr_type = llvm::PointerType::get(
@@ -148,7 +199,7 @@ static llvm::Function *getAssignFunction(llvm::Module &m) {
 }
 
 // Visit function == "abort"!
-static llvm::Function *getVisitFunction(llvm::Module &m) {
+llvm::Function *getVisitFunction(llvm::Module &m) {
   auto void_type = llvm::Type::getVoidTy(m.getContext());
   auto ret = m.getFunction(VisitFcnName);
   if (ret == nullptr) {
@@ -164,6 +215,7 @@ static llvm::Function *getVisitFunction(llvm::Module &m) {
   }
   return ret;
 }
+//}}}
 
 bool AllocInst::doInstrument(llvm::Module &m) {
   auto i32_type = llvm::IntegerType::get(m.getContext(), 32);
@@ -242,14 +294,15 @@ bool FreeInst::doInstrument(llvm::Module &m) {
 
     args.push_back(free_arg);
 
-    // Get first instruction:
-    auto insert_before = freeInst_;
-
+    llvm::dbgs() << "About to instrument free: " << *ci << "\n";
     // Do call
-    llvm::CallInst::Create(fcn, args, "", insert_before);
+    llvm::CallInst::Create(fcn, args, "", ci);
   } else {
     assert(llvm::isa<llvm::ReturnInst>(freeInst_));
     auto fcn = getRetFunction(m);
+
+    auto parent_fcn = freeInst_->getParent()->getParent();
+    setCache_.addRet(parent_fcn);
 
     // Its a ret... we need to pop the stack
     auto insert_before = freeInst_;
@@ -263,6 +316,8 @@ bool FreeInst::doInstrument(llvm::Module &m) {
 
 bool AssignmentInst::doInstrument(llvm::Module &m) {
   auto i32_type = llvm::IntegerType::get(m.getContext(), 32);
+  auto i8_ptr_type = llvm::PointerType::get(
+      llvm::IntegerType::get(m.getContext(), 8), 0);
 
   auto fcn = getAssignFunction(m);
 
@@ -272,7 +327,13 @@ bool AssignmentInst::doInstrument(llvm::Module &m) {
   //   ObjectID
   //   Pointer to be assigned
   args.push_back(llvm::ConstantInt::get(i32_type, assignVal_.val()));
-  args.push_back(assignInst_);
+
+  auto assign_inst = assignInst_;
+  if (assignInst_->getType() != i8_ptr_type) {
+    assign_inst = new llvm::BitCastInst(assignInst_, i8_ptr_type);
+  }
+
+  args.push_back(assign_inst);
 
   // Get first instruction:
   auto insert_after = assignInst_;
@@ -291,9 +352,159 @@ bool AssignmentInst::doInstrument(llvm::Module &m) {
     }
   }
 
+  if (assign_inst != assignInst_) {
+    assign_inst->insertAfter(insert_after);
+    insert_after = assign_inst;
+  }
+
   // Do call
   auto ci = llvm::CallInst::Create(fcn, args);
 
+  ci->insertAfter(insert_after);
+
+  return true;
+}
+
+static llvm::GlobalVariable *getGlobalSet(llvm::Module &m,
+    const std::set<ObjectMap::ObjID> &set,
+    SetCache &cache) {
+  int32_t id = cache.getID(set);
+
+  // llvm::dbgs() << "Have id: " << id << "\n";
+
+  std::string gv_name = "__specsfs_gv_set" + std::to_string(id);
+
+  /*
+  llvm::dbgs() << "Have gv_name: " << gv_name << "\n";
+
+  llvm::dbgs() << "  Set data is:";
+  for (auto obj_id : set) {
+    llvm::dbgs() << " " << obj_id;
+  }
+  llvm::dbgs() << "\n";
+  */
+
+  auto gv = m.getGlobalVariable(gv_name);
+  if (gv == nullptr) {
+    auto i32_type = llvm::IntegerType::get(m.getContext(), 32);
+    // Create the array type:
+    //   Note, its an array of (set.size()) of int32_ts
+    auto array_type = llvm::ArrayType::get(i32_type,
+        set.size());
+
+    // Create the array initializer:
+    //   For each elm : set
+    //     arrayInit[i] = elm
+    std::vector<llvm::Constant *> initializer;
+    // llvm::dbgs() << "  Creating gv: " << gv_name << "\n";
+    // llvm::dbgs() << "  With set:";
+    for (auto obj_id : set) {
+      initializer.push_back(
+          llvm::ConstantInt::get(i32_type, obj_id.val()));
+      // llvm::dbgs() << " " << obj_id;
+    }
+    // llvm::dbgs() << "\n";
+
+
+    auto array_init = llvm::ConstantArray::get(array_type, initializer);
+
+    // Create it
+    gv = new llvm::GlobalVariable(m,
+        array_type,
+        true,
+        llvm::GlobalValue::ExternalLinkage,
+        array_init,
+        gv_name);
+  }
+
+  return gv;
+}
+
+bool SetCheckInst::doInstrument(llvm::Module &m) {
+  static int32_t id = 0;
+  auto i32_type = llvm::IntegerType::get(m.getContext(), 32);
+  auto i8_ptr_type = llvm::PointerType::get(
+      llvm::IntegerType::get(m.getContext(), 8), 0);
+
+  auto fcn = getSetCheckFunction(m);
+
+  std::vector<llvm::Value *> args;
+  // Now we construct the call arguments:
+  // Args are:
+  //   Pointer
+  //   Pointer Set Array
+  //   Pointer Set Size
+
+  // Okay, we have two options here, an argument or an instruction
+  auto assign_inst = assignInst_;
+  // llvm::dbgs() << " Have asignInst_: " << *assignInst_ << "\n";
+  if (assignInst_->getType() != i8_ptr_type) {
+    assign_inst = new llvm::BitCastInst(assignInst_, i8_ptr_type);
+  }
+
+  // FIXME: Debug stuff
+  args.push_back(llvm::ConstantInt::get(i32_type, id++));
+
+  // Arg0, pointer
+  // llvm::dbgs() << " Have assign_inst: " << *assign_inst << "\n";
+  args.push_back(assign_inst);
+
+  llvm::Instruction *first_inst;
+  if (auto arg = dyn_cast<llvm::Argument>(assignInst_)) {
+    first_inst = &(*std::begin(arg->getParent()->getEntryBlock()));
+  } else {
+    auto inst = cast<llvm::Instruction>(assignInst_);
+    first_inst = inst;
+  }
+
+  // llvm::dbgs() << " Have first_inst: " << *first_inst << "\n";
+
+  assert(first_inst != nullptr);
+
+  // Now we get the pointer set array...
+  std::vector<llvm::Constant *> idx_list;
+  idx_list.push_back(llvm::ConstantInt::get(i32_type, 0));
+  idx_list.push_back(llvm::ConstantInt::get(i32_type, 0));
+  auto array_ce = getGlobalSet(m, checkSet_, setCache_);
+  args.push_back(llvm::ConstantExpr::getGetElementPtr(
+        array_ce, idx_list));
+
+  // Set size:
+  args.push_back(llvm::ConstantInt::get(i32_type, checkSet_.size()));
+
+  // Get first instruction:
+
+  auto insert_after = first_inst;
+  // Deal with phi nodes...
+  if (llvm::isa<llvm::PHINode>(insert_after)) {
+    // If this inst is a phi node, we insert after the phis of this bb:
+    auto &bb = *insert_after->getParent();
+    llvm::Instruction *prev_inst = first_inst;
+    for (auto &inst : bb) {
+      if (!llvm::isa<llvm::PHINode>(inst)) {
+        assert(prev_inst != nullptr);
+        insert_after = prev_inst;
+        break;
+      }
+      prev_inst = &inst;
+    }
+  }
+  // llvm::dbgs() << " Have insert_after: " << *insert_after << "\n";
+
+  assert(insert_after != nullptr);
+
+
+  // Do call
+  if (assign_inst != assignInst_) {
+    // llvm::dbgs() << " inserting assign_inst\n";
+    auto assign_inst_inst = cast<llvm::Instruction>(assign_inst);
+    assign_inst_inst->insertAfter(insert_after);
+    insert_after = assign_inst_inst;
+  }
+
+  auto ci = llvm::CallInst::Create(fcn, args);
+  assert(ci != nullptr);
+  // llvm::dbgs() << " inserting ci at: " << *insert_after << "\n";
   ci->insertAfter(insert_after);
 
   return true;
@@ -325,8 +536,9 @@ bool VisitInst::doInstrument(llvm::Module &m) {
 // Calc Assumptions {{{
 std::vector<std::unique_ptr<InstrumentationSite>>
 PtstoAssumption::calcDependencies(
-    const ObjectMap &omap, llvm::Module &,
-    const free_location_multimap &free_locations) const {
+    ObjectMap &omap, llvm::Module &,
+    const free_location_multimap &free_locations,
+    SetCache &set_cache) const {
   std::vector<std::unique_ptr<InstrumentationSite>> ret;
   // First, add the assignment dep
   // Then, add the alloc deps
@@ -334,29 +546,37 @@ PtstoAssumption::calcDependencies(
   //    Add a free dep for each of those
 
   // First create an assignment site for this instruction
-  auto ptr_inst = cast<llvm::Instruction>(omap.valueAtID(objID_));
-  ret.emplace_back(new AssignmentInst(const_cast<llvm::Instruction *>(ptr_inst),
-        objID_));
+  auto ptr_inst = instOrArg_;
+  // This is wrong... Should check that ptr_inst isn't within a set of
+  //    values...
+  ret.emplace_back(new SetCheckInst(ptr_inst, ptstos_, set_cache));
 
   // Now, create an allocation site for each ptsto in this instruction
   for (auto &obj_id : ptstos_) {
-    auto ptr_inst = dyn_cast<llvm::Instruction>(omap.valueAtID(objID_));
+    // No need to check free/allocs for special ids, they are global
+    assert(obj_id != ObjectMap::UniversalValue);
+    if (omap.isSpecial(obj_id)) {
+      continue;
+    }
+    auto val = omap.valueAtID(obj_id);
+    auto ptr_inst = dyn_cast<llvm::Instruction>(val);
     if (ptr_inst != nullptr) {
       ret.emplace_back(new AllocInst(const_cast<llvm::Instruction *>(ptr_inst),
             obj_id));
     } else {
-      // This is either a function call and alloca, or a global variable...
-      assert(llvm::isa<llvm::GlobalVariable>(ptr_inst));
+      // UGH, need to find equivalencies too
+      set_cache.addGVUse(obj_id);
     }
 
     // And the free insts...
     auto free_pr = free_locations.equal_range(obj_id);
     std::for_each(free_pr.first, free_pr.second,
-        [&ret, &omap]
+        [&ret, &omap, &set_cache]
         (const std::pair<const ObjectMap::ObjID, llvm::Value *> &pr) {
       auto free_inst = pr.second;
 
-      ret.emplace_back(new FreeInst(cast<llvm::Instruction>(free_inst)));
+      ret.emplace_back(new FreeInst(cast<llvm::Instruction>(free_inst),
+          set_cache));
     });
   }
   return ret;
@@ -364,8 +584,9 @@ PtstoAssumption::calcDependencies(
 
 std::vector<std::unique_ptr<InstrumentationSite>>
 DeadCodeAssumption::calcDependencies(
-    const ObjectMap &, llvm::Module &,
-    const free_location_multimap &) const {
+    ObjectMap &, llvm::Module &,
+    const free_location_multimap &,
+    SetCache &) const {
   std::vector<std::unique_ptr<InstrumentationSite>> ret;
   // This is pretty simple, we just create an allocation inst at the point of
   //   visit checking
@@ -379,7 +600,7 @@ DeadCodeAssumption::calcDependencies(
 // Approx Assumptions {{{
 std::vector<std::unique_ptr<InstrumentationSite>>
 PtstoAssumption::approxDependencies(
-    const ObjectMap &omap, const llvm::Module &) const {
+    ObjectMap &omap, const llvm::Module &) const {
   std::vector<std::unique_ptr<InstrumentationSite>> ret;
   // A ptsto assumption depends on the store to the pointer
   // (the instruction at objID_), and the allocation/free sites of all of the
@@ -388,20 +609,26 @@ PtstoAssumption::approxDependencies(
   // we've run our ptsto analysis
 
   // First create an assignment site for this instruction
-  auto ptr_inst = cast<llvm::Instruction>(omap.valueAtID(objID_));
-  ret.emplace_back(new AssignmentInst(const_cast<llvm::Instruction *>(ptr_inst),
-        objID_));
+  // auto ptr_inst = cast<llvm::Instruction>(omap.valueAtID(objID_));
+  // assert(omap.getValue(inst_).val() != 350);
+  static SetCache bleh;
+  ret.emplace_back(new SetCheckInst(instOrArg_, ptstos_, bleh));
 
   // Now, create a double allocation site for each ptsto in this instruction
   // NOTE: The double is to approximate the free cost
   for (auto &obj_id : ptstos_) {
-    auto ptr_inst = dyn_cast<llvm::Instruction>(omap.valueAtID(objID_));
+    // No need to check free/allocs for special ids, they are global
+    if (omap.isSpecial(obj_id)) {
+      continue;
+    }
+    auto val = omap.valueAtID(obj_id);
+    auto ptr_inst = dyn_cast<llvm::Instruction>(val);
     if (ptr_inst != nullptr) {
       ret.emplace_back(new DoubleAllocInst(
             const_cast<llvm::Instruction *>(ptr_inst), obj_id));
     } else {
-      // This is either a function call and alloca, or a global variable...
-      assert(llvm::isa<llvm::GlobalVariable>(ptr_inst));
+      // This is a global variable, or function...
+      assert(llvm::isa<llvm::GlobalValue>(val));
     }
   }
 
@@ -429,7 +656,7 @@ PtstoAssumption::approxDependencies(
 
 std::vector<std::unique_ptr<InstrumentationSite>>
 DeadCodeAssumption::approxDependencies(
-    const ObjectMap &, const llvm::Module &) const {
+    ObjectMap &, const llvm::Module &) const {
   std::vector<std::unique_ptr<InstrumentationSite>> ret;
   // This is pretty simple, we just create an allocation inst at the point of
   //   visit checking

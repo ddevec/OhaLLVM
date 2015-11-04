@@ -6,8 +6,10 @@
 #include <cassert>
 
 #include <algorithm>
+#include <fstream>
 #include <iostream>
 #include <set>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -32,7 +34,30 @@ void __InstrIndirCalls_init_inst(void) {
 
 void __InstrIndirCalls_finish_inst(void) {
   // Print out my stuff...
-  // TODO(ddevec) -- Make this relocatable via env variable
+  // First open and read the file, if it exists
+  {
+    std::ifstream logfile("indir_fcns.log");
+    if (logfile.is_open()) {
+      for (std::string line; std::getline(logfile, line, ':'); ) {
+        // First parse the first int till the :
+        int32_t call_id = stoi(line);
+
+        auto &fcn_set = called_fcns[call_id];
+
+        std::getline(logfile, line);
+        // Now split the line...
+        std::stringstream converter(line);
+        int32_t fcn_id;
+        converter >> fcn_id;
+        while (!converter.fail()) {
+          fcn_set.insert(fcn_id);
+          converter >> fcn_id;
+        }
+      }
+    }
+  }
+
+  // Now, create the outfile
   std::string outfilename("indir_fcns.log");
   FILE *out = fopen(outfilename.c_str(), "w");
 
@@ -49,13 +74,23 @@ void __InstrIndirCalls_finish_inst(void) {
   fclose(out);
 }
 
-void __InstrIndirCalls_fcn_call(int32_t id, void **addr) {
+void __InstrIndirCalls_fcn_call(int32_t id, void *addr) {
   auto res_set = addr_to_id_map.equal_range(addr);
   // assert(res_set.first != res_set.second);
   // std::cout << "array_size is: " << called_fcns.size() << std::endl;
   // std::cout << "id is: " << id << std::endl;
+  /*
+  if (id == 36) {
+    std::cerr << "id: " << id << " addr: " << addr << std::endl;
+  }
+  */
   std::for_each(res_set.first, res_set.second,
       [&id] (std::pair<void *, int32_t> res_pr) {
+    /*
+    if (id == 36) {
+      std::cerr << "  " << res_pr.second << "\n";
+    }
+    */
     called_fcns[id].insert(res_pr.second);
   });
 }

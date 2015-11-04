@@ -74,6 +74,19 @@ class SpecSFS : public llvm::ModulePass,
 
   virtual void copyValue(llvm::Value *From, llvm::Value *To);
 
+  ObjectMap &getObjectMap() {
+    return omap_;
+  }
+
+  PtstoSet &getPtstoSet(const llvm::Value *val) {
+    return pts_top_.at(omap_.getValue(val));
+  }
+
+  const std::vector<std::unique_ptr<Assumption>> &
+  getSpecAssumptions() const {
+    return specAssumptions_;
+  }
+
  private:
   // The functions which do the primary (high-level) work of SFS
 

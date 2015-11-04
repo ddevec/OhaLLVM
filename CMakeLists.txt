@@ -12,6 +12,16 @@ function(list_prefix var prefix)
 
 endfunction(list_prefix)
 
+function(add_bc_target TARGET_NAME)
+  set(target_bc "${TARGET_NAME}.bc")
+  
+  add_custom_target(${target_bc} ALL
+    COMMAND "/home/ddevec/llvm-3.1/prefix/bin/clang++" -std=c++11 -stdlib=libstdc++ -I /usr/include/x86_64-linux-gnu/c++/4.8 -I /usr/include/c++/4.8 -O3 -g -c -emit-llvm -o ${target_bc} "${CMAKE_CURRENT_SOURCE_DIR}/${ARGN}"
+    DEPENDS ${ARGN})
+
+  #-L /usr/lib/gcc/x86_64-linux-gnu/4.8 
+endfunction(add_bc_target)
+
 function(add_lint_command TARGET_NAME)
 
 #  foreach(fil ${ARGN})
@@ -47,6 +57,15 @@ function(add_cpplint_headers TARGET_NAME)
   add_lint_command(${TARGET_NAME} ${lint_names})
 
 endfunction(add_cpplint_headers)
+
+function(add_cpplint_target TARGET_NAME)
+
+  set(lint_names "")
+  list_prefix(lint_names ${CMAKE_CURRENT_SOURCE_DIR} ${ARGN})
+
+  add_lint_command(${TARGET_NAME} ${lint_names})
+
+endfunction(add_cpplint_target)
 
 function(add_cpplint_target TARGET_NAME)
 
@@ -107,6 +126,8 @@ set(SPECSFS_SOURCES
   src/Assumptions.cpp
   src/DynPtstoOpt.cpp
 
+  src/InsertSpecAssumptions.cpp
+
   # Instrumentation passes
   lib/Instrument/IndirFcnTarget.cpp
   lib/Instrument/DynPtsto.cpp
@@ -160,6 +181,17 @@ add_library(prof_ptsto STATIC
   ${PROF_DYNPTSTO_SOURCES}
   )
 add_cpplint_target(prof_ptsto ${PROF_DYNPTSTO_SOURCES})
+
+set(SPECSFS_CHECK_SOURCES
+  lib/Instrument/StaticLibs/SpecSFSCheckLib.cpp
+  )
+  
+
+add_library(specsfs_check STATIC
+  ${SPECSFS_CHECK_SOURCES}
+  )
+add_cpplint_target(specsfs_check ${SPECSFS_CHECK_SOURCES})
+add_bc_target(specsfs_check ${SPECSFS_CHECK_SOURCES})
 
 add_subdirectory(test)
 #add_subdirectory(unit_test)

@@ -154,8 +154,13 @@ void SpecSFS::identifyAUXFcnCallRetInfo(CFG &cfg,
         // We take different arguments, depending on if we're debugging...
         [this, &cfg, &omap, &dyn_info]
         (const std::pair<ConstraintGraph::ObjID, CFG::CFGid> &pair) {
-      const llvm::CallInst *ci =
+      const llvm::CallInst *cci =
         cast<llvm::CallInst>(omap.valueAtID(pair.first));
+
+      auto ci = const_cast<llvm::CallInst *>(cci);
+
+      llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
+      auto fptr = CS.getCalledValue();
 
       CFG::CFGid call_id = cfg.nextNode();
       CFG::CFGid ret_id = cfg.nextNode();
@@ -169,10 +174,22 @@ void SpecSFS::identifyAUXFcnCallRetInfo(CFG &cfg,
         for (auto fcn : fcn_targets) {
           pts_ids.insert(omap.getObject(fcn));
         }
-        std::unique_ptr<Assumption> ptsto_aspn(new PtstoAssumption(
-              pair.first, pts_ids));
 
-        addSpeculativeAssumption(std::move(ptsto_aspn));
+        /*
+        llvm::dbgs() << "call: " << *ci << "\n";
+        llvm::dbgs() << "  Has indir fcns:";
+        for (auto fcn : fcn_targets) {
+          llvm::dbgs() << " " << fcn->getName();
+        }
+        llvm::dbgs() << "\n";
+        */
+
+        // ci.getOperand(0) -> the value being called
+        // llvm::dbgs() << "Have fptr: " << *fptr << "\n";
+        std::unique_ptr<Assumption> ptsto_aspn(new PtstoAssumption(
+              cast<llvm::Value>(fptr), pts_ids));
+
+        // addSpeculativeAssumption(std::move(ptsto_aspn));
       }
 
       for (auto fcn : fcn_targets) {
@@ -189,9 +206,6 @@ void SpecSFS::identifyAUXFcnCallRetInfo(CFG &cfg,
           cfg.addPred(ret_id, fcn_ret_id);
         }
       }
-
-      llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
-      auto fptr = CS.getCalledValue();
 
       cfg.addCallRetInfo(omap.getValue(fptr), call_id, ret_id);
     });
