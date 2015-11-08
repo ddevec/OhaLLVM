@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -26,6 +27,13 @@ class AddrRange {
         start_(reinterpret_cast<intptr_t>(addr)),
         end_(reinterpret_cast<intptr_t>(addr)+size) { }
 
+    bool overlaps(const AddrRange &tmp) const {
+      return (
+          // -1 on end b/c it is exclusive
+          (tmp.start() < start() && tmp.end() > start()) ||
+          (tmp.end() > start() && tmp.start() < end()));
+    }
+
     bool operator<(const AddrRange &r) const {
       // NOTE: end is not inclusive
       return (start_ < r.start_ && end_ <= r.start_);
@@ -33,16 +41,28 @@ class AddrRange {
 
     bool operator==(const AddrRange &r) const {
       // NOTE: end is not inclusive
-      return (start_ == r.start_);
+      return (start_ == r.start_ && end_ == r.end_);
+    }
+
+    intptr_t start() const {
+      return start_;
+    }
+
+    intptr_t end() const {
+      return end_;
+    }
+
+    friend std::ostream &operator<<(std::ostream &os, const AddrRange &ar) {
+      os << "( " << ar.start() << ", " << ar.end() << " )";
+      return os;
     }
 
  private:
-    friend struct std::hash<AddrRange>;
     intptr_t start_;
     intptr_t end_;
 };
 
-std::map<AddrRange, int32_t> addr_to_objid;
+std::map<AddrRange, std::vector<int32_t>> addr_to_objid;
 std::unordered_map<int32_t, std::set<int32_t>> valid_to_objids;
 std::vector<std::vector<void *>> stack_allocs;
 
@@ -130,7 +150,8 @@ void __DynPtsto_do_alloca(int32_t obj_id, int64_t size,
 #ifndef NDEBUG
   auto ret =
 #endif
-    addr_to_objid.emplace(AddrRange(addr, size), obj_id);
+    addr_to_objid.emplace(AddrRange(addr, size),
+        std::vector<int32_t>(1, obj_id));
   assert(ret.second);
 }
 
@@ -158,15 +179,44 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
   /*
   std::cout << "mallocing: (" << obj_id << ") " << addr << ", "
     << size << std::endl;
+  if (obj_id == 66 || obj_id == 1488 || obj_id == 1568) {
+    uintptr_t start_addr = reinterpret_cast<uintptr_t>(addr);
+    std::cerr << "obj_id: " << obj_id << " => (" << start_addr << ", " <<
+      start_addr + size << ")\n";
+  }
   */
-  // auto ret =
-  addr_to_objid.emplace(AddrRange(addr, size), obj_id);
+
+  AddrRange cur_range(addr, size);
+
+  auto ret = addr_to_objid.emplace(cur_range,
+      std::vector<int32_t>());
+  // If we overlap, but are not equal
+  while (!ret.second && ret.first->first.overlaps(cur_range)) {
+    /*
+    std::cerr << "Couldn't place range: " << cur_range << std::endl;
+    std::cerr << "Old range is: " << ret.first->first << std::endl;
+    */
+    // Replace ret...
+    auto vec = std::move(ret.first->second);
+    int64_t new_addr = std::min(ret.first->first.start(), cur_range.start());
+    int64_t new_len = std::max(cur_range.end() - new_addr,
+        ret.first->first.end() - new_addr);
+    AddrRange new_range(reinterpret_cast<void *>(new_addr), new_len);
+    // std::cerr << "new range is: " << ret.first->first << std::endl;
+    addr_to_objid.erase(ret.first);
+    ret = addr_to_objid.emplace(new_range, std::move(vec));
+  }
+
+  ret.first->second.push_back(obj_id);
   // assert(ret.second);
 }
 
 void __DynPtsto_do_free(void *addr) {
   // Remove ptsto from map
   // std::cout << "freeing: " << addr << std::endl;
+  // We shouldn't have double allocated anything except globals, which are never
+  //   freed
+  assert(addr_to_objid.at(AddrRange(addr))->second.size() == 1);
   addr_to_objid.erase(AddrRange(addr));
 }
 
@@ -175,8 +225,9 @@ void __DynPtsto_do_visit(int32_t val_id, void *addr) {
   // std::cout << "visit: Addr is " << addr << std::endl;
   auto it = addr_to_objid.find(AddrRange(addr));
   if (it != std::end(addr_to_objid)) {
-    int32_t obj_id = addr_to_objid.at(AddrRange(addr));
-    valid_to_objids[val_id].insert(obj_id);
+    for (int32_t obj_id : it->second) {
+      valid_to_objids[val_id].insert(obj_id);
+    }
   } else {
     // FIXME: 3 is the universal value... I should have this imported somewhere
     //   instead of hardcoded...

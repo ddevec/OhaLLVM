@@ -124,14 +124,21 @@ bool SpecSFSInstrumenter::runOnModule(llvm::Module &m) {
     auto asmp_insts = passumption->getInstrumentation(omap, m, free_locs,
         set_cache);
 
+    /*
     std::move(std::begin(asmp_insts), std::end(asmp_insts),
         std::back_inserter(insts));
+    */
+    for (auto &pinst : asmp_insts) {
+      insts.emplace_back(std::move(pinst));
+    }
   }
 
   auto dedup_fcn = [] (const std::unique_ptr<InstrumentationSite> &lhs,
       const std::unique_ptr<InstrumentationSite> &rhs) {
-    auto &lhs_is = *lhs;
-    auto &rhs_is = *rhs;
+    assert(lhs != nullptr);
+    assert(rhs != nullptr);
+    auto &lhs_is = *(lhs.get());
+    auto &rhs_is = *(rhs.get());
     return lhs_is < rhs_is;
   };
 
@@ -154,7 +161,7 @@ bool SpecSFSInstrumenter::runOnModule(llvm::Module &m) {
   }
   */
 
-  std::sort(std::begin(insts), std::end(insts), dedup_fcn);
+  std::stable_sort(std::begin(insts), std::end(insts), dedup_fcn);
   auto it = std::unique(std::begin(insts), std::end(insts), dedup_uni_fcn);
   insts.erase(it, std::end(insts));
 

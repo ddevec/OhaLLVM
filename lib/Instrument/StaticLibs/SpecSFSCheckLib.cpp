@@ -186,6 +186,12 @@ static void print_trace(void) {
   free(strings);
 }
 
+void __specsfs_visit_fcn(int32_t id) {
+  std::cerr << "Visit failed!\n";
+  std::cerr << "Visit id: " << id << "\n";
+  abort();
+}
+
 void __specsfs_set_check_fcn(int32_t id,
     void *addr, int32_t set[], int32_t set_size) {
   visit_cnt++;

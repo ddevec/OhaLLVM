@@ -1542,7 +1542,7 @@ static void idSelectInst(ConstraintGraph &cg, ObjectMap &omap,
         omap.getValue(select.getOperand(2)));
 
   } else if (llvm::isa<llvm::StructType>(select.getType())) {
-    llvm::errs() << "Warning, unsupported select on struct!\n";
+    llvm::errs() << "FIXME: unsupported select on struct!\n";
   }
 }
 

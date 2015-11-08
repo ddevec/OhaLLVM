@@ -33,7 +33,7 @@ static const std::string RetFcnName = "__specsfs_ret_fcn";
 static const std::string CallFcnName = "__specsfs_do_call";
 static const std::string AssignFcnName = "__specsfs_assign_fcn";
 static const std::string SetCheckFcnName = "__specsfs_set_check_fcn";
-static const std::string VisitFcnName = "abort";
+static const std::string VisitFcnName = "__specsfs_visit_fcn";
 
 // Getting external funcion names {{{
 llvm::Function *getAllocaFunction(llvm::Module &m) {
@@ -198,12 +198,14 @@ llvm::Function *getAssignFunction(llvm::Module &m) {
   return ret;
 }
 
-// Visit function == "abort"!
+// Visit function == "__specsfs_visit_fcn"!
 llvm::Function *getVisitFunction(llvm::Module &m) {
   auto void_type = llvm::Type::getVoidTy(m.getContext());
+  auto i32_type = llvm::IntegerType::get(m.getContext(), 32);
   auto ret = m.getFunction(VisitFcnName);
   if (ret == nullptr) {
     std::vector<llvm::Type *> ret_fcn_args;
+    ret_fcn_args.push_back(i32_type);
     auto ret_fcn_type = llvm::FunctionType::get(
         void_type,
         ret_fcn_args,
@@ -442,6 +444,17 @@ bool SetCheckInst::doInstrument(llvm::Module &m) {
     assign_inst = new llvm::BitCastInst(assignInst_, i8_ptr_type);
   }
 
+  if (llvm::isa<llvm::SelectInst>(assignInst_)) {
+    llvm::dbgs() << "Inserting check for inst: " << *assignInst_ << "\n";
+    auto val = g_omap->getValue(assignInst_);
+    llvm::dbgs() << "  inst val is: " << val << "\n";
+    llvm::dbgs() << "  val inst: " << *g_omap->valueAtID(val) << "\n";
+    llvm::dbgs() << "  Have pts_set:";
+    for (auto elm : checkSet_) {
+      llvm::dbgs() << " " << elm;
+    }
+    llvm::dbgs() << "\n";
+  }
   // FIXME: Debug stuff
   args.push_back(llvm::ConstantInt::get(i32_type, id++));
 
@@ -511,12 +524,17 @@ bool SetCheckInst::doInstrument(llvm::Module &m) {
 }
 
 bool VisitInst::doInstrument(llvm::Module &m) {
+  static int32_t visit_id = 0;
+
+  auto i32_type = llvm::IntegerType::get(m.getContext(), 32);
   auto fcn = getVisitFunction(m);
 
   std::vector<llvm::Value *> args;
   // Now we construct the call arguments:
   // Args are:
   //   NONE
+  args.push_back(llvm::ConstantInt::get(i32_type, visit_id));
+  visit_id++;
 
   // Get first instruction:
   auto bb_it = std::begin(*bb_);

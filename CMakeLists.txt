@@ -132,6 +132,8 @@ set(SPECSFS_SOURCES
   lib/Instrument/IndirFcnTarget.cpp
   lib/Instrument/DynPtsto.cpp
 
+  lib/StaticSlice.cpp
+
   #uhh, testing stuff
   lib/TestAA.cpp
   )
@@ -191,7 +193,12 @@ add_library(specsfs_check STATIC
   ${SPECSFS_CHECK_SOURCES}
   )
 add_cpplint_target(specsfs_check ${SPECSFS_CHECK_SOURCES})
-add_bc_target(specsfs_check ${SPECSFS_CHECK_SOURCES})
+#add_bc_target(specsfs_check ${SPECSFS_CHECK_SOURCES})
+
+add_executable(merge_logfiles
+  tools/merge_logfiles.cpp
+  )
+add_cpplint_target(merge_logfiles tools/merge_logfiles.cpp)
 
 add_subdirectory(test)
 #add_subdirectory(unit_test)
