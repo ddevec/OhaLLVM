@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <map>
 #include <set>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -19,10 +20,20 @@
 #include "include/util.h"
 #include "include/lib/DynPtsto.h"
 
+static llvm::cl::opt<std::string>
+  TimeThresholdStr("specsfs-dyn-threshold", llvm::cl::init(".00001"),
+      llvm::cl::value_desc("string"),
+      llvm::cl::desc("Threshold to consider a dynamic ptsto value cold"));
+
 class CostApprox {
  public:
     // 1/10000?
-    static constexpr double TimeThreshold = .00001;
+    // Go needs less accurate dyn-ptsto info to be performant (it still retains
+    //   solid accuracy with this rate though)
+    // static constexpr double TimeThreshold = .00001;
+    // Sphinx needs more accurate dyn ptsto data to benefit... although it
+    //   doesn't seem to slow it down as much as expected...
+    // static constexpr double TimeThreshold = .001;
     CostApprox(const llvm::Module &m, llvm::ProfileInfo &pi) :
           pi_(pi) {
       for (auto &fcn : m) {
@@ -41,6 +52,7 @@ class CostApprox {
       auto dyn_executions = pi_.getExecutionCount(&bb);
       auto bb_dyn_insts = bb_insts * dyn_executions;
 
+      auto TimeThreshold = stod(TimeThresholdStr);
       auto ret = (bb_dyn_insts / totalDynInsts_) < TimeThreshold;
 
       return ret;
@@ -58,6 +70,7 @@ class CostApprox {
 
       total_cost /= totalDynInsts_;
 
+      auto TimeThreshold = stod(TimeThresholdStr);
       return total_cost < TimeThreshold;
     }
 

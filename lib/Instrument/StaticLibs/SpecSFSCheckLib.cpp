@@ -157,6 +157,7 @@ void __specsfs_alloc_fcn(int32_t obj_id, void *addr,
   // Size is in bits...
   size /= 8;
   // Add ptsto to map
+  /*
   if (obj_id == 70 ||
       obj_id == 78 ||
       obj_id == 82 ||
@@ -185,6 +186,7 @@ void __specsfs_alloc_fcn(int32_t obj_id, void *addr,
     std::cerr << "mallocing: (" << obj_id << ") " << addr << ", "
       << size << std::endl;
   }
+  */
 
   AddrRange cur_range(addr, size);
   auto ret = addr_to_objid.emplace(cur_range,

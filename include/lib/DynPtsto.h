@@ -48,6 +48,18 @@ class DynPtstoLoader : public SpecSFS {
       }
     }
 
+    const std::set<ObjectMap::ObjID> &getPtstoSet(const llvm::Value *val) {
+      auto val_id = omap_.getValue(val);
+      assert(hasInfo_);
+      static std::set<ObjectMap::ObjID> empty_set;
+      auto it = valToObjs_.find(val_id);
+      if (it == std::end(valToObjs_)) {
+        return empty_set;
+      } else {
+        return it->second;
+      }
+    }
+
     const std::set<ObjectMap::ObjID> &getPtsto(ObjectMap::ObjID &val_id) const {
       assert(hasInfo_);
       static std::set<ObjectMap::ObjID> empty_set;

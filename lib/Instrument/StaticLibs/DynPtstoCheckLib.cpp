@@ -62,15 +62,16 @@ class AddrRange {
     intptr_t end_;
 };
 
-std::map<AddrRange, std::vector<int32_t>> addr_to_objid;
-std::unordered_map<int32_t, std::set<int32_t>> valid_to_objids;
-std::vector<std::vector<void *>> stack_allocs;
+static std::map<AddrRange, std::vector<int32_t>> addr_to_objid;
+static std::unordered_map<int32_t, std::set<int32_t>> valid_to_objids;
+static std::vector<std::vector<void *>> stack_allocs;
 
 extern "C" {
 
-void __DynPtsto_do_init() { }
+void __ptscheck_do_init() { }
 
-void __DynPtsto_do_finish() {
+void __ptscheck_do_finish() {
+  /*
   std::string outfilename("dyn_ptsto.log");
 
   // If there is already an outfilename, merge the two
@@ -106,39 +107,40 @@ void __DynPtsto_do_finish() {
     }
     fprintf(out, "\n");
   }
+  */
 }
 
-void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
+void __ptscheck_do_malloc(int32_t obj_id, int64_t size,
     void *addr);
-void __DynPtsto_main_init2(int32_t obj_id, int32_t argv_dest_id,
+void __ptscheck_main_init2(int32_t obj_id, int32_t argv_dest_id,
     int argc, char **argv) {
   for (int i = 0; i < argc; i++) {
-    __DynPtsto_do_malloc(argv_dest_id, (strlen(argv[i])+1)*8, argv[i]);
+    __ptscheck_do_malloc(argv_dest_id, (strlen(argv[i])+1)*8, argv[i]);
   }
 
-  __DynPtsto_do_malloc(obj_id, (sizeof(*argv)*argc+1)*8, argv);
+  __ptscheck_do_malloc(obj_id, (sizeof(*argv)*argc+1)*8, argv);
 }
 
-void __DynPtsto_main_init3(int32_t obj_id, int32_t argv_dest_id,
+void __ptscheck_main_init3(int32_t obj_id, int32_t argv_dest_id,
     int argc, char **argv, char **envp) {
   // Init envp
   int i;
   for (i = 0; envp[i] != nullptr; i++) {
-    __DynPtsto_do_malloc(argv_dest_id, (strlen(envp[i])+1)*8, envp[i]);
+    __ptscheck_do_malloc(argv_dest_id, (strlen(envp[i])+1)*8, envp[i]);
   }
-  __DynPtsto_do_malloc(obj_id, (sizeof(*envp)*i)*8, envp);
+  __ptscheck_do_malloc(obj_id, (sizeof(*envp)*i)*8, envp);
 
   // Do std init
-  __DynPtsto_main_init2(obj_id, argv_dest_id, argc, argv);
+  __ptscheck_main_init2(obj_id, argv_dest_id, argc, argv);
 }
 
-void __DynPtsto_do_call() {
+void __ptscheck_do_call() {
   // Push a frame on the "stack"
   stack_allocs.emplace_back();
 }
 
 
-void __DynPtsto_do_alloca(int32_t obj_id, int64_t size,
+void __ptscheck_do_alloca(int32_t obj_id, int64_t size,
     void *addr) {
   // Size is in bits...
   size /= 8;
@@ -155,7 +157,7 @@ void __DynPtsto_do_alloca(int32_t obj_id, int64_t size,
   assert(ret.second);
 }
 
-void __DynPtsto_do_ret() {
+void __ptscheck_do_ret() {
   // Remove all ptstos on stack from map
   const std::vector<void *> &cur_frame = stack_allocs.back();
   for (auto addr : cur_frame) {
@@ -171,7 +173,7 @@ void __DynPtsto_do_ret() {
   stack_allocs.pop_back();
 }
 
-void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
+void __ptscheck_do_malloc(int32_t obj_id, int64_t size,
     void *addr) {
   // Size is in bits...
   size /= 8;
@@ -211,7 +213,7 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
   // assert(ret.second);
 }
 
-void __DynPtsto_do_free(void *addr) {
+void __ptscheck_do_free(void *addr) {
   // Remove ptsto from map
   // std::cout << "freeing: " << addr << std::endl;
   // We shouldn't have double allocated anything except globals, which are never
@@ -220,18 +222,20 @@ void __DynPtsto_do_free(void *addr) {
   addr_to_objid.erase(AddrRange(addr));
 }
 
-void __DynPtsto_do_visit(int32_t val_id, void *addr) {
+void __ptscheck_do_visit(int32_t size, int32_t val_id, void *addr) {
   // Record that this val_id pts to this addr
   // std::cout << "visit: Addr is " << addr << std::endl;
-  auto it = addr_to_objid.find(AddrRange(addr));
-  if (it != std::end(addr_to_objid)) {
-    for (int32_t obj_id : it->second) {
-      valid_to_objids[val_id].insert(obj_id);
+  if (valid_to_objids[val_id].size() < (size_t)size) {
+    auto it = addr_to_objid.find(AddrRange(addr));
+    if (it != std::end(addr_to_objid)) {
+      for (int32_t obj_id : it->second) {
+        valid_to_objids[val_id].insert(obj_id);
+      }
+    } else {
+      // FIXME: 3 is the universal value...
+      //    I should have this imported somewhere instead of hardcoded...
+      valid_to_objids[val_id].insert(3);
     }
-  } else {
-    // FIXME: 3 is the universal value... I should have this imported somewhere
-    //   instead of hardcoded...
-    valid_to_objids[val_id].insert(3);
   }
 }
 

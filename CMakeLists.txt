@@ -131,8 +131,10 @@ set(SPECSFS_SOURCES
   # Instrumentation passes
   lib/Instrument/IndirFcnTarget.cpp
   lib/Instrument/DynPtsto.cpp
+  lib/Instrument/DynPtstoCheck.cpp
 
   lib/StaticSlice.cpp
+  lib/StaticSliceCounter.cpp
 
   #uhh, testing stuff
   lib/TestAA.cpp
@@ -178,11 +180,19 @@ set(PROF_DYNPTSTO_SOURCES
   lib/Instrument/StaticLibs/DynPtstoLib.cpp
   )
   
-
 add_library(prof_ptsto STATIC
   ${PROF_DYNPTSTO_SOURCES}
   )
 add_cpplint_target(prof_ptsto ${PROF_DYNPTSTO_SOURCES})
+
+set(CHECK_DYNPTSTO_SOURCES
+  lib/Instrument/StaticLibs/DynPtstoCheckLib.cpp
+  )
+
+add_library(check_ptsto STATIC
+  ${CHECK_DYNPTSTO_SOURCES}
+  )
+add_cpplint_target(check_ptsto ${CHECK_DYNPTSTO_SOURCES})
 
 set(SPECSFS_CHECK_SOURCES
   lib/Instrument/StaticLibs/SpecSFSCheckLib.cpp
