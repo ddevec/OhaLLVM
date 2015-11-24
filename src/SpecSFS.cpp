@@ -555,6 +555,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
       // Statistics
       auto &ptsto = pts_top_.at(val_id);
       size_t ptsto_size = ptsto.size();
+      // size_t ptsto_size = ptsto.getSizeNoStruct(omap);
 
       total_variables++;
       total_ptstos += ptsto_size;

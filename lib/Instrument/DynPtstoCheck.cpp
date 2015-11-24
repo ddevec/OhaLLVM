@@ -7,6 +7,7 @@
 #include <fstream>
 #include <list>
 #include <map>
+#include <set>
 #include <string>
 #include <sstream>
 #include <vector>
@@ -49,6 +50,11 @@ static const std::string MallocInstName = "__ptscheck_do_malloc";
 static const std::string FreeInstName = "__ptscheck_do_free";
 // Called on ptr returnin fcn
 static const std::string VisitInstName = "__ptscheck_do_visit";
+
+static llvm::cl::opt<bool>
+  do_baseline("ptscheck-baseline", llvm::cl::init(false),
+      llvm::cl::value_desc("bool"),
+      llvm::cl::desc("deadline!"));
 
 // Instrument dyn ptsto info {{{
 class CheckDynPtsto : public llvm::ModulePass {
@@ -94,6 +100,9 @@ bool CheckDynPtsto::runOnModule(llvm::Module &m) {
 
   // Notify module of external functions
   addExternalFunctions(m);
+
+  // Basic blocks with an elided check which we need to denote are visited
+  std::set<llvm::BasicBlock *> elided_bbs;
 
   // Iterate each instruction, keeping lists
   for (auto &fcn : m) {
@@ -181,38 +190,50 @@ bool CheckDynPtsto::runOnModule(llvm::Module &m) {
         // we now have first inst which isn't a phi
         // We add all of our phi inst calls here:
         for (auto &phi_inst : phi_list) {
-          auto val_id = omap.getValue(phi_inst);
-          auto i8_ptr_val = new llvm::BitCastInst(phi_inst, i8_ptr_type);
-          i8_ptr_val->insertBefore(inst);
-
-          std::vector<llvm::Value *> args;
           auto &ptsto = sfs.getPtstoSet(phi_inst);
-          args.push_back(llvm::ConstantInt::get(i32_type, ptsto.size()));
-          args.push_back(llvm::ConstantInt::get(i32_type, val_id.val()));
-          args.push_back(i8_ptr_val);
-          auto visit_insn = llvm::CallInst::Create(visit_fcn, args);
+          int32_t size = ptsto.getSizeNoStruct(omap);
+          if (do_baseline || size > 1) {
+            auto val_id = omap.getValue(phi_inst);
+            auto i8_ptr_val = new llvm::BitCastInst(phi_inst, i8_ptr_type);
+            i8_ptr_val->insertBefore(inst);
 
-          visit_insn->insertAfter(i8_ptr_val);
+            std::vector<llvm::Value *> args;
+            args.push_back(llvm::ConstantInt::get(i32_type,
+                  size));
+            args.push_back(llvm::ConstantInt::get(i32_type, val_id.val()));
+            args.push_back(i8_ptr_val);
+            auto visit_insn = llvm::CallInst::Create(visit_fcn, args);
+
+            visit_insn->insertAfter(i8_ptr_val);
+          } else {
+            elided_bbs.insert(phi_inst->getParent());
+          }
         }
       }
 
       // for Pointer returning instructions
       for (auto val : pointer_list) {
-        // The return value is the val
-        auto val_id = omap.getValue(val);
-
-        // Make the call
-        auto i8_ptr_val = new llvm::BitCastInst(val, i8_ptr_type);
-        i8_ptr_val->insertAfter(val);
-
-        std::vector<llvm::Value *> args;
         auto &ptsto = sfs.getPtstoSet(val);
-        args.push_back(llvm::ConstantInt::get(i32_type, ptsto.size()));
-        args.push_back(llvm::ConstantInt::get(i32_type, val_id.val()));
-        args.push_back(i8_ptr_val);
-        auto visit_insn = llvm::CallInst::Create(visit_fcn, args);
+        int32_t size = ptsto.getSizeNoStruct(omap);
+        if (do_baseline || size > 1) {
+          // The return value is the val
+          auto val_id = omap.getValue(val);
 
-        visit_insn->insertAfter(i8_ptr_val);
+          // Make the call
+          auto i8_ptr_val = new llvm::BitCastInst(val, i8_ptr_type);
+          i8_ptr_val->insertAfter(val);
+
+          std::vector<llvm::Value *> args;
+          args.push_back(llvm::ConstantInt::get(i32_type,
+                size));
+          args.push_back(llvm::ConstantInt::get(i32_type, val_id.val()));
+          args.push_back(i8_ptr_val);
+          auto visit_insn = llvm::CallInst::Create(visit_fcn, args);
+
+          visit_insn->insertAfter(i8_ptr_val);
+        } else {
+          elided_bbs.insert(val->getParent());
+        }
       }
 
       // for allocas
@@ -341,27 +362,63 @@ bool CheckDynPtsto::runOnModule(llvm::Module &m) {
     if (fcn.getName() != "main") {
       auto visit_fcn = m.getFunction(VisitInstName);
       std::for_each(fcn.arg_begin(), fcn.arg_end(),
-          [&i8_ptr_type, &i32_type, &omap, &fcn, &visit_fcn, &sfs]
+          [&i8_ptr_type, &i32_type, &omap, &fcn, &visit_fcn, &sfs,
+           &elided_bbs]
           (llvm::Argument &arg) {
         if (llvm::isa<llvm::PointerType>(arg.getType())) {
-          // The return value is the val
-          auto val_id = omap.getValue(&arg);
-          auto &ins_pos = *llvm::inst_begin(fcn);
-
-          // Make the call
-          auto i8_ptr_val = new llvm::BitCastInst(&arg, i8_ptr_type);
-          i8_ptr_val->insertBefore(&ins_pos);
-
-          std::vector<llvm::Value *> args;
           auto &ptsto = sfs.getPtstoSet(&arg);
-          args.push_back(llvm::ConstantInt::get(i32_type, ptsto.size()));
-          args.push_back(llvm::ConstantInt::get(i32_type, val_id.val()));
-          args.push_back(i8_ptr_val);
-          auto visit_insn = llvm::CallInst::Create(visit_fcn, args);
+          int32_t size = ptsto.getSizeNoStruct(omap);
+          if (do_baseline || size > 1) {
+            // The return value is the val
+            auto val_id = omap.getValue(&arg);
+            auto &ins_pos = *llvm::inst_begin(fcn);
 
-          visit_insn->insertAfter(i8_ptr_val);
+            // Make the call
+            auto i8_ptr_val = new llvm::BitCastInst(&arg, i8_ptr_type);
+            i8_ptr_val->insertBefore(&ins_pos);
+
+            std::vector<llvm::Value *> args;
+            args.push_back(llvm::ConstantInt::get(i32_type,
+                size));
+            args.push_back(llvm::ConstantInt::get(i32_type, val_id.val()));
+            args.push_back(i8_ptr_val);
+            auto visit_insn = llvm::CallInst::Create(visit_fcn, args);
+
+            visit_insn->insertAfter(i8_ptr_val);
+          } else if (size == 1) {
+            // Add elision note
+            elided_bbs.insert(&fcn.getEntryBlock());
+          }
         }
       });
+    }
+  }
+
+  {
+    auto i8_type = llvm::IntegerType::get(m.getContext(), 8);
+    // Add a global array, and set a value in it when appropriate
+    auto array_type = llvm::ArrayType::get(i8_type,
+        elided_bbs.size());
+
+    auto visit_array = new llvm::GlobalVariable(m,
+        array_type,
+        false,
+        llvm::GlobalValue::ExternalLinkage,
+        llvm::ConstantAggregateZero::get(array_type),
+        "__checkpts_elide_arr");
+
+    int32_t count = 0;
+    for (auto pbb : elided_bbs) {
+      auto first_inst = pbb->getFirstNonPHIOrDbgOrLifetime();
+
+      // Okay, now insert our check afterwards:
+      std::vector<llvm::Constant *> idxs;
+      idxs.push_back(llvm::ConstantInt::get(i32_type, 0));
+      idxs.push_back(llvm::ConstantInt::get(i32_type, count));
+      new llvm::StoreInst(llvm::ConstantInt::get(i8_type, 1),
+          llvm::ConstantExpr::getGetElementPtr(visit_array, idxs, true),
+            first_inst);
+      count++;
     }
   }
 

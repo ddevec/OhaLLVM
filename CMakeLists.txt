@@ -197,6 +197,15 @@ add_cpplint_target(check_ptsto ${CHECK_DYNPTSTO_SOURCES})
 set(SPECSFS_CHECK_SOURCES
   lib/Instrument/StaticLibs/SpecSFSCheckLib.cpp
   )
+
+set(CHECK_DYNPTSTO_NOOPT_SOURCES
+  lib/Instrument/StaticLibs/DynPtstoCheckLibNoOpt.cpp
+  )
+
+add_library(check_ptsto_noopt STATIC
+  ${CHECK_DYNPTSTO_NOOPT_SOURCES}
+  )
+add_cpplint_target(check_ptsto ${CHECK_DYNPTSTO_SOURCES})
   
 
 add_library(specsfs_check STATIC

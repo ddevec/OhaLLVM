@@ -222,10 +222,10 @@ void __ptscheck_do_free(void *addr) {
   addr_to_objid.erase(AddrRange(addr));
 }
 
-void __ptscheck_do_visit(int32_t size, int32_t val_id, void *addr) {
+void __ptscheck_do_visit(int32_t /*size*/, int32_t val_id, void *addr) {
   // Record that this val_id pts to this addr
   // std::cout << "visit: Addr is " << addr << std::endl;
-  if (valid_to_objids[val_id].size() < (size_t)size) {
+  // if (valid_to_objids[val_id].size() < (size_t)size) {
     auto it = addr_to_objid.find(AddrRange(addr));
     if (it != std::end(addr_to_objid)) {
       for (int32_t obj_id : it->second) {
@@ -236,7 +236,7 @@ void __ptscheck_do_visit(int32_t size, int32_t val_id, void *addr) {
       //    I should have this imported somewhere instead of hardcoded...
       valid_to_objids[val_id].insert(3);
     }
-  }
+  // }
 }
 
 }

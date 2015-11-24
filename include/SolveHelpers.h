@@ -15,6 +15,9 @@
 
 #include "llvm/ADT/SparseBitVector.h"
 
+#include "include/SEG.h"
+#include "include/ObjectMap.h"
+
 
 // Bitmap used in many places (and by Andersen's) to represent ptsto
 typedef llvm::SparseBitVector<> Bitmap;
@@ -175,6 +178,17 @@ class PtstoSet {
     typedef typename SEG::NodeID NodeID;
     bool set(ObjectMap::ObjID id) {
       return ptsto_.test_and_set(id.val());
+    }
+
+    size_t getSizeNoStruct(ObjectMap &omap) const {
+      std::set<const llvm::Value *> pts_set;
+
+      for (auto obj_id : *this) {
+        auto val = omap.valueAtID(obj_id);
+        pts_set.insert(val);
+      }
+
+      return pts_set.size();
     }
 
     void setDynSet(const Bitmap &dyn_set) {
