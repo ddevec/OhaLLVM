@@ -271,6 +271,10 @@ class PtstoSet {
       return (ptsto_ &= bmp);
     }
 
+    bool test(ObjectMap::ObjID obj_id) {
+      return ptsto_.test(obj_id.val());
+    }
+
     bool insersectsIgnoring(PtstoSet &rhs, ObjectMap::ObjID ignore) {
       bool ret = false;
 

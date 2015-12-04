@@ -2,7 +2,6 @@
  * Copyright (C) 2015 David Devecsery
  */
 
-
 // Enable debugging prints for this file
 // #define SPECSFS_DEBUG
 // #define SPECSFS_LOGDEBUG
@@ -14,6 +13,7 @@
 
 #include <algorithm>
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -26,7 +26,6 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/ProfileInfo.h"
-
 
 #include "include/Andersens.h"
 #include "include/Debug.h"
@@ -49,6 +48,19 @@ static llvm::cl::opt<bool>
       llvm::cl::desc("if set specsfs will print the ptstos counts which would "
         "have been identified by a speculative sfs run (for reporting "
         "improvment numbers)"));
+
+static llvm::cl::opt<bool>
+  do_spec_print_result("specsfs-do-print-result", llvm::cl::init(false),
+      llvm::cl::value_desc("bool"),
+      llvm::cl::desc(
+        "if set specsfs will print the ptsto sets for each value"));
+
+static llvm::cl::opt<bool>
+  do_spec_dyn_debug("specsfs-do-check-dyn", llvm::cl::init(false),
+      llvm::cl::value_desc("bool"),
+      llvm::cl::desc(
+        "Verifies the calculated points-to set is a superset of the dynamic "
+        "points-to to"));
 
 llvm::cl::opt<bool>
   do_spec("specsfs-do-spec", llvm::cl::init(false),
@@ -280,7 +292,6 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     }
   }
 
-
   // if_debug(cfg.getSEG().printDotFile("CFG_indir.dot", omap));
   // cfg.getSEG().printDotFile("CFG_indir.dot", omap);
 
@@ -337,6 +348,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   // Go through a function, and print the ptsto graph for that function, this
   // should be faster then printing the whole graph
   if (glbl_name != "") {
+    // DEBUG {{{
     llvm::dbgs() << "Printing ptsto for global variable: " << glbl_name << "\n";
     auto glbl = m.getNamedValue(glbl_name);
     auto val_id = omap.getValue(glbl);
@@ -357,127 +369,11 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
             << "\n";
       });
     }
+    //}}}
   }
-
-  /*
-  if (true) {
-    auto fcn = m.getFunction("deflateInit2_");
-
-    llvm::dbgs() << "Printing ptsto for function: " << "deflateInit2_" << "\n";
-    llvm::dbgs() << "Printing args: " << "deflateInit2_" << "\n";
-    std::for_each(fcn->arg_begin(), fcn->arg_end(),
-        [this, &omap] (const llvm::Argument &arg) {
-      if (llvm::isa<llvm::PointerType>(arg.getType())) {
-        auto val_id = omap.getValue(&arg);
-        auto &pts_set_vec = pts_top_.atVec(val_id);
-
-        llvm::dbgs() << "pts_top[" << val_id << "]: " << ValPrint(val_id) <<
-          "\n";
-
-        for (uint32_t i = 0; i < pts_set_vec.size(); i++) {
-          llvm::dbgs() << "  Offset: " << i << "\n";
-
-          auto &ptsto = pts_set_vec[i];
-
-          std::for_each(ptsto.cbegin(), ptsto.cend(),
-              [&omap] (const ObjectMap::ObjID obj_id) {
-            llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
-                << "\n";
-          });
-        }
-      }
-    });
-
-    llvm::dbgs() << "Printing instructions: " << fcn_name << "\n";
-    std::for_each(inst_begin(fcn), inst_end(fcn),
-        [this, &omap] (llvm::Instruction &inst) {
-      if (llvm::isa<llvm::PointerType>(inst.getType())) {
-        auto val_id = omap.getValue(&inst);
-        auto &pts_set_vec = pts_top_.atVec(val_id);
-
-        llvm::dbgs() << "pts_top[" << val_id << "]: " << inst <<
-          "\n";
-
-        if (omap.valueAtID(val_id) != &inst) {
-          llvm::dbgs() << "--have value remap: " << inst << " -> " <<
-              *omap.valueAtID(val_id) << "\n";
-        }
-
-        for (uint32_t i = 0; i < pts_set_vec.size(); i++) {
-          llvm::dbgs() << "  Offset: " << i << "\n";
-
-          auto &ptsto = pts_set_vec[i];
-
-          std::for_each(ptsto.cbegin(), ptsto.cend(),
-              [&omap] (const ObjectMap::ObjID obj_id) {
-            llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
-                << "\n";
-          });
-        }
-      }
-    });
-  }
-
-  if (true) {
-    auto fcn = m.getFunction("fill_window");
-
-    llvm::dbgs() << "Printing ptsto for function: " << "fill_window" << "\n";
-    llvm::dbgs() << "Printing args: " << "fill_window" << "\n";
-    std::for_each(fcn->arg_begin(), fcn->arg_end(),
-        [this, &omap] (const llvm::Argument &arg) {
-      if (llvm::isa<llvm::PointerType>(arg.getType())) {
-        auto val_id = omap.getValue(&arg);
-        auto &pts_set_vec = pts_top_.atVec(val_id);
-
-        llvm::dbgs() << "pts_top[" << val_id << "]: " << ValPrint(val_id) <<
-          "\n";
-
-        for (uint32_t i = 0; i < pts_set_vec.size(); i++) {
-          llvm::dbgs() << "  Offset: " << i << "\n";
-
-          auto &ptsto = pts_set_vec[i];
-
-          std::for_each(ptsto.cbegin(), ptsto.cend(),
-              [&omap] (const ObjectMap::ObjID obj_id) {
-            llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
-                << "\n";
-          });
-        }
-      }
-    });
-
-    llvm::dbgs() << "Printing instructions: " << fcn_name << "\n";
-    std::for_each(inst_begin(fcn), inst_end(fcn),
-        [this, &omap] (llvm::Instruction &inst) {
-      if (llvm::isa<llvm::PointerType>(inst.getType())) {
-        auto val_id = omap.getValue(&inst);
-        auto &pts_set_vec = pts_top_.atVec(val_id);
-
-        llvm::dbgs() << "pts_top[" << val_id << "]: " << inst <<
-          "\n";
-
-        if (omap.valueAtID(val_id) != &inst) {
-          llvm::dbgs() << "--have value remap: " << inst << " -> " <<
-              *omap.valueAtID(val_id) << "\n";
-        }
-
-        for (uint32_t i = 0; i < pts_set_vec.size(); i++) {
-          llvm::dbgs() << "  Offset: " << i << "\n";
-
-          auto &ptsto = pts_set_vec[i];
-
-          std::for_each(ptsto.cbegin(), ptsto.cend(),
-              [&omap] (const ObjectMap::ObjID obj_id) {
-            llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
-                << "\n";
-          });
-        }
-      }
-    });
-  }
-  */
 
   if (fcn_name != "") {
+    // DEBUG {{{
     auto fcn = m.getFunction(fcn_name);
 
     llvm::dbgs() << "Printing ptsto for function: " << fcn_name << "\n";
@@ -533,10 +429,11 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
         }
       }
     });
+    //}}}
   }
 
   if (do_spec_diff) {
-    // STATS!
+    // STATS! {{{
     int64_t total_variables = 0;
     int64_t total_ptstos = 0;
 
@@ -597,34 +494,6 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
         }
       }
     }
-    /*
-    std::for_each(pts_top_.cbegin(), pts_top_.cend(),
-        [&omap, &total_variables, &total_ptstos, &max_objects, &num_objects,
-          &num_max]
-        (const TopLevelPtsto::PtsPair &pr) {
-      for (uint32_t i = 0; i < pr.pts().size(); i++) {
-        // Statistics
-        auto &ptsto = pr.pts()[i];
-        size_t ptsto_size = ptsto.size();
-
-        total_variables++;
-        total_ptstos += ptsto_size;
-
-        if (ptsto_size < 10) {
-          num_objects[ptsto_size]++;
-        }
-
-        if (ptsto_size > max_objects) {
-          max_objects = ptsto_size;
-          num_max = 0;
-        }
-
-        if (ptsto_size == max_objects) {
-          num_max++;
-        }
-      }
-    });
-    */
 
     llvm::dbgs() << "Number tracked values: " << total_variables << "\n";
     llvm::dbgs() << "Number tracked ptstos: " << total_ptstos << "\n";
@@ -636,66 +505,190 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     for (int i = 0; i < 10; i++) {
       llvm::dbgs() << "  [" << i << "]:  " << num_objects[i] << "\n";
     }
+    //}}}
   }
 
-#if !defined(SPECSFS_NODEBUG) && defined(SPECSFS_PRINT_RESULTS)
-  llvm::dbgs() << "Printing the rep mappings for top level variales:\n";
-  for (auto &pr : obj_to_rep_) {
-    auto obj_id = pr.first;
-    auto rep_id = getObjIDRep(obj_id);
+  if (do_spec_print_result) {
+    // DEBUG {{{
+    llvm::dbgs() << "Printing the rep mappings for top level variales:\n";
+    for (auto &pr : obj_to_rep_) {
+      auto obj_id = pr.first;
+      auto rep_id = getObjIDRep(obj_id);
 
-    llvm::dbgs() << obj_id << "->" << rep_id << "\n";
+      llvm::dbgs() << obj_id << "->" << rep_id << "\n";
+    }
+
+
+    llvm::dbgs() << "Printing final ptsto set for top level variables:\n";
+    std::for_each(pts_top_.cbegin(), pts_top_.cend(),
+        [&omap]
+        (const TopLevelPtsto::PtsPair &pr) {
+      auto top_val = omap.valueAtID(pr.id());
+
+      if (omap.isObject(pr.id())) {
+        llvm::dbgs() << "Object ";
+      } else {
+        llvm::dbgs() << "Value ";
+      }
+
+      if (top_val == nullptr) {
+        llvm::dbgs() << "is (id): " << pr.id() << "\n";
+      } else if (auto gv = dyn_cast<llvm::GlobalValue>(top_val)) {
+        llvm::dbgs() << "(" << pr.id() << ") is: " <<
+            gv->getName() << "\n";
+      } else if (auto fcn = dyn_cast<llvm::Function>(top_val)) {
+        llvm::dbgs() << "(" << pr.id() <<") is: " <<
+            fcn->getName() << "\n";
+      } else {
+        llvm::dbgs() << "(" << pr.id() << ") is: " << *top_val << "\n";
+      }
+
+      for (uint32_t i = 0; i < pr.pts().size(); i++) {
+        llvm::dbgs() << "  Offset: " << i << "\n";
+
+        // Statistics
+        auto &ptsto = pr.pts()[i];
+
+        // Printing
+        std::for_each(ptsto.cbegin(), ptsto.cend(),
+            [&omap] (const ObjectMap::ObjID obj_id) {
+          auto loc_val = omap.valueAtID(obj_id);
+
+          if (loc_val == nullptr) {
+            llvm::dbgs() << "    Value is (id): " << obj_id << "\n";
+          } else if (auto gv = dyn_cast<llvm::GlobalValue>(loc_val)) {
+            llvm::dbgs() << "    " << obj_id << ": " << gv->getName() << "\n";
+          } else if (auto fcn = dyn_cast<llvm::Function>(loc_val)) {
+            llvm::dbgs() << "    " << obj_id << ": " << fcn->getName() << "\n";
+          } else {
+            llvm::dbgs() << "    " << obj_id << ": " << *loc_val << "\n";
+          }
+        });
+      }
+    });
+    //}}}
   }
 
+  if (do_spec_dyn_debug) {
+    // DEBUG {{{
+    llvm::dbgs() << "Checking for dynamic points-to not in the static set\n";
+    // Here we check that our calculated "static" pointsto
+    // To do so, we iterate over each value in the dynamic points-to
+    // We then get that value form our top-level set
+    // We ensure that the dynamic version is a subset of the static one
+    //   ERROR otherwise
+    const auto &dyn_ptsto = getAnalysis<DynPtstoLoader>();
+    assert(dyn_ptsto.hasInfo());
 
-  llvm::dbgs() << "Printing final ptsto set for top level variables:\n";
-  std::for_each(pts_top_.cbegin(), pts_top_.cend(),
-      [&omap]
-      (const TopLevelPtsto::PtsPair &pr) {
-    auto top_val = omap.valueAtID(pr.id());
+    // First, deal with nodes which have been optimized away from the
+    //   dyn_ptsto set
+    std::map<ObjectMap::ObjID, std::set<ObjectMap::ObjID>> new_dyn_ptsto;
 
-    if (omap.isObject(pr.id())) {
-      llvm::dbgs() << "Object ";
-    } else {
-      llvm::dbgs() << "Value ";
+    for (auto &pr : dyn_ptsto) {
+      auto old_id = pr.first;
+      auto &old_set = pr.second;
+      auto val = omap.valueAtID(old_id);
+      auto new_id = omap.getValue(val);
+
+      auto &new_set = new_dyn_ptsto[new_id];
+
+      new_set.insert(std::begin(old_set), std::end(old_set));
     }
 
-    if (top_val == nullptr) {
-      llvm::dbgs() << "is (id): " << pr.id() << "\n";
-    } else if (auto gv = dyn_cast<llvm::GlobalValue>(top_val)) {
-      llvm::dbgs() << "(" << pr.id() << ") is: " <<
-          gv->getName() << "\n";
-    } else if (auto fcn = dyn_cast<llvm::Function>(top_val)) {
-      llvm::dbgs() << "(" << pr.id() <<") is: " <<
-          fcn->getName() << "\n";
-    } else {
-      llvm::dbgs() << "(" << pr.id() << ") is: " << *top_val << "\n";
-    }
+    // Okay, now we iterate the ptsto list:
+    for (auto &pr : new_dyn_ptsto) {
+      auto obj_id = pr.first;
+      auto set_obj_id = pr.first;
+      bool set_id_found = false;
+      auto &dyn_pts_set = pr.second;
 
-    for (uint32_t i = 0; i < pr.pts().size(); i++) {
-      llvm::dbgs() << "  Offset: " << i << "\n";
+      // And we get the appropriate top-level ptsto variable:
+      // NOTE: We intentionally copy that set here
+      auto st_pts_set = pts_top_.at(obj_id);
 
-      // Statistics
-      auto &ptsto = pr.pts()[i];
-
-      // Printing
-      std::for_each(ptsto.cbegin(), ptsto.cend(),
-          [&omap] (const ObjectMap::ObjID obj_id) {
-        auto loc_val = omap.valueAtID(obj_id);
-
-        if (loc_val == nullptr) {
-          llvm::dbgs() << "    Value is (id): " << obj_id << "\n";
-        } else if (auto gv = dyn_cast<llvm::GlobalValue>(loc_val)) {
-          llvm::dbgs() << "    " << obj_id << ": " << gv->getName() << "\n";
-        } else if (auto fcn = dyn_cast<llvm::Function>(loc_val)) {
-          llvm::dbgs() << "    " << obj_id << ": " << fcn->getName() << "\n";
-        } else {
-          llvm::dbgs() << "    " << obj_id << ": " << *loc_val << "\n";
+      // We then add the base node of any struct fields in the static set
+      std::vector<ObjectMap::ObjID> to_add;
+      for (auto obj_id : st_pts_set) {
+        auto base_pr = omap.findObjBase(obj_id);
+        if (base_pr.first) {
+          to_add.emplace_back(base_pr.second);
         }
-      });
+      }
+
+      for (auto id : to_add) {
+        st_pts_set.set(id);
+      }
+
+      // Now, iterate each element in st_pts_set and ensure that it isn't
+      //   present in dyn_pts_set
+      for (auto obj_id : dyn_pts_set) {
+        // Ensure that this element is in the static set
+        if (st_pts_set.test(obj_id) == false) {
+          if (!set_id_found) {
+            const llvm::Function *fcn = nullptr;
+            const llvm::BasicBlock *bb = nullptr;
+            llvm::dbgs() << "Element: " << set_obj_id << ": ";
+            auto val = omap.valueAtID(set_obj_id);
+            if (auto ins = dyn_cast<llvm::Instruction>(val)) {
+              llvm::dbgs() << ins->getParent()->getParent()->getName() << ", "
+                  << ins->getParent()->getName();
+              if (!unused_fcns.isUsed(ins->getParent())) {
+                bb = ins->getParent();
+              }
+              if (!unused_fcns.isUsed(ins->getParent()->getParent())) {
+                fcn = ins->getParent()->getParent();
+              }
+            } else if (auto ins = dyn_cast<llvm::Argument>(val)) {
+              llvm::dbgs() << ins->getParent()->getName() << ", (arg)";
+
+              if (!unused_fcns.isUsed(ins->getParent())) {
+                fcn = ins->getParent();
+              }
+            } else if (auto fcn = dyn_cast<llvm::Function>(val)) {
+              llvm::dbgs() << fcn->getName() << ", (fcn)";
+            } else if (llvm::isa<llvm::GlobalVariable>(val)) {
+              llvm::dbgs() << "(global)";
+            }
+            llvm::dbgs() << ": " << ValPrint(set_obj_id) << "\n";
+
+            if (fcn) {
+              llvm::dbgs() << "  !! In Unused Function: " << fcn->getName() <<
+                " !!\n";
+            }
+            if (bb) {
+              llvm::dbgs() << "  !! In Unused BasicBlock: " << bb->getName() <<
+                " !!\n";
+            }
+
+            // Check if the ID given by the omap is equivalent to the ID given
+            //   by our anaysis
+            auto new_set_id = omap.getValue(val);
+            if (new_set_id != set_obj_id) {
+              llvm::dbgs() << "  !! Merged AWAY by cons_opt !!\n";
+            }
+
+            set_id_found = true;
+          }
+          auto val = omap.valueAtID(obj_id);
+          llvm::dbgs() << "  Found element in dyn set not in static set:\n";
+          llvm::dbgs() << "    ";
+          if (auto ins = dyn_cast<llvm::Instruction>(val)) {
+            llvm::dbgs() << ins->getParent()->getParent()->getName() << ", "
+                << ins->getParent()->getName();
+          } else if (auto ins = dyn_cast<llvm::Argument>(val)) {
+            llvm::dbgs() << ins->getParent()->getName() << ", (arg)";
+          } else if (auto fcn = dyn_cast<llvm::Function>(val)) {
+            llvm::dbgs() << fcn->getName() << ", (fcn)";
+          } else if (llvm::isa<llvm::GlobalVariable>(val)) {
+            llvm::dbgs() << "(global)";
+          }
+          llvm::dbgs() << ": " << ValPrint(obj_id) << "\n";
+          llvm::dbgs() << "    (obj_id): " << obj_id << "\n";
+        }
+      }
     }
-  });
-#endif
+    //}}}
+  }
 
   /*
   if (alias(Location(nullptr), Location(nullptr)) != MayAlias) {

@@ -109,6 +109,7 @@ ObjectMap::getValueInfo(ObjectMap::ObjID id) const {
   return std::make_pair(Type::Value, nullptr);
 }
 
+/*
 ObjectMap::ObjID ObjectMap::__const_node_helper(const llvm::Constant *C,
     ObjID (ObjectMap::*diff)(const llvm::Value *),
     ObjID nullv) {
@@ -132,7 +133,26 @@ ObjectMap::ObjID ObjectMap::__const_node_helper(const llvm::Constant *C,
       case llvm::Instruction::PtrToInt:
         return IntValue;
       case llvm::Instruction::BitCast:
-        return __const_node_helper(CE->getOperand(0), diff, nullv);
+        auto base_id = __const_node_helper(CE->getOperand(0), diff, nullv);
+        // Now, if we cast from a struct to a non-struct, we need to merge
+        //   nodes...
+
+        auto base_type = CE->getOperand(0)->getType();
+        assert(llvm::isa<llvm::PointerType(base_type));
+        auto base_nptr_type = base_type->getContainedType(0);
+
+        // if the base type is a struct ptr, and the dest type is an array ptr
+        //   merge all the points-tos together
+        if (llvm::isa<llvm::StructType>(base_nptr_type)) {
+          auto ret_id = createPhonyID();
+
+          // UGH, need to modify the constraint graph for this!!!
+
+          // Now, for each struct in hte
+          return ret_id;
+        }
+
+        return base_id;
       default:
         llvm::errs() << "Const Expr not yet handled: " << *CE << "\n";
         llvm_unreachable(0);
@@ -144,4 +164,5 @@ ObjectMap::ObjID ObjectMap::__const_node_helper(const llvm::Constant *C,
     llvm_unreachable("Unknown constant expr ptr");
   }
 }
+*/
 

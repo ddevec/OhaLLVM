@@ -227,7 +227,6 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
           val = omap.valueAtID(nd.dest());
         }
 
-
         paux_ptsto = &aux.getPointsTo(val);
       }
       auto &aux_ptsto = *paux_ptsto;

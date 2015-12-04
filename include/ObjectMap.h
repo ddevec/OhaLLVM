@@ -345,6 +345,8 @@ class ObjectMap {
 
     void addObjectsAlias(const llvm::Type *type, const llvm::Value *val,
         const std::vector<ObjID> &alias) {
+      llvm::dbgs() << __func__ <<
+        " WARNING: This may not interact well w/ dyn-ptsto info\n";
       __do_add_struct(type, val, objToID_, idToObj_, &alias);
     }
 
@@ -420,12 +422,9 @@ class ObjectMap {
     }
 
     ObjID getValue(const llvm::Value *val) {
-      // Check for a constant first
-      if (auto C = dyn_cast<const llvm::Constant>(val)) {
-        if (!llvm::isa<llvm::GlobalValue>(C)) {
-          return getConstValue(C);
-        }
-      }
+      // This function doesn't support contstants -- except global values
+      assert(!llvm::isa<llvm::Constant>(val) ||
+          llvm::isa<llvm::GlobalValue>(val));
 
       auto ret = __do_get(val, valToID_);
       return ret;
@@ -470,6 +469,7 @@ class ObjectMap {
     }
 
     // ddevec -- FIXME: Does this really belong here?
+    /*
     ObjID getConstValue(const llvm::Constant *C) {
       return __const_node_helper(C, &ObjectMap::getValue, NullValue);
     }
@@ -477,6 +477,7 @@ class ObjectMap {
     ObjID getConstValueTarget(const llvm::Constant *C) {
       return __const_node_helper(C, &ObjectMap::getObject, NullObjectValue);
     }
+    */
 
     std::pair<Type, const llvm::Value *>
     getValueInfo(ObjID id) const;
@@ -545,6 +546,7 @@ class ObjectMap {
       }
 
       it->second.emplace_back(alias_id);
+      aliasToObjs_[alias_id] = obj_id;
     }
 
     std::pair<bool, const std::vector<ObjID> &>
@@ -556,6 +558,16 @@ class ObjectMap {
         return std::make_pair(false, std::ref(empty_vector));
       }
       return std::make_pair(true, std::ref(it->second));
+    }
+
+    std::pair<bool, ObjID>
+    findObjBase(ObjID obj_id) {
+      auto it = aliasToObjs_.find(obj_id);
+      if (it == std::end(aliasToObjs_)) {
+        return std::make_pair(false, ObjID());
+      }
+
+      return std::make_pair(true, it->second);
     }
     //}}}
 
@@ -653,6 +665,7 @@ class ObjectMap {
     // Struct info
     std::map<const llvm::StructType *, StructInfo> structInfo_;
     std::map<ObjID, std::vector<ObjID>> objToAliases_;
+    std::map<ObjID, ObjID> aliasToObjs_;
     std::map<ObjID, int32_t> objIsStruct_;
     const StructInfo *maxStructInfo_ = nullptr;
 
@@ -683,6 +696,7 @@ class ObjectMap {
 
       return nullptr;
     }
+
     ObjID __do_add_struct(const llvm::Type *type,
         const llvm::Value *val,
         std::unordered_map<const llvm::Value *, ObjID> &mp,
@@ -729,9 +743,11 @@ class ObjectMap {
           // Denote which objects this structure field occupies
           if (alias == nullptr) {
             objToAliases_[ret_id].emplace_back(id);
+            aliasToObjs_[id] = ret_id;
           } else {
             for (auto &obj_id : *alias) {
               objToAliases_[obj_id].emplace_back(id);
+              aliasToObjs_[id] = obj_id;
             }
           }
         });
@@ -748,6 +764,7 @@ class ObjectMap {
         if (alias != nullptr) {
           for (auto &obj_id : *alias) {
             objToAliases_[obj_id].emplace_back(ret_id);
+            aliasToObjs_[ret_id] = obj_id;
           }
         }
       }
@@ -781,9 +798,11 @@ class ObjectMap {
       return it->second;
     }
 
+    /*
     ObjID __const_node_helper(const llvm::Constant *C,
         ObjID (ObjectMap::*diff)(const llvm::Value *),
         ObjID nullv);
+    */
   //}}}
   //}}}
 };

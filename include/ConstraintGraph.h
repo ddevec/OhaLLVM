@@ -12,7 +12,7 @@
 
 #include <utility>
 
-enum class ConstraintType { Copy, Load, Store, AddressOf };
+enum class ConstraintType { Copy = 0, Load = 1, Store = 2, AddressOf = 3 };
 class Constraint {
   //{{{
  public:
@@ -46,8 +46,51 @@ class Constraint {
     Constraint(ConstraintType type, ObjID src, ObjID dest, ObjID rep,
         int32_t offs) :
         src_(src), dest_(dest), rep_(rep), type_(type), offs_(offs) {
+      /*
+      // DEBUG
       assert(!(src == ObjectMap::ObjID(2) &&
             dest == ObjectMap::ObjID(51912)));
+      */
+      /*
+      if (src == ObjectMap::ObjID(16036)) {
+        llvm::dbgs() << "!!!  Have edge to eye102 !!!\n";
+        llvm::dbgs() << "   dest is: " << dest << "\n";
+        llvm::dbgs() << "   type is: " << static_cast<int32_t>(type) << "\n";
+      }
+      */
+
+      /*
+      if (src == ObjectMap::ObjID(16036)) {
+        assert(0);
+      }
+      */
+
+      if (dest == ObjectMap::ObjID(22141)) {
+        llvm::dbgs() << "!!!  Have edge to " << dest << " !!!\n";
+        llvm::dbgs() << "   src is: " << src << "\n";
+        llvm::dbgs() << "   type is: " << static_cast<int32_t>(type) << "\n";
+      }
+
+      if (dest == ObjectMap::ObjID(115494)) {
+        llvm::dbgs() << "!!!  Have edge to 115494 !!!\n";
+        llvm::dbgs() << "   src is: " << src << "\n";
+        llvm::dbgs() << "   type is: " << static_cast<int32_t>(type) << "\n";
+        // assert(0);
+      }
+
+      if (dest == ObjectMap::ObjID(115495)) {
+        llvm::dbgs() << "!!!  Have edge to 115495 !!!\n";
+        llvm::dbgs() << "   src is: " << src << "\n";
+        llvm::dbgs() << "   type is: " << static_cast<int32_t>(type) << "\n";
+        // assert(0);
+      }
+
+      if (dest == ObjectMap::ObjID(115496)) {
+        llvm::dbgs() << "!!!  Have edge to 115496 !!!\n";
+        llvm::dbgs() << "   src is: " << src << "\n";
+        llvm::dbgs() << "   type is: " << static_cast<int32_t>(type) << "\n";
+      }
+
       // We shouldn't copy from the UV to null val... its bad
       assert(!(type == ConstraintType::Copy &&
           src == ObjectMap::UniversalValue &&

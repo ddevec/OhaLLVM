@@ -71,6 +71,17 @@ class DynPtstoLoader : public SpecSFS {
       }
     }
 
+    typedef std::map<ObjectMap::ObjID, std::set<ObjectMap::ObjID>>::const_iterator
+      const_iterator;
+
+    const_iterator begin() const {
+      return std::begin(valToObjs_);
+    }
+
+    const_iterator end() const {
+      return std::end(valToObjs_);
+    }
+
  private:
     void setupSpecSFSids(llvm::Module &);
 

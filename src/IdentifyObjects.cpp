@@ -41,6 +41,88 @@
 
 
 // Using AUX with CFG helpers {{{
+ObjectMap::ObjID getConstValue(ConstraintGraph &cg, ObjectMap &omap,
+    const llvm::Constant *c) {
+  if (llvm::isa<const llvm::ConstantPointerNull>(c) ||
+      llvm::isa<const llvm::UndefValue>(c)) {
+    return ObjectMap::NullValue;
+  } else if (auto gv = dyn_cast<llvm::GlobalValue>(c)) {
+    return omap.getValue(gv);
+  } else if (auto ce = dyn_cast<llvm::ConstantExpr>(c)) {
+    switch (ce->getOpcode()) {
+      case llvm::Instruction::GetElementPtr:
+        {
+          // Need to calc offset here...
+          // But this encounters obj vs value issues...
+          auto offs = getGEPOffs(omap, *ce);
+          auto obj_id = getConstValue(cg, omap, ce->getOperand(0));
+          return ObjectMap::getOffsID(obj_id, offs);
+        }
+      case llvm::Instruction::IntToPtr:
+        return ObjectMap::UniversalValue;
+      case llvm::Instruction::PtrToInt:
+        return ObjectMap::IntValue;
+      case llvm::Instruction::BitCast:
+        {
+          auto base_id = getConstValue(cg, omap, ce->getOperand(0));
+          // Now, if we cast from a struct to a non-struct, we need to merge
+          //   nodes...
+
+          auto base_type = ce->getOperand(0)->getType();
+          assert(llvm::isa<llvm::PointerType>(base_type));
+          auto base_nptr_type = base_type->getContainedType(0);
+
+          // if the base type is a struct ptr, and the dest type is not the same
+          //   type merge all the points-tos together
+          auto st = dyn_cast<llvm::StructType>(base_nptr_type);
+          if (st != nullptr && base_type != ce->getType()) {
+            auto ret_id = omap.createPhonyID(c);
+
+            // First, get the structure type
+            auto &si = omap.getStructInfo(st);
+
+            llvm::dbgs() << "Adding grouping constraints for struct cast: " <<
+                *c << "\n";
+
+            // Then, for each field in the struct type
+            for (size_t i = 0; i < si.numSizes(); i++) {
+              // Copy that field's ptsto set into the new resultant pointer
+              cg.add(ConstraintType::Copy, ret_id, base_id, i);
+            }
+
+            // Now, return the structure type
+            return ret_id;
+          }
+
+          return base_id;
+        }
+      default:
+        llvm::errs() << "Const Expr not yet handled: " << *ce << "\n";
+        llvm_unreachable(0);
+    }
+  } else if (llvm::isa<llvm::ConstantInt>(c)) {
+    return ObjectMap::IntValue;
+  } else {
+    llvm::errs() << "Const Expr not yet handled: " << *c << "\n";
+    llvm_unreachable("Unknown constant expr ptr");
+  }
+}
+
+ObjectMap::ObjID getValue(ConstraintGraph &cg, ObjectMap &omap,
+    const llvm::Value *val) {
+  if (auto c = dyn_cast<const llvm::Constant>(val)) {
+    if (!llvm::isa<llvm::GlobalValue>(c)) {
+      return getConstValue(cg, omap, c);
+    }
+  }
+
+  auto id = omap.getValue(val);
+
+  // graph.associateNode(id, id);
+
+  return id;
+}
+
 // ID to keep track of anders return values
 struct aux_id { };
 typedef ID<aux_id, int32_t, -1> AuxID;
@@ -218,15 +300,6 @@ ObjectMap::ObjID getValueReturn(ObjectMap &omap, const llvm::Value *v) {
   return ObjectMap::getOffsID(omap.getValue(v), CallReturnPos);
 }
 */
-
-ObjectMap::ObjID getValueUpdate(ConstraintGraph &, ObjectMap &omap,
-    const llvm::Value *v) {
-  auto id = omap.getValue(v);
-
-  // graph.associateNode(id, id);
-
-  return id;
-}
 //}}}
 
 // Helpers for dealing with adding CFG constraints {{{
@@ -488,8 +561,8 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
       // *Dest = *Src, which requires an artificial graph node to
       // represent the constraint.
       // It is broken up into *Dest = temp, temp = *Src
-      auto first_arg = omap.getValue(CS.getArgument(0));
-      auto second_arg = omap.getValue(CS.getArgument(1));
+      auto first_arg = getValue(cg, omap, CS.getArgument(0));
+      auto second_arg = getValue(cg, omap, CS.getArgument(1));
       // Creates a new node in the graph, and a temp holder in omap
 
       // Setup constraints
@@ -585,7 +658,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
         llvm::isa<llvm::PointerType>(FTy->getParamType(0))) {
       cg.add(ConstraintType::Copy,
           omap.getValue(CS.getInstruction()),
-          omap.getValue(CS.getArgument(0)));
+          getValue(cg, omap, CS.getArgument(0)));
       return true;
     }
   }
@@ -594,7 +667,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
   if (F->getName() == "gcvt") {
     cg.add(ConstraintType::Copy,
         omap.getValue(CS.getInstruction()),
-        omap.getValue(CS.getArgument(2)));
+        getValue(cg, omap, CS.getArgument(2)));
     return true;
   }
   // term info stuffs...
@@ -625,8 +698,8 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
       F->getName() == "strtol") {
     auto st_id = omap.createPhonyID();
     cg.add(ConstraintType::Store, st_id,
-        omap.getValue(CS.getArgument(0)),
-        omap.getValue(CS.getArgument(1)));
+        getValue(cg, omap, CS.getArgument(0)),
+        getValue(cg, omap, CS.getArgument(1)));
     return true;
   }
 
@@ -670,7 +743,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
         llvm::isa<llvm::PointerType>(FTy->getParamType(1))) {
       cg.add(ConstraintType::Copy,
           omap.getValue(CS.getInstruction()),
-          omap.getValue(CS.getArgument(1)));
+          getValue(cg, omap, CS.getArgument(1)));
       return true;
     }
   }
@@ -681,7 +754,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
         llvm::isa<llvm::PointerType>(FTy->getParamType(0))) {
       cg.add(ConstraintType::Copy,
           omap.getValue(CS.getInstruction()),
-          omap.getValue(CS.getArgument(0)));
+          getValue(cg, omap, CS.getArgument(0)));
       return true;
     }
   }
@@ -692,7 +765,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
         llvm::isa<llvm::PointerType>(FTy->getParamType(2))) {
       cg.add(ConstraintType::Copy,
           omap.getValue(CS.getInstruction()),
-          omap.getValue(CS.getArgument(2)));
+          getValue(cg, omap, CS.getArgument(2)));
       return true;
     }
   }
@@ -733,10 +806,10 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
       llvm::dbgs() << "FIXME: Handle pthread_create store!\n";
       llvm::Value *ThrFunc = I->getOperand(2);
       llvm::Value *Arg = I->getOperand(3);
-      cg.add(ConstraintType::Store, omap.getValue(ThrFunc),
-          omap.getValue(Arg), CallFirstArgPos);
+      cg.add(ConstraintType::Store, getValue(cg, omap, ThrFunc),
+          getValue(cg, omap, Arg), CallFirstArgPos);
       addCFGStore(cfg, next_id,
-          omap.getOffsID(omap.getValue(Arg), CallFirstArgPos));
+          omap.getOffsID(getValue(cg, omap, Arg), CallFirstArgPos));
       return true;
     }
   }
@@ -758,7 +831,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
         llvm::isa<llvm::PointerType>(FTy->getParamType(1))) {
       cg.add(ConstraintType::Copy,
           ObjectMap::PthreadSpecificValue,
-          omap.getValue(CS.getInstruction()->getOperand(1)));
+          getValue(cg, omap, CS.getInstruction()->getOperand(1)));
       return true;
     }
   }
@@ -789,7 +862,7 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
   // Simple case, single initializer
   if (C->getType()->isSingleValueType()) {
     if (llvm::isa<llvm::PointerType>(C->getType())) {
-      auto const_id = omap.getConstValue(C);
+      auto const_id = getConstValue(cg, omap, C);
       /*
       dbg << "Adding global init for: (" << dest << ") " <<
           ValPrint(dest) << " to (" << const_id << ") " << ValPrint(const_id)
@@ -1032,7 +1105,7 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
     if (external && llvm::isa<llvm::PointerType>((*ArgI)->getType())) {
       dout("Adding arg to universal value :(\n");
       auto node_id = omap.createPhonyID();
-      auto arg_id = omap.getValue(*ArgI);
+      auto arg_id = getValue(cg, omap, *ArgI);
 
       /*
       cg.add(ConstraintType::Copy, node_id, arg_id,
@@ -1051,15 +1124,15 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
       if (llvm::isa<llvm::PointerType>((*ArgI)->getType())) {
         // llvm::dbgs() << "Adding arg copy!\n";
         auto node_id = omap.createPhonyID();
-        auto dest_id = omap.getValue(FargI);
-        auto src_id = omap.getValue(*ArgI);
+        auto dest_id = getValue(cg, omap, FargI);
+        auto src_id = getValue(cg, omap, *ArgI);
 
         cg.add(ConstraintType::Copy, node_id, src_id, dest_id);
       // But if its not a pointer type...
       } else {
         // Map it to int stores (i2p)
         auto node_id = omap.createPhonyID();
-        auto dest_id = omap.getValue(FargI);
+        auto dest_id = getValue(cg, omap, FargI);
 
         /*
         llvm::dbgs() << "instr is: " << *CS.getInstruction() << "\n";
@@ -1079,7 +1152,7 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
     for (; ArgI != ArgE; ++ArgI) {
       if (llvm::isa<llvm::PointerType>((*ArgI)->getType())) {
         cg.add(ConstraintType::Copy, omap.getVarArg(F),
-            omap.getValue(*ArgI));
+            getValue(cg, omap, *ArgI));
       }
     }
   }
@@ -1154,7 +1227,7 @@ static void idRetInst(ConstraintGraph &cg, ObjectMap &omap,
   const llvm::Function *F = ret.getParent()->getParent();
 
   cg.add(ConstraintType::Copy,
-      omap.getReturn(F), omap.getValue(src));
+      omap.getReturn(F), getValue(cg, omap, src));
 }
 
 static void addGlobalConstraintForType(ConstraintType ctype,
@@ -1292,7 +1365,7 @@ static void idAllocaInst(ConstraintGraph &cg, ObjectMap &omap,
   //   addressof for all sub-fields!
   auto type = alloc.getAllocatedType();
 
-  auto dest_id = omap.getValue(&alloc);
+  auto dest_id = getValue(cg, omap, &alloc);
   auto src_obj_id = omap.getObject(&alloc);
 
   addConstraintForType(ConstraintType::AddressOf, cg, omap,
@@ -1304,10 +1377,10 @@ static void idLoadInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
   auto &ld = cast<const llvm::LoadInst>(inst);
 
   if (llvm::isa<llvm::PointerType>(ld.getType())) {
-    auto ld_id = getValueUpdate(cg, omap, &ld);
+    auto ld_id = getValue(cg, omap, &ld);
 
     if_debug(auto cons_id =) cg.add(ConstraintType::Load, ld_id,
-        omap.getValue(ld.getOperand(0)),
+        getValue(cg, omap, ld.getOperand(0)),
         ld_id);
 
     dout("Adding load (" << ld_id << ") " << inst << " to cons: " <<
@@ -1321,10 +1394,10 @@ static void idLoadInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
         llvm::isa<llvm::IntegerType>(ld.getType())) {
       // Ld is an int value... those may alias.  So we instead create a
       //   phony id
-      auto ld_id = omap.getValue(&ld);
+      auto ld_id = getValue(cg, omap, &ld);
 
       cg.add(ConstraintType::Load, ld_id,
-          omap.getValue(ld.getOperand(0)),
+          getValue(cg, omap, ld.getOperand(0)),
           ObjectMap::IntValue);
 
       addCFGLoad(cfg, next_id, ld_id);
@@ -1359,28 +1432,28 @@ static void idStoreInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
   if (llvm::isa<llvm::PointerType>(st.getOperand(0)->getType())) {
     // Store from ptr
     // auto dest = omap.getObject(st.getOperand(1));
-    auto dest = omap.getValue(st.getOperand(1));
+    auto dest = getValue(cg, omap, st.getOperand(1));
     dout("Got ptr dest of: " << dest << " : " << ValPrint(dest) <<
       "\n");
     cg.add(ConstraintType::Store,
         st_id,
-        omap.getValue(st.getOperand(0)),
+        getValue(cg, omap, st.getOperand(0)),
         dest);
   } else if (llvm::ConstantExpr *ce =
       dyn_cast<llvm::ConstantExpr>(st.getOperand(0))) {
     // If we just cast a ptr to an int then stored it.. we can keep info on it
     if (ce->getOpcode() == llvm::Instruction::PtrToInt) {
       // auto dest = omap.getObject(st.getOperand(1));
-      auto dest = omap.getValue(st.getOperand(1));
+      auto dest = getValue(cg, omap, st.getOperand(1));
       if (dest == ObjectMap::NullValue) {
         // If this is not an object, store to the value
-        dest = omap.getValue(st.getOperand(1));
+        dest = getValue(cg, omap, st.getOperand(1));
         llvm::dbgs() << "No object for store dest: " << dest << " : " <<
           ValPrint(dest) << "\n";
       }
       cg.add(ConstraintType::Store,
           st_id,
-          omap.getValue(st.getOperand(0)),
+          getValue(cg, omap, st.getOperand(0)),
           dest);
     // Uhh, dunno what to do now
     } else {
@@ -1390,10 +1463,10 @@ static void idStoreInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
   } else if (llvm::isa<llvm::IntegerType>(st.getOperand(0)->getType()) &&
       llvm::isa<llvm::PointerType>(st.getOperand(1)->getType())) {
     // auto dest = omap.getObject(st.getOperand(1));
-    auto dest = omap.getValue(st.getOperand(1));
+    auto dest = getValue(cg, omap, st.getOperand(1));
     if (dest == ObjectMap::NullValue) {
       // If this is not an object, store to the value
-      dest = omap.getValue(st.getOperand(1));
+      dest = getValue(cg, omap, st.getOperand(1));
       dout("No object for store dest: " << dest << " : " <<
         ValPrint(dest) << "\n");
     }
@@ -1430,7 +1503,7 @@ static void idGEPInst(ConstraintGraph &cg, ObjectMap &omap,
 
   auto gep_id = omap.getValue(&gep);
   auto src_offs = getGEPOffs(omap, gep);
-  auto src_id = omap.getValue(gep.getOperand(0));
+  auto src_id = getValue(cg, omap, gep.getOperand(0));
 
   dout("id gep_id: " << ValPrint(gep_id) << "\n");
   dout("  src_offs: " << src_offs << "\n");
@@ -1448,7 +1521,7 @@ static void idP2IInst(ConstraintGraph &cg, ObjectMap &omap,
   //    of i2ps...
   // sfs does this, Andersens doesn't.
 
-  auto val = omap.getValue(inst.getOperand(0));
+  auto val = getValue(cg, omap, inst.getOperand(0));
   cg.addP2ICast(&inst, val);
 
   // If this I instruction is only used by I2P instrs, don't make a constraint
@@ -1501,7 +1574,7 @@ static void idBitcastInst(ConstraintGraph &cg, ObjectMap &omap,
   assert(llvm::isa<llvm::PointerType>(inst.getType()));
 
   auto dest_id = omap.getValue(&bcast);
-  auto src_id = omap.getValue(bcast.getOperand(0));
+  auto src_id = getValue(cg, omap, bcast.getOperand(0));
 
   assert(llvm::isa<llvm::PointerType>(bcast.getOperand(0)->getType()));
 
@@ -1519,11 +1592,11 @@ static void idPhiInst(ConstraintGraph &cg, ObjectMap &omap,
   assert(llvm::isa<llvm::PointerType>(phi.getType()));
 
   // hheheheheh PHI-d
-  auto phid = getValueUpdate(cg, omap, &phi);
+  auto phid = getValue(cg, omap, &phi);
 
   for (size_t i = 0, e = phi.getNumIncomingValues(); i != e; ++i) {
     cg.add(ConstraintType::Copy, phid,
-        omap.getValue(phi.getIncomingValue(i)));
+        getValue(cg, omap, phi.getIncomingValue(i)));
   }
 }
 
@@ -1534,12 +1607,12 @@ static void idSelectInst(ConstraintGraph &cg, ObjectMap &omap,
   // this inst --> select: op(0) ? op(1) : op(2)
 
   if (llvm::isa<llvm::PointerType>(select.getType())) {
-    auto sid = getValueUpdate(cg, omap, &select);
+    auto sid = getValue(cg, omap, &select);
 
     cg.add(ConstraintType::Copy, sid,
-        omap.getValue(select.getOperand(1)));
+        getValue(cg, omap, select.getOperand(1)));
     cg.add(ConstraintType::Copy, sid,
-        omap.getValue(select.getOperand(2)));
+        getValue(cg, omap, select.getOperand(2)));
 
   } else if (llvm::isa<llvm::StructType>(select.getType())) {
     llvm::errs() << "FIXME: unsupported select on struct!\n";
@@ -1573,7 +1646,7 @@ static void idInsertInst(ConstraintGraph &cg, ObjectMap &omap,
   if (llvm::isa<llvm::PointerType>(src_val->getType())) {
     cg.add(ConstraintType::Copy,
         ObjectMap::AggregateValue,
-        omap.getValue(src_val));
+        getValue(cg, omap, src_val));
   } else if (llvm::isa<llvm::IntegerType>(src_val->getType())) {
     cg.add(ConstraintType::Copy,
         ObjectMap::AggregateValue,
@@ -1963,7 +2036,10 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
         // We don't add any ptsto constraints for null value here, because null
         //   value points to nothing...
       } else {
-        dout("FIXME: NO GLOBAL INITIALIZER: " << glbl.getName() << "\n");
+        if (glbl.hasInitializer()) {
+          llvm::dbgs() << "FIXME: NO GLOBAL INITIALIZER: " << glbl.getName() <<
+            "\n";
+        }
         cg.add(ConstraintType::Copy, omap.getValue(&glbl),
             ObjectMap::UniversalValue);
 
@@ -1984,8 +2060,7 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
       // graph.associateNode(obj_id, &fcn);
 
       cg.add(ConstraintType::AddressOf,
-          getValueUpdate(cg, omap, &fcn),
-          obj_id);
+          getValue(cg, omap, &fcn), obj_id);
 
       // Functions are constant pointers
       addConstraintForConstPtr(cg, omap, fcn);
@@ -2154,7 +2229,7 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
     CFG::CFGid ret_id = cfg.getCallSuccessor(call_id);
 
     // Get the functon call/ret info for this function:
-    auto &cr_vec = cfg.getCallRetInfo(omap.getValue(fptr));
+    auto &cr_vec = cfg.getCallRetInfo(getValue(cg, omap, fptr));
     for (auto pr : cr_vec) {
       CFG::CFGid aux_call_id = pr.first;
       CFG::CFGid aux_ret_id = pr.second;

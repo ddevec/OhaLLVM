@@ -188,6 +188,20 @@ class DUG {
           dout("  node src_obj_id: " << src << ": " <<
               ValPrint(src) << "\n");
 
+          /*
+          if (src == ObjectMap::ObjID(108470) &&
+              dest == ObjectMap::ObjID(108469))
+              */
+          if (src == ObjectMap::ObjID(16036)) {
+            llvm::dbgs() << "!!!  Creating DUG node for eye  !!!\n";
+
+            llvm::dbgs() << "Adding node to DUG for obj_id: " << dest << ": " <<
+                ValPrint(dest) << "\n";
+
+            llvm::dbgs() << "  node src_obj_id: " << src << ": " <<
+                ValPrint(src) << "\n";
+          }
+
           switch (cons.type()) {
             case ConstraintType::AddressOf:
               {
