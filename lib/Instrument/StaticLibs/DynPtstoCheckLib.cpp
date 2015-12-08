@@ -177,6 +177,7 @@ void __ptscheck_do_malloc(int32_t obj_id, int64_t size,
     void *addr) {
   // Size is in bits...
   size /= 8;
+
   // Add ptsto to map
   /*
   std::cout << "mallocing: (" << obj_id << ") " << addr << ", "
@@ -194,6 +195,9 @@ void __ptscheck_do_malloc(int32_t obj_id, int64_t size,
       std::vector<int32_t>());
   // If we overlap, but are not equal
   while (!ret.second && ret.first->first.overlaps(cur_range)) {
+    if (addr == nullptr) {
+      return;
+    }
     /*
     std::cerr << "Couldn't place range: " << cur_range << std::endl;
     std::cerr << "Old range is: " << ret.first->first << std::endl;

@@ -621,69 +621,73 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
 
       // Now, iterate each element in st_pts_set and ensure that it isn't
       //   present in dyn_pts_set
-      for (auto obj_id : dyn_pts_set) {
-        // Ensure that this element is in the static set
-        if (st_pts_set.test(obj_id) == false) {
-          if (!set_id_found) {
-            const llvm::Function *fcn = nullptr;
-            const llvm::BasicBlock *bb = nullptr;
-            llvm::dbgs() << "Element: " << set_obj_id << ": ";
-            auto val = omap.valueAtID(set_obj_id);
+      if (set_obj_id != ObjectMap::NullValue) {
+        for (auto obj_id : dyn_pts_set) {
+          // Ensure that this element is in the static set
+          if (st_pts_set.test(obj_id) == false) {
+            if (!set_id_found) {
+              const llvm::Function *fcn = nullptr;
+              const llvm::BasicBlock *bb = nullptr;
+              llvm::dbgs() << "Element: " << set_obj_id << ": ";
+              auto val = omap.valueAtID(set_obj_id);
+              if (val == nullptr) {
+                llvm::dbgs() << "Value NULL";
+              } else if (auto ins = dyn_cast<llvm::Instruction>(val)) {
+                llvm::dbgs() << ins->getParent()->getParent()->getName() << ", "
+                    << ins->getParent()->getName();
+                if (!unused_fcns.isUsed(ins->getParent())) {
+                  bb = ins->getParent();
+                }
+                if (!unused_fcns.isUsed(ins->getParent()->getParent())) {
+                  fcn = ins->getParent()->getParent();
+                }
+              } else if (auto ins = dyn_cast<llvm::Argument>(val)) {
+                llvm::dbgs() << ins->getParent()->getName() << ", (arg)";
+
+                if (!unused_fcns.isUsed(ins->getParent())) {
+                  fcn = ins->getParent();
+                }
+              } else if (auto fcn = dyn_cast<llvm::Function>(val)) {
+                llvm::dbgs() << fcn->getName() << ", (fcn)";
+              } else if (llvm::isa<llvm::GlobalVariable>(val)) {
+                llvm::dbgs() << "(global)";
+              }
+              llvm::dbgs() << ": " << ValPrint(set_obj_id) << "\n";
+
+              if (fcn) {
+                llvm::dbgs() << "  !! In Unused Function: " << fcn->getName() <<
+                  " !!\n";
+              }
+              if (bb) {
+                llvm::dbgs() << "  !! In Unused BasicBlock: " <<
+                  bb->getName() << " !!\n";
+              }
+
+              // Check if the ID given by the omap is equivalent to the ID given
+              //   by our anaysis
+              auto new_set_id = omap.getValue(val);
+              if (new_set_id != set_obj_id) {
+                llvm::dbgs() << "  !! Merged AWAY by cons_opt !!\n";
+              }
+
+              set_id_found = true;
+            }
+            auto val = omap.valueAtID(obj_id);
+            llvm::dbgs() << "  Found element in dyn set not in static set:\n";
+            llvm::dbgs() << "    ";
             if (auto ins = dyn_cast<llvm::Instruction>(val)) {
               llvm::dbgs() << ins->getParent()->getParent()->getName() << ", "
                   << ins->getParent()->getName();
-              if (!unused_fcns.isUsed(ins->getParent())) {
-                bb = ins->getParent();
-              }
-              if (!unused_fcns.isUsed(ins->getParent()->getParent())) {
-                fcn = ins->getParent()->getParent();
-              }
             } else if (auto ins = dyn_cast<llvm::Argument>(val)) {
               llvm::dbgs() << ins->getParent()->getName() << ", (arg)";
-
-              if (!unused_fcns.isUsed(ins->getParent())) {
-                fcn = ins->getParent();
-              }
             } else if (auto fcn = dyn_cast<llvm::Function>(val)) {
               llvm::dbgs() << fcn->getName() << ", (fcn)";
             } else if (llvm::isa<llvm::GlobalVariable>(val)) {
               llvm::dbgs() << "(global)";
             }
-            llvm::dbgs() << ": " << ValPrint(set_obj_id) << "\n";
-
-            if (fcn) {
-              llvm::dbgs() << "  !! In Unused Function: " << fcn->getName() <<
-                " !!\n";
-            }
-            if (bb) {
-              llvm::dbgs() << "  !! In Unused BasicBlock: " << bb->getName() <<
-                " !!\n";
-            }
-
-            // Check if the ID given by the omap is equivalent to the ID given
-            //   by our anaysis
-            auto new_set_id = omap.getValue(val);
-            if (new_set_id != set_obj_id) {
-              llvm::dbgs() << "  !! Merged AWAY by cons_opt !!\n";
-            }
-
-            set_id_found = true;
+            llvm::dbgs() << ": " << ValPrint(obj_id) << "\n";
+            llvm::dbgs() << "    (obj_id): " << obj_id << "\n";
           }
-          auto val = omap.valueAtID(obj_id);
-          llvm::dbgs() << "  Found element in dyn set not in static set:\n";
-          llvm::dbgs() << "    ";
-          if (auto ins = dyn_cast<llvm::Instruction>(val)) {
-            llvm::dbgs() << ins->getParent()->getParent()->getName() << ", "
-                << ins->getParent()->getName();
-          } else if (auto ins = dyn_cast<llvm::Argument>(val)) {
-            llvm::dbgs() << ins->getParent()->getName() << ", (arg)";
-          } else if (auto fcn = dyn_cast<llvm::Function>(val)) {
-            llvm::dbgs() << fcn->getName() << ", (fcn)";
-          } else if (llvm::isa<llvm::GlobalVariable>(val)) {
-            llvm::dbgs() << "(global)";
-          }
-          llvm::dbgs() << ": " << ValPrint(obj_id) << "\n";
-          llvm::dbgs() << "    (obj_id): " << obj_id << "\n";
         }
       }
     }

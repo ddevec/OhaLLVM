@@ -152,6 +152,14 @@ void __DynPtsto_do_alloca(int32_t obj_id, int64_t size,
 #endif
     addr_to_objid.emplace(AddrRange(addr, size),
         std::vector<int32_t>(1, obj_id));
+  if (!ret.second) {
+    std::cerr << "failed to place obj_id: " << obj_id << std::endl;
+    std::cerr << "old obj_ids are:";
+    for (auto &old_obj_id : ret.first->second) {
+      std::cerr << " " << old_obj_id;
+    }
+    std::cerr << std::endl;
+  }
   assert(ret.second);
 }
 
@@ -175,6 +183,7 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
     void *addr) {
   // Size is in bits...
   size /= 8;
+
   // Add ptsto to map
   /*
   std::cout << "mallocing: (" << obj_id << ") " << addr << ", "
@@ -190,8 +199,12 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
 
   auto ret = addr_to_objid.emplace(cur_range,
       std::vector<int32_t>());
+
   // If we overlap, but are not equal
   while (!ret.second && ret.first->first.overlaps(cur_range)) {
+    if (addr == nullptr) {
+      return;
+    }
     /*
     std::cerr << "Couldn't place range: " << cur_range << std::endl;
     std::cerr << "Old range is: " << ret.first->first << std::endl;
@@ -226,6 +239,10 @@ void __DynPtsto_do_visit(int32_t val_id, void *addr) {
   auto it = addr_to_objid.find(AddrRange(addr));
   if (it != std::end(addr_to_objid)) {
     for (int32_t obj_id : it->second) {
+      if (obj_id == 3260) {
+        std::cerr << "Propigate " << obj_id << " for val: " << val_id <<
+          std::endl;
+      }
       valid_to_objids[val_id].insert(obj_id);
     }
   } else {
