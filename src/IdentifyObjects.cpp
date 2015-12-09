@@ -125,7 +125,7 @@ ObjectMap::ObjID getValue(ConstraintGraph &cg, ObjectMap &omap,
 
 // ID to keep track of anders return values
 struct aux_id { };
-typedef ID<aux_id, int32_t, -1> AuxID;
+typedef util::ID<aux_id, int32_t, -1> AuxID;
 
 void SpecSFS::identifyAUXFcnCallRetInfo(CFG &cfg,
     ObjectMap &omap, const Andersens &aux,
@@ -1050,7 +1050,7 @@ static void addConstraintsForNonInternalLinkage(ConstraintGraph &,
 }
 
 
-static void addConstraintsForIndirectCall(ConstraintGraph &, ObjectMap &,
+static void addConstraintsForIndirectCall(ConstraintGraph &cg, ObjectMap &omap,
     llvm::CallSite &CS) {
   auto &called_val = *CS.getCalledValue();
 
@@ -1059,8 +1059,23 @@ static void addConstraintsForIndirectCall(ConstraintGraph &, ObjectMap &,
     return;
   }
 
-  // We take care of adding the constriants to the map in addCFGCallsite, called
+  // We take care of adding the constriants to the cfg in addCFGCallsite, called
   //    from addConstraintsForCall() before this
+
+  // We don't actually add the constraints, because SFS does not need them to
+  //   create indirect edges (although Andersens does)
+  // Instead we alert the constraint graph of the appropriate nodes, and allow
+  //   it to fill in the information later.
+  // Create a ret node:
+  auto call_id = omap.getValue(CS.getInstruction());
+  bool is_pointer =
+    llvm::isa<llvm::PointerType>(CS.getInstruction()->getType());
+  std::vector<ObjectMap::ObjID> args;
+  std::for_each(CS.arg_begin(), CS.arg_end(),
+      [&omap, &args] (const llvm::Use &arg) {
+    args.push_back(omap.createPhonyID(arg.get()));
+  });
+  cg.addIndirectCall(call_id, is_pointer, std::move(args));
 }
 
 static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
@@ -2196,7 +2211,6 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
   return false;
   //}}}
 }
-
 
 bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
     const Andersens &aux, const IndirFunctionInfo *dyn_indir_info,

@@ -346,7 +346,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
     // If the node is not a value, make it indirect, so its not merged
     //   arbitrarily
     auto obj_id = nodeToObj(node_id);
-    if (!omap.isValue(obj_id) || cfg.isIndirCall(obj_id)) {
+    if (!omap.isValue(obj_id) || graph.isIndirCall(obj_id)) {
       auto &node = hu_graph.getNode<HUNode>(node_id);
       node.setIndirect();
     }

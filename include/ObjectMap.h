@@ -36,7 +36,7 @@ class ObjectMap {
     // Internal types {{{
     // NOTE: I use int32_t for size reasons
     struct omap_id { };
-    typedef ID<omap_id, int32_t, -1> ObjID;
+    typedef util::ID<omap_id, int32_t, -1> ObjID;
     //}}}
 
     // Exported Constant ObjIDs {{{
@@ -811,7 +811,7 @@ class ObjectMap {
 
 // Gets the type of a value, stripping the first layer of bitcasts if needed
 // NOTE: Does not strip away pointer type
-__attribute__((unused))
+[[ gnu::unused ]]
 static const llvm::Type *getTypeOfVal(llvm::Value *val) {
   auto ret = val->getType();
 
@@ -828,7 +828,7 @@ static const llvm::Type *getTypeOfVal(llvm::Value *val) {
 // called from malloc-like allocations, to find the largest strcuture size the
 // untyped allocation is cast to.
 // FIXME: Should put somewhere I don't have to deal with unused warnings
-__attribute__((unused))
+[[ gnu::unused ]]
 static const llvm::Type *findLargestType(ObjectMap &omap,
     const llvm::Instruction &ins) {
   auto biggest_type = ins.getType()->getContainedType(0);
@@ -886,7 +886,7 @@ static const llvm::Type *findLargestType(ObjectMap &omap,
 
 // FIXME: Should put somewhere I don't have to deal with unused warnings
 // NOTE: User can be both a ConstantExpr, and a GetElementPtrInst
-__attribute__((unused))
+[[ gnu::unused ]]
 static int32_t getGEPOffs(ObjectMap &omap, const llvm::User &gep) {
   int32_t offs = 0;
 

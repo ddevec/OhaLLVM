@@ -332,13 +332,9 @@ class CFG {
     void addIndirectCall(CFGid call_id, ObjectMap::ObjID obj_id,
         CFGid ret_id) {
       indirectCalls_.emplace_back(obj_id, call_id);
-      indirObjs_.insert(obj_id);
       cfgCallSuccessors_[call_id] = ret_id;
     }
 
-    bool isIndirCall(ObjectMap::ObjID id) const {
-      return indirObjs_.find(id) != std::end(indirObjs_);
-    }
 
     void addFunctionStart(ObjectMap::ObjID fcn_id, CFGid id) {
       cfgFunctionEntries_[fcn_id] = id;
@@ -614,21 +610,21 @@ class CFG {
 
     // Function call -> CFG node
     std::vector<std::pair<ObjectMap::ObjID, CFGid>> indirectCalls_;
-    std::set<ObjectMap::ObjID> indirObjs_;
-
     std::map<ObjectMap::ObjID, std::vector<ObjectMap::ObjID>> indirFcns_;
 
     // The return CFG node associated with each CFG containing a call
     std::map<CFGid, CFGid> cfgCallSuccessors_;
+
     // The CFG call node for each call instruciton
     std::map<ObjectMap::ObjID, CFGid> cfgFunctionEntries_;
+
     // The CFG node for each call instruction's return
     std::map<ObjectMap::ObjID, CFGid> cfgFunctionReturns_;
-
     std::map<ObjectMap::ObjID, CFGid> objToCFG_;
 
     // List of functions that have no obvious uses
     std::map<ObjectMap::ObjID, std::vector<ConstraintGraph::ConsID>> unusedFunctions_;
+
     //}}}
 };
 

@@ -115,7 +115,7 @@ class SEG {
  public:
     // Typedefs {{{
     struct node_id { };
-    typedef ID<node_id, int32_t, -1> NodeID;
+    typedef util::ID<node_id, int32_t, -1> NodeID;
 
     //}}}
     // Constructors {{{

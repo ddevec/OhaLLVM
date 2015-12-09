@@ -57,7 +57,7 @@ class DUGNode;
 
 // Typedef for PartID
 struct part_id { };
-typedef ID<part_id, int32_t> __PartID;
+typedef util::ID<part_id, int32_t> __PartID;
 
 // Lowest priority dual queue work queue -- what sfs uses
 class Worklist {

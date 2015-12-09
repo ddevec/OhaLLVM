@@ -21,12 +21,13 @@ static int64_t malloc_cnt = 0;
 static int64_t free_cnt = 0;
 static int64_t alloca_cnt = 0;
 static int64_t visit_cnt = 0;
+
 /*
-__attribute__((constructor))
+[[ gnu::constructor ]]
 void init(void) {
 }
 
-__attribute__((destructor))
+[[ gnu::destructor ]]
 void fini(void) {
   std::cout << "malloc count: " << malloc_cnt << std::endl;
   std::cout << "free count: " << free_cnt << std::endl;
@@ -240,7 +241,7 @@ void __DynPtsto_do_visit(int32_t val_id, void *addr) {
 }
 */
 
-__attribute__((unused))
+[[ gnu::unused ]]
 static void print_trace(void) {
   void *array[10];
   size_t size;

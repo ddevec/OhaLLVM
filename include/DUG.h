@@ -163,7 +163,7 @@ class DUG {
       // O(n*log(n)) ?
       int32_t consid = 0;
       {
-        PerfTimerPrinter fill_timer(dbg, "fill loop");
+        util::PerfTimerPrinter fill_timer(dbg, "fill loop");
         std::for_each(std::begin(cg), std::end(cg),
             [this, &consid, &omap, &strongCons]
             (const ConstraintGraph::iter_type &pcons) {
@@ -283,7 +283,7 @@ class DUG {
       // Update strength for each store node
       // O(n*log(n))
       {
-        PerfTimerPrinter strong_timer(dbg, "strong loop");
+        util::PerfTimerPrinter strong_timer(dbg, "strong loop");
         std::for_each(std::begin(DUG_), std::end(DUG_),
             [this, &strongCons] (SEG::node_iter_type &upnode) {
           auto pnode = upnode.get();
@@ -330,7 +330,7 @@ class DUG {
         int64_t num_edges = 0;
         int64_t st_edges = 0;
         int64_t node_count = 0;
-        PerfTimerPrinter edge_addition(llvm::dbgs(), "Edge creation");
+        util::PerfTimerPrinter edge_addition(llvm::dbgs(), "Edge creation");
         std::for_each(std::begin(DUG_), std::end(DUG_),
             [this, &dest_to_node,
               &num_edges, &st_edges, &node_count]
@@ -398,7 +398,7 @@ class DUG {
 
       /*
       {
-        PerfTimerPrinter edge_addition(llvm::dbgs(), "Edge cleanup");
+        util::PerfTimerPrinter edge_addition(llvm::dbgs(), "Edge cleanup");
         DUG_.cleanEdges();
       }
       */

@@ -145,7 +145,8 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
 
   // Group nodes based on relevant obj_id
   {
-    PerfTimerPrinter part_nodes_timer(llvm::dbgs(), "Calculating part_nodes");
+    util::PerfTimerPrinter part_nodes_timer(llvm::dbgs(),
+        "Calculating part_nodes");
     std::for_each(cfg.obj_to_cfg_begin(), cfg.obj_to_cfg_end(),
         [&aux, &omap, &dug, &part_nodes]
         (const std::pair<const ObjectMap::ObjID, CFG::CFGid> &pr) {
@@ -202,7 +203,7 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
   std::vector<Bitmap> AE(max_id.val() + 1);
 
   {
-    PerfTimerPrinter AE_create_timer(llvm::dbgs(), "Creating AE sets");
+    util::PerfTimerPrinter AE_create_timer(llvm::dbgs(), "Creating AE sets");
     // Now, create a grouping of each relevant obj_id for a given DUGid
     for (size_t i = 0; i < part_nodes.size(); i++) {
       ObjectMap::ObjID obj_id(i);
@@ -262,7 +263,7 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
 
   // Okay, I now have a populated AE, fill out our parts
   // Create a partition ID generatior
-  IDGenerator<DUG::PartID> part_id_generator;
+  util::IDGenerator<DUG::PartID> part_id_generator;
 
   // Create a map to identify when I have a new part
   std::map<Bitmap, DUG::PartID, BitmapLT> equiv_map;
@@ -270,7 +271,8 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
   std::map<DUG::PartID, std::vector<ObjectMap::ObjID>> rev_part_map;
 
   {
-    PerfTimerPrinter rev_part_timer(llvm::dbgs(), "Populating rev_part_map");
+    util::PerfTimerPrinter rev_part_timer(llvm::dbgs(),
+        "Populating rev_part_map");
     // Now, for each relevant DUGid, create an AE mapping
     /*
     std::for_each(AE.cbegin(), AE.cend(),
@@ -315,7 +317,8 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
   // NOTE: We also deduplicate the node to part mapping here -- Is this needed?
   std::map<ObjectMap::ObjID, DUG::PartID> part_map;
   {
-    PerfTimerPrinter part_map_printer(llvm::dbgs(), "Populating part_map");
+    util::PerfTimerPrinter part_map_printer(llvm::dbgs(),
+        "Populating part_map");
     std::for_each(std::begin(rev_part_map), std::end(rev_part_map),
         [&part_map, &omap]
         (std::pair<const DUG::PartID, std::vector<ObjectMap::ObjID>> &pr) {
@@ -364,7 +367,7 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
     }));
 
   {
-    PerfTimerPrinter(llvm::dbgs(), "Moving entries to DUG");
+    util::PerfTimerPrinter(llvm::dbgs(), "Moving entries to DUG");
     // We now have our mappings, and we transfer them to the DUG
     dug.setNodeToPartition(std::move(part_map));
     dug.setPartitionToNodes(std::move(rev_part_map));
@@ -403,8 +406,8 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
   std::vector<DUG::DUGid> cfg_node_rep;
   // For each partition, calculate the SSA of any nodes in that partiton
   {
-    PerfTimer ssa_tmr;
-    PerfTimerPrinter tmr(llvm::dbgs(), "calcParts");
+    util::PerfTimer ssa_tmr;
+    util::PerfTimerPrinter tmr(llvm::dbgs(), "calcParts");
     std::for_each(graph.part_cbegin(), graph.part_cend(),
         [this, &graph, &ssa, &ssa_seg, &node_to_partition, &omap, &cfg_node_rep,
          &ssa_tmr, &dug_ae]
@@ -527,7 +530,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
         // Create a clone of the ControlFlowGraph for this partition's ssa
         CFG::ControlFlowGraph part_graph;
         {
-          PerfTimerTick ssa_tick(ssa_tmr);
+          util::PerfTimerTick ssa_tick(ssa_tmr);
 
           part_graph = ssa_seg.clone<CFG::Node>();
           // Update our part seg so we can use this
@@ -809,7 +812,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
   }
 
   {
-    PerfTimerPrinter(llvm::dbgs(), "Calc DUG AE sets");
+    util::PerfTimerPrinter(llvm::dbgs(), "Calc DUG AE sets");
     // Okay, now that we've filled out our graph, we're going to merge together
     // AE sets!
     // We need to handle both shared stores and shared loads?
@@ -922,7 +925,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
   // Now that we've created our AE sets, we force all edges pointing to non-reps
   //   to point to reps (except reps pointing to their own non-reps)
   {
-    PerfTimerPrinter(llvm::dbgs(), "Cleanup Rep Edges");
+    util::PerfTimerPrinter(llvm::dbgs(), "Cleanup Rep Edges");
 
     for (auto &pnode : graph) {
       auto &dug_node = cast<DUGNode>(*pnode);
@@ -1019,9 +1022,9 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
   //   Add dug_mapping to node ptsto
   dout("Setting up partGraph for each node!\n");
   {
-    PerfTimer inner_loop;
-    PerfTimer part_node_setup;
-    PerfTimerPrinter tmr(llvm::dbgs(), "Setup nodes");
+    util::PerfTimer inner_loop;
+    util::PerfTimer part_node_setup;
+    util::PerfTimerPrinter tmr(llvm::dbgs(), "Setup nodes");
     for (size_t i = 0; i < node_to_partition.size(); i++) {
       DUG::DUGid dug_id(i);
       auto &parts = node_to_partition[i];
@@ -1042,7 +1045,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
       dout("  Looking at ID: " << part_node.id() << "\n");
 
       {
-        PerfTimerTick tick(inner_loop);
+        util::PerfTimerTick tick(inner_loop);
         std::for_each(std::begin(parts), std::end(parts),
             [&graph, &vars, &omap] (const DUG::PartID &part_id) {
           auto &objs = graph.getObjs(part_id);
@@ -1069,7 +1072,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
       vars.erase(it, std::end(vars));
 
       {
-        PerfTimerTick tick(part_node_setup);
+        util::PerfTimerTick tick(part_node_setup);
         part_node.setupPartGraph(vars);
       }
     }

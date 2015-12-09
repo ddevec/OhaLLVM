@@ -82,7 +82,7 @@ const target_type *dyn_cast(const base_type *b) {
 #define dyn_cast llvm::dyn_cast
 #endif
 
-__attribute__((unused))
+[[ gnu::unused ]]
 static void print_trace(void) {
   void *array[10];
   size_t size;

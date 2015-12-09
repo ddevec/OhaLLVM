@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <iterator>
 #include <limits>
 #include <string>
 
@@ -24,7 +25,8 @@
 #define if_timers_else(X, Y) X
 #endif
 
-// Performance junks
+namespace util {
+// PerfTimers {{{
 class PerfTimer {
   //{{{
  public:
@@ -142,7 +144,207 @@ class PerfTimerPrinter {
     std::string name_;
   //}}}
 };
+//}}}
 
+// map Key/Value iteration {{{
+// Value Iterators {{{
+template<class map_iterator>
+class ValueIterator : public std::iterator<std::bidirectional_iterator_tag,
+  typename map_iterator::value_type::second_type> {
+  //{{{
+ public:
+  typedef std::iterator<std::bidirectional_iterator_tag,
+          typename map_iterator::value_type::second_type>
+            iter_base;
+  ValueIterator() { }
+  explicit ValueIterator(map_iterator itr) : itr_(itr) { }
+
+  ValueIterator &operator++() {
+    ++itr_;
+    return *this;
+  }
+
+  ValueIterator &operator++(int) {
+    auto tmp = *this;
+    ++itr_;
+    return tmp;
+  }
+
+  ValueIterator &operator--() {
+    --itr_;
+    return *this;
+  }
+
+  ValueIterator &operator--(int) {
+    auto tmp = *this;
+    --itr_;
+    return tmp;
+  }
+
+  bool operator==(const ValueIterator &rhs) const {
+    return rhs.itr_ == itr_;
+  }
+
+  bool operator!=(const ValueIterator &rhs) const {
+    return rhs.itr_ != itr_;
+  }
+
+  typename iter_base::reference operator*() {
+    return itr_->second;
+  }
+
+  typename iter_base::pointer operator->() {
+    return &itr_->second;
+  }
+
+ private:
+  map_iterator itr_;
+  //}}}
+};
+
+template<class iter_type>
+inline ValueIterator<iter_type>
+make_value_iterator(iter_type &i) {
+  return ValueIterator<iter_type>(i);
+}
+
+template<class container>
+inline ValueIterator<typename container::iterator>
+value_begin(container &c) {
+  return make_value_iterator(std::begin(c));
+}
+
+template<class container>
+inline ValueIterator<typename container::iterator>
+value_end(container &c) {
+  return make_value_iterator(std::end(c));
+}
+
+template<class container>
+inline ValueIterator<typename container::const_iterator>
+value_begin(const container &c) {
+  return make_value_iterator(std::begin(c));
+}
+
+template<class container>
+inline ValueIterator<typename container::const_iterator>
+value_end(const container &c) {
+  return make_value_iterator(std::end(c));
+}
+
+template<class container>
+inline ValueIterator<typename container::const_iterator>
+value_cbegin(const container &c) {
+  return make_value_iterator(std::begin(c));
+}
+
+template<class container>
+inline ValueIterator<typename container::const_iterator>
+value_cend(const container &c) {
+  return make_value_iterator(std::end(c));
+}
+//}}}
+
+// Key Iterators {{{
+template<class map_iterator>
+class KeyIterator : public std::iterator<std::bidirectional_iterator_tag,
+  typename map_iterator::value_type::second_type> {
+  //{{{
+ public:
+  typedef std::iterator<std::bidirectional_iterator_tag,
+          typename map_iterator::value_type::second_type>
+            iter_base;
+  KeyIterator() { }
+  explicit KeyIterator(map_iterator itr) : itr_(itr) { }
+
+  KeyIterator &operator++() {
+    ++itr_;
+    return *this;
+  }
+
+  KeyIterator &operator++(int) {
+    auto tmp = *this;
+    ++itr_;
+    return tmp;
+  }
+
+  KeyIterator &operator--() {
+    --itr_;
+    return *this;
+  }
+
+  KeyIterator &operator--(int) {
+    auto tmp = *this;
+    --itr_;
+    return tmp;
+  }
+
+  bool operator==(const KeyIterator &rhs) const {
+    return rhs.itr_ == itr_;
+  }
+
+  bool operator!=(const KeyIterator &rhs) const {
+    return rhs.itr_ != itr_;
+  }
+
+  typename iter_base::reference operator*() {
+    return itr_->first;
+  }
+
+  typename iter_base::pointer operator->() {
+    return &itr_->first;
+  }
+
+ private:
+  map_iterator itr_;
+  //}}}
+};
+
+template<class iter_type>
+inline KeyIterator<iter_type>
+make_key_iterator(iter_type &i) {
+  return KeyIterator<iter_type>(i);
+}
+
+template<class container>
+inline KeyIterator<typename container::iterator>
+key_begin(container &c) {
+  return make_key_iterator(std::begin(c));
+}
+
+template<class container>
+inline KeyIterator<typename container::iterator>
+key_end(container &c) {
+  return make_key_iterator(std::end(c));
+}
+
+template<class container>
+inline KeyIterator<typename container::const_iterator>
+key_begin(const container &c) {
+  return make_key_iterator(std::begin(c));
+}
+
+template<class container>
+inline KeyIterator<typename container::const_iterator>
+key_end(const container &c) {
+  return make_key_iterator(std::end(c));
+}
+
+template<class container>
+inline KeyIterator<typename container::const_iterator>
+key_cbegin(const container &c) {
+  return make_key_iterator(std::begin(c));
+}
+
+template<class container>
+inline KeyIterator<typename container::const_iterator>
+key_cend(const container &c) {
+  return make_key_iterator(std::end(c));
+}
+//}}}
+//}}}
+
+// Unique IDs {{{
 template<class T = uint64_t, T initial_value = T(0),
   T invalid_value = std::numeric_limits<T>::max()>
 class UniqueIdentifier {
@@ -302,5 +504,7 @@ std::ostream &operator<<(std::ostream &o,
   o << id.val_;
   return o;
 }
+//}}}
+}  // namespace util
 
 #endif  // INCLUDE_UTIL_H_

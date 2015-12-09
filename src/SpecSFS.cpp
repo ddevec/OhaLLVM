@@ -77,7 +77,7 @@ static llvm::cl::opt<std::string>
 // Error handling functions
 /*{{{*/
 // Don't warn about this (if it is an) unused function... I'm being sloppy
-__attribute__((unused))
+[[ gnu::unused ]]
 static void print_stack_trace(void) {
   void *array[10];
   size_t size;
@@ -162,7 +162,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
 
   ObjectMap::replaceDbgOmap(omap);
   {
-    PerfTimerPrinter id_timer(llvm::dbgs(), "Identify Objects");
+    util::PerfTimerPrinter id_timer(llvm::dbgs(), "Identify Objects");
     // Identify all of the objects in the source
     if (identifyObjects(omap, m)) {
       error("Identify objects failure!");
@@ -175,7 +175,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   //   and a def/use mapping, but it will not fill in address-taken edges.
   //   Those will be populated later, once we have AUX info available.
   {
-    PerfTimerPrinter create_timer(llvm::dbgs(), "CreateConstraints");
+    util::PerfTimerPrinter create_timer(llvm::dbgs(), "CreateConstraints");
     if (createConstraints(cg, cfg, omap, m, unused_fcns)) {
       error("CreateConstraints failure!");
     }
@@ -186,7 +186,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   // Removes any nodes deemed to be non-ptr (definitely null), and merges nodes
   //   with statically equivalent ptsto sets
   {
-    PerfTimerPrinter opt_timer(llvm::dbgs(), "optimizeConstarints");
+    util::PerfTimerPrinter opt_timer(llvm::dbgs(), "optimizeConstarints");
     if (optimizeConstraints(cg, cfg, omap)) {
       error("OptimizeConstraints failure!");
     }
@@ -199,7 +199,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   Andersens aux;
   // Get AUX info, in this instance we choose Andersens
   {
-    PerfTimerPrinter andersens_timer(llvm::dbgs(), "Andersens");
+    util::PerfTimerPrinter andersens_timer(llvm::dbgs(), "Andersens");
     if (aux.runOnModule(m)) {
       // Andersens had better not change m!
       error("Andersens changes m???");
@@ -207,7 +207,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   }
 
   {
-    PerfTimerPrinter(llvm::dbgs(), "aux_to_obj fill");
+    util::PerfTimerPrinter(llvm::dbgs(), "aux_to_obj fill");
     // Converting from aux_id to obj_ids
     // For each pointer value we care about:
     // dout("Filling aux_to_obj:\n");
@@ -282,7 +282,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
 
   // Now, fill in the indirect function calls
   {
-    PerfTimerPrinter indir_timer(llvm::dbgs(), "addIndirectCalls");
+    util::PerfTimerPrinter indir_timer(llvm::dbgs(), "addIndirectCalls");
     auto dyn_indir_info = &getAnalysis<IndirFunctionInfo>();
     if (!do_spec || !unused_fcns.hasInfo()) {
       dyn_indir_info = nullptr;
@@ -298,7 +298,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   // Now, compute the SSA form for the top-level variables
   // We translate any PHI nodes into copy nodes... b/c the paper says so
   {
-    PerfTimerPrinter ssa_timer(llvm::dbgs(), "computeSSA");
+    util::PerfTimerPrinter ssa_timer(llvm::dbgs(), "computeSSA");
     computeSSA(cfg.getSEG());
   }
 
@@ -307,7 +307,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   // Compute partitions, based on address equivalence
   DUG graph;
   {
-    PerfTimerPrinter fill_timer(llvm::dbgs(), "fillTopLevel");
+    util::PerfTimerPrinter fill_timer(llvm::dbgs(), "fillTopLevel");
     graph.fillTopLevel(cg, omap);
   }
 
@@ -315,12 +315,12 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   //   info (If we're using speculative optimizations)
   std::map<ObjectMap::ObjID, Bitmap> dyn_pts;
   if (do_spec) {
-    PerfTimerPrinter dyn_timer(llvm::dbgs(), "Dynamic Ptsto Info");
+    util::PerfTimerPrinter dyn_timer(llvm::dbgs(), "Dynamic Ptsto Info");
     dyn_pts = addDynPtstoInfo(m, graph, cfg, omap);
   }
 
   {
-    PerfTimerPrinter partition_timer(llvm::dbgs(), "computePartitions");
+    util::PerfTimerPrinter partition_timer(llvm::dbgs(), "computePartitions");
     if (computePartitions(graph, cfg, aux, omap)) {
       error("ComputePartitions failure!");
     }
@@ -328,7 +328,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
 
   // Compute SSA for each partition
   {
-    PerfTimerPrinter part_dug_timer(llvm::dbgs(), "addPartitionsToDUG");
+    util::PerfTimerPrinter part_dug_timer(llvm::dbgs(), "addPartitionsToDUG");
     if (addPartitionsToDUG(graph, cfg, omap)) {
       error("ComputePartSSA failure!");
     }
@@ -338,7 +338,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
 
   // Finally, solve the graph
   {
-    PerfTimerPrinter solve_timer(llvm::dbgs(), "solve");
+    util::PerfTimerPrinter solve_timer(llvm::dbgs(), "solve");
     if (solve(graph, std::move(dyn_pts))) {
       error("Solve failure!");
     }

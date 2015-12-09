@@ -236,8 +236,34 @@ class ConstraintGraph {
     typedef ObjectMap::ObjID ObjID;
 
     struct cons_id { };
-    typedef ID<cons_id, int32_t>  ConsID;
+    typedef util::ID<cons_id, int32_t>  ConsID;
     //}}}
+
+    class IndirectCallInfo {
+      //{{{
+     public:
+       IndirectCallInfo(bool is_pointer, std::vector<ObjID> args) :
+           isPointer_(is_pointer), args_(std::move(args)) { }
+
+       bool isPointer() const {
+         return isPointer_;
+       }
+
+       typedef std::vector<ObjID>::const_iterator const_iterator;
+
+       const_iterator begin() const {
+         return std::begin(args_);
+       }
+
+       const_iterator end() const {
+         return std::end(args_);
+       }
+
+     private:
+      bool isPointer_;
+      std::vector<ObjID> args_;
+      //}}}
+    };
 
     // Modifiers {{{
     ConsID add(ConstraintType type, ObjID d, ObjID s) {
@@ -270,6 +296,16 @@ class ConstraintGraph {
 
       auto id = ConsID(constraints_.size()-1);
       return id;
+    }
+
+    void addIndirectCall(ObjID call_id, bool is_pointer, std::vector<ObjID> args) {
+      indirectCalls_.emplace(std::piecewise_construct,
+          std::forward_as_tuple(call_id),
+          std::forward_as_tuple(is_pointer, std::move(args)));
+    }
+
+    bool isIndirCall(ObjectMap::ObjID id) const {
+      return indirectCalls_.find(id) != std::end(indirectCalls_);
     }
 
     void removeConstraint(std::unique_ptr<Constraint> &pcons) {
@@ -351,6 +387,33 @@ class ConstraintGraph {
       return std::end(constraints_);
     }
 
+    typedef std::map<ObjID, IndirectCallInfo>::iterator indir_iterator;
+    typedef std::map<ObjID, IndirectCallInfo>::const_iterator const_indir_iterator;
+
+    indir_iterator indir_begin() {
+      return std::begin(indirectCalls_);
+    }
+
+    indir_iterator indir_end() {
+      return std::end(indirectCalls_);
+    }
+
+    const_indir_iterator indir_begin() const {
+      return std::begin(indirectCalls_);
+    }
+
+    const_indir_iterator indir_end() const {
+      return std::end(indirectCalls_);
+    }
+
+    const_indir_iterator indir_cbegin() const {
+      return std::begin(indirectCalls_);
+    }
+
+    const_indir_iterator indir_cend() const {
+      return std::end(indirectCalls_);
+    }
+
     //}}}
 
  private:
@@ -360,6 +423,9 @@ class ConstraintGraph {
     // Tracks casts from pointers to integers, to help improve the accuracy of
     //   I2P casts
     std::map<const llvm::Value *, ObjID> P2ICast_;
+
+    // ID of the call inst -> ret id
+    std::map<ObjID, IndirectCallInfo> indirectCalls_;
 
     //}}}
   //}}}
