@@ -127,7 +127,7 @@ ObjectMap::ObjID getValue(ConstraintGraph &cg, ObjectMap &omap,
 struct aux_id { };
 typedef util::ID<aux_id, int32_t, -1> AuxID;
 
-void SpecSFS::identifyAUXFcnCallRetInfo(CFG &cfg,
+void identifyAUXFcnCallRetInfo(CFG &cfg,
     ObjectMap &omap, const Andersens &aux,
     const IndirFunctionInfo *dyn_info) {
   // If we don't have dynamic info, or we're explicitly not using it:
@@ -234,7 +234,7 @@ void SpecSFS::identifyAUXFcnCallRetInfo(CFG &cfg,
   } else {
     std::for_each(cfg.indirect_cbegin(), cfg.indirect_cend(),
         // We take different arguments, depending on if we're debugging...
-        [this, &cfg, &omap, &dyn_info]
+        [&cfg, &omap, &dyn_info]
         (const std::pair<ConstraintGraph::ObjID, CFG::CFGid> &pair) {
       const llvm::CallInst *cci =
         cast<llvm::CallInst>(omap.valueAtID(pair.first));
@@ -1075,7 +1075,8 @@ static void addConstraintsForIndirectCall(ConstraintGraph &cg, ObjectMap &omap,
       [&omap, &args] (const llvm::Use &arg) {
     args.push_back(omap.createPhonyID(arg.get()));
   });
-  cg.addIndirectCall(call_id, is_pointer, std::move(args));
+  auto callee_id = omap.getValue(&called_val);
+  cg.addIndirectCall(call_id, is_pointer, callee_id, std::move(args));
 }
 
 static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
@@ -1671,14 +1672,15 @@ static void idInsertInst(ConstraintGraph &cg, ObjectMap &omap,
 //}}}
 
 // Instruction parsing helpers {{{
-void SpecSFS::processBlock(const UnusedFunctions &unused_fcns,
+void processBlock(const UnusedFunctions &unused_fcns,
     ConstraintGraph &cg, CFG &cfg,
     std::map<const llvm::BasicBlock *, CFG::CFGid> &seen,
-    ObjectMap &omap, const llvm::BasicBlock &BB, CFG::CFGid parent_id) {
+    ObjectMap &omap, const llvm::BasicBlock &BB, CFG::CFGid parent_id,
+    AssumptionSet &as) {
   // If this block is never used, don't process it! -- This includes adding
   //   edges from/to parents
   if (do_spec && !unused_fcns.isUsed(&BB)) {
-    addSpeculativeAssumption(std::unique_ptr<Assumption>(
+    as.add(std::unique_ptr<Assumption>(
           new DeadCodeAssumption(const_cast<llvm::BasicBlock *>(&BB))));
 
     return;
@@ -1805,14 +1807,14 @@ void SpecSFS::processBlock(const UnusedFunctions &unused_fcns,
 
   // Process all of our successor blocks (In DFS order)
   std::for_each(succ_begin(&BB), succ_end(&BB),
-      [this, &cg, &cfg, &seen, &omap, next_id, &unused_fcns]
+      [&cg, &cfg, &seen, &omap, next_id, &unused_fcns, &as]
       (const llvm::BasicBlock *succBB) {
-    processBlock(unused_fcns, cg, cfg, seen, omap, *succBB, next_id);
+    processBlock(unused_fcns, cg, cfg, seen, omap, *succBB, next_id, as);
   });
 }
 
-void SpecSFS::scanFcn(const UnusedFunctions &unused_fcns, ConstraintGraph &cg,
-    CFG &cfg, ObjectMap &omap, const llvm::Function &fcn) {
+void scanFcn(const UnusedFunctions &unused_fcns, ConstraintGraph &cg,
+    CFG &cfg, ObjectMap &omap, const llvm::Function &fcn, AssumptionSet &as) {
   // SFS adds instructions to graph, we've already added them?
   //   So we don't need to worry about it
   // Add instructions to graph
@@ -1828,13 +1830,13 @@ void SpecSFS::scanFcn(const UnusedFunctions &unused_fcns, ConstraintGraph &cg,
   // Now create constraints in depth first order:
   std::map<const llvm::BasicBlock *, CFG::CFGid> seen;
   processBlock(unused_fcns, cg, cfg, seen, omap,
-      fcn.getEntryBlock(), CFG::CFGid::invalid());
+      fcn.getEntryBlock(), CFG::CFGid::invalid(), as);
 }
 //}}}
 
 //}}}
 
-bool SpecSFS::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
+bool ConstraintPass::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
   //{{{
   // Okay, we need to identify all possible objects within the module, then
   //   insert them into our object map
@@ -1956,8 +1958,9 @@ bool SpecSFS::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
   //}}}
 }
 
-bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
-    const llvm::Module &M, const UnusedFunctions &unused_fcns) {
+bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
+    ObjectMap &omap, const llvm::Module &M, const UnusedFunctions &unused_fcns,
+    AssumptionSet &as) {
   //{{{
 
   // Special Constraints {{{
@@ -2120,7 +2123,7 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
         // Any arguments for main have their own objects...
         if (fcn.getName() == "main") {
           std::for_each(fcn.arg_begin(), fcn.arg_end(),
-              [&cg, &omap, &cfg]
+              [&cg, &omap, &cfg, &as]
               (const llvm::Argument &arg) {
             if (llvm::isa<llvm::PointerType>(arg.getType())) {
               // NOTE: We don't have to add value for type because structures
@@ -2152,7 +2155,7 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
           });
         }
 
-        scanFcn(unused_fcns, cg, cfg, omap, fcn);
+        scanFcn(unused_fcns, cg, cfg, omap, fcn, as);
       // There is no body... We handle this via external calls?
       } else {
         /*
@@ -2202,7 +2205,7 @@ bool SpecSFS::createConstraints(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
       //   function
       auto &bb = fcn.getEntryBlock();
 
-      addSpeculativeAssumption(std::unique_ptr<Assumption>(
+      as.add(std::unique_ptr<Assumption>(
             new DeadCodeAssumption(const_cast<llvm::BasicBlock *>(&bb))));
     }
   }

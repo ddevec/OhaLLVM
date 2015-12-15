@@ -60,10 +60,15 @@ struct part_id { };
 typedef util::ID<part_id, int32_t> __PartID;
 
 // Lowest priority dual queue work queue -- what sfs uses
+template<typename vtype>
 class Worklist {
   //{{{
  public:
-    DUGNode *pop(uint32_t &prio) {
+    typedef vtype value_type;
+    typedef vtype * pointer;
+    typedef vtype & reference;
+
+    pointer pop(uint32_t &prio) {
       // Try getting our next heap
       if (heap_.empty()) {
         heap_.swap(nextHeap_);
@@ -85,7 +90,7 @@ class Worklist {
       return ret;
     }
 
-    void push(DUGNode *node, uint32_t prio) {
+    void push(pointer node, uint32_t prio) {
       nextHeap_.emplace_back(node, prio);
       std::push_heap(std::begin(nextHeap_), std::end(nextHeap_));
     }
@@ -94,10 +99,10 @@ class Worklist {
     class HeapEntry {
       //{{{
      public:
-        HeapEntry(DUGNode *node, uint32_t prio) :
+        HeapEntry(pointer node, uint32_t prio) :
           node_(node), prio_(prio) { }
 
-        DUGNode *node() const {
+        pointer node() const {
           return node_;
         }
 
@@ -116,7 +121,7 @@ class Worklist {
         }
 
      private:
-        DUGNode *node_;
+        pointer node_;
         uint32_t prio_;
       //}}}
     };
@@ -150,7 +155,7 @@ class Worklist {
 };
 */
 
-// FIXME: BDDs
+// FIXME: ?BDDs?
 class PtstoSet {
   //{{{
  public:

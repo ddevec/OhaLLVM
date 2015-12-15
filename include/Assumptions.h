@@ -470,6 +470,8 @@ class Assumption {  //{{{
       DeadCode
     };
 
+    virtual Assumption *clone() const = 0;
+
     Kind getKind() const {
       return kind_;
     }
@@ -518,9 +520,12 @@ class PtstoAssumption : public Assumption {  //{{{
           Assumption(Assumption::Kind::DynPtsto),
           instOrArg_(inst), ptstos_(ptstos) { }
 
-
     static bool classof(const Assumption *a) {
       return a->getKind() == Assumption::Kind::DynPtsto;
+    }
+
+    Assumption *clone() const override {
+      return new PtstoAssumption(*this);
     }
 
  private:
@@ -552,6 +557,10 @@ class DeadCodeAssumption : public Assumption {  //{{{
       return a->getKind() == Assumption::Kind::DeadCode;
     }
 
+    Assumption *clone() const override {
+      return new DeadCodeAssumption(*this);
+    }
+
  private:
     llvm::BasicBlock *bb_;
 
@@ -568,6 +577,70 @@ class DeadCodeAssumption : public Assumption {  //{{{
 };
 //}}}
 //}}}
+//
+class AssumptionSet {
+  //{{{
+ public:
+  // Constructors {{{
+  AssumptionSet() = default;
+  AssumptionSet(const AssumptionSet &as) : assumptions_(as.size()) {
+    assumptions_.reserve(as.size());
+    for (auto &pasm : as) {
+      assumptions_.emplace_back(pasm->clone());
+    }
+  }
+
+  AssumptionSet &operator=(const AssumptionSet &) = delete;
+
+  AssumptionSet(AssumptionSet &&) = default;
+  AssumptionSet &operator=(AssumptionSet &&) = default;
+  //}}}
+
+  // Accessors {{{
+  size_t size() const {
+    return assumptions_.size();
+  }
+  //}}}
+
+  // Iteration {{{
+  typedef std::vector<std::unique_ptr<Assumption>>::iterator iterator;
+  typedef std::vector<std::unique_ptr<Assumption>>::const_iterator
+    const_iterator;
+
+  iterator begin() {
+    return std::begin(assumptions_);
+  }
+
+  iterator end() {
+    return std::end(assumptions_);
+  }
+
+  const_iterator cbegin() const {
+    return std::begin(assumptions_);
+  }
+
+  const_iterator cend() const {
+    return std::end(assumptions_);
+  }
+
+  const_iterator begin() const {
+    return std::begin(assumptions_);
+  }
+
+  const_iterator end() const {
+    return std::end(assumptions_);
+  }
+  //}}}
+
+  void add(std::unique_ptr<Assumption> a) {
+    assumptions_.emplace_back(std::move(a));
+  }
+
+ private:
+  std::vector<std::unique_ptr<Assumption>> assumptions_;
+  //}}}
+};
+
 
 // Helper functions {{{
 llvm::Function *getAllocaFunction(llvm::Module &m);

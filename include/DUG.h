@@ -43,7 +43,7 @@ class DUGNode : public SEG::Node {
         node->getKind() < NodeKind::DUGNodeEnd;
     }
 
-    virtual void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
+    virtual void process(DUG &dug, TopLevelPtsto &pts, Worklist<DUGNode> &wl,
         const std::vector<uint32_t> &priority) = 0;
 
     virtual PtstoGraph &in() {
@@ -636,7 +636,7 @@ class DUG {
         }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist<DUGNode> &wl,
             const std::vector<uint32_t> &priority) override;
 
         static bool classof(const SEG::Node *node) {
@@ -658,7 +658,7 @@ class DUG {
         }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist<DUGNode> &wl,
             const std::vector<uint32_t> &priority) override;
 
         static bool classof(const SEG::Node *node) {
@@ -685,7 +685,7 @@ class DUG {
           realDest_(dest) { }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist<DUGNode> &wl,
             const std::vector<uint32_t> &priority) override;
 
         static bool classof(const SEG::Node *node) {
@@ -866,7 +866,7 @@ class DUG {
         }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist<DUGNode> &wl,
             const std::vector<uint32_t> &priority) override;
 
         static bool classof(const SEG::Node *node) {
@@ -889,10 +889,10 @@ class DUG {
             realDest_(dest) { }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist<DUGNode> &wl,
             const std::vector<uint32_t> &priority) override;
 
-        void processShared(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
+        void processShared(DUG &dug, TopLevelPtsto &pts, Worklist<DUGNode> &wl,
             const std::vector<uint32_t> &priority,
             PtstoGraph &addr_taken_pts);
 
@@ -923,7 +923,7 @@ class DUG {
           realDest_(dest) { }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist<DUGNode> &wl,
             const std::vector<uint32_t> &priority) override;
 
         static bool classof(const SEG::Node *node) {
@@ -960,7 +960,7 @@ class DUG {
           : PartNode(NodeKind::PhiNode, node_id, id, id, offset) { }
 
         // NOTE: Process implemented in "Solve.cpp"
-        void process(DUG &dug, TopLevelPtsto &pts, Worklist &wl,
+        void process(DUG &dug, TopLevelPtsto &pts, Worklist<DUGNode> &wl,
             const std::vector<uint32_t> &priority) override;
 
         static bool classof(const SEG::Node *node) {

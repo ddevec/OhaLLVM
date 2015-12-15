@@ -10,11 +10,14 @@
 #include <utility>
 #include <vector>
 
-#include "include/SpecSFS.h"
+#include "include/AndersHelpers.h"
 #include "include/DUG.h"
-#include "include/SolveHelpers.h"
 #include "include/Debug.h"
+#include "include/SolveHelpers.h"
+#include "include/SpecAnders.h"
+#include "include/SpecSFS.h"
 
+// SpecSFS Solve {{{
 int32_t dbg_dugnodeid(DUGNode *node) {
   return node->id().val();
 }
@@ -25,7 +28,7 @@ bool SpecSFS::solve(DUG &dug,
   //   solve evaluation
   std::vector<ObjectMap::ObjID> dests;
   std::vector<uint32_t> priority;
-  Worklist work;
+  Worklist<DUGNode> work;
 
   logout("SOLVE\n");
 
@@ -84,8 +87,8 @@ bool SpecSFS::solve(DUG &dug,
   return false;
 }
 
-void DUG::AllocNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
-    const std::vector<uint32_t> &priority) {
+void DUG::AllocNode::process(DUG &dug, TopLevelPtsto &pts_top,
+    Worklist<DUGNode> &work, const std::vector<uint32_t> &priority) {
   dout("Process alloc start\n");
   // Update the top level variables for this alloc
   PtstoSet &dest_pts = pts_top.at(dest(), offset());
@@ -115,8 +118,8 @@ void DUG::AllocNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
   }
 }
 
-void DUG::CopyNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
-    const std::vector<uint32_t> &priority) {
+void DUG::CopyNode::process(DUG &dug, TopLevelPtsto &pts_top,
+    Worklist<DUGNode> &work, const std::vector<uint32_t> &priority) {
   dout("Process copy start\n");
 
   // Update the top level variables for this copy
@@ -155,7 +158,7 @@ void DUG::CopyNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
 }
 
 void DUG::LoadNode::processShared(DUG &dug, TopLevelPtsto &pts_top,
-    Worklist &work, const std::vector<uint32_t> &priority,
+    Worklist<DUGNode> &work, const std::vector<uint32_t> &priority,
     PtstoGraph &in) {
   assert(!isDUGRep());
   dout("Process load start\n");
@@ -244,8 +247,8 @@ void DUG::LoadNode::processShared(DUG &dug, TopLevelPtsto &pts_top,
   logout("ENDSHARED\n");
 }
 
-void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
-    const std::vector<uint32_t> &priority) {
+void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top,
+    Worklist<DUGNode> &work, const std::vector<uint32_t> &priority) {
   assert(isDUGRep());
   dout("Process load start\n");
   // add a ptsto from src to the values contained in our partition set from the
@@ -362,8 +365,8 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
   }
 }
 
-void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
-    const std::vector<uint32_t> &priority) {
+void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top,
+    Worklist<DUGNode> &work, const std::vector<uint32_t> &priority) {
   dout("Process store start\n");
   dout("Store is: " << rep() << "\n");
   // if strong && concrete
@@ -485,7 +488,7 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top, Worklist &work,
   }
 }
 
-void DUG::PhiNode::process(DUG &dug, TopLevelPtsto &, Worklist &work,
+void DUG::PhiNode::process(DUG &dug, TopLevelPtsto &, Worklist<DUGNode> &work,
     const std::vector<uint32_t> &priority) {
   dout("Process PHI start\n");
   // For all successors:
@@ -524,7 +527,7 @@ void DUG::PhiNode::process(DUG &dug, TopLevelPtsto &, Worklist &work,
 
 // Constant nodes! currently caused by the cold-path dynamic ptsto optimization
 void DUG::ConstNode::process(DUG &dug, TopLevelPtsto &pts_top,
-    Worklist &work, const std::vector<uint32_t> &priority) {
+    Worklist<DUGNode> &work, const std::vector<uint32_t> &priority) {
   // Constant nodes only run once, as they break incoming edges
   if (!run_) {
     run_ = true;
@@ -565,7 +568,7 @@ void DUG::ConstNode::process(DUG &dug, TopLevelPtsto &pts_top,
 
 // Constant nodes! currently caused by the cold-path dynamic ptsto optimization
 void DUG::ConstPartNode::process(DUG &dug, TopLevelPtsto &pts_top,
-    Worklist &work, const std::vector<uint32_t> &priority) {
+    Worklist<DUGNode> &work, const std::vector<uint32_t> &priority) {
   // Constant nodes only run once, as they break incoming edges
   if (!run_) {
     run_ = true;
@@ -628,4 +631,210 @@ void DUG::ConstPartNode::process(DUG &dug, TopLevelPtsto &pts_top,
     }
   });
 }
+//}}}
+
+// Anders Solve {{{
+bool SpecAnders::solve() {
+  // We're initially given a graph of nodes, with constraints representing the
+  //   information flow relations within the nodes.
+  // Create a worklist
+  // Also, create the priority list for the worklist
+  std::vector<uint32_t> priority;
+  Worklist<AndersNode> work;
+
+  logout("SOLVE\n");
+
+  // Populate the worklist with all nodes
+  for (auto &node : graph_) {
+    work.push(&node, 0);
+  }
+
+  priority.assign(graph_.size(), 0);
+
+  int32_t vtime = 1;
+  uint32_t prio;
+  // While the worklist has work
+  while (auto pnd = work.pop(prio)) {
+    // Don't process the node if we've processed it this round
+     /*
+    llvm::dbgs() << "pnd->id() is: " << pnd->id() << "\n";
+    llvm::dbgs() << "priority is: " << priority[pnd->id().val()] << "\n";
+    */
+    if (prio < priority[pnd->id().val()]) {
+      continue;
+    }
+
+    // Pop the next node from the worklist
+    priority[pnd->id().val()] = vtime;
+    vtime++;
+
+    // llvm::dbgs() << "Processing node: " << pnd->id() << "\n";
+    // For each constraint in this node
+    for (auto &pcons : pnd->constraints()) {
+      // Process the constraint
+      pcons->process(graph_, work, priority);
+    }
+
+    // Also, now that they've updated their info, lets update pointsto sets
+
+    // Cleanup succs?
+    // pnd->succs().unique();
+
+    for (auto succ_id : pnd->succs()) {
+      auto &succ_node = graph_.getNode(succ_id);
+
+      /*
+      llvm::dbgs() << "Unioning succ: " << succ_node.id() << " and " <<
+        pnd->id() << "\n";
+        */
+      bool ch = (succ_node.ptsto() |= pnd->ptsto());
+
+      if (ch) {
+        work.push(&succ_node, priority[succ_node.id().val()]);
+      }
+    }
+  }
+
+  return false;
+}
+
+void AndersStoreCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
+    const std::vector<uint32_t> &priority) const {
+  // This is a store:
+  // *n < b
+  // For each points-to in dest
+  bool ch = false;
+  auto &dest_node = graph.getNode(dest());
+  auto &dest_pts = dest_node.ptsto();
+  auto &src_node = graph.getNode(src());
+  for (auto pts_id : dest_pts) {
+    ch |= src_node.succs().insert(pts_id);
+  }
+
+  if (ch) {
+    wl.push(&src_node, priority[src().val()]);
+  }
+}
+
+void AndersLoadCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
+    const std::vector<uint32_t> &priority) const {
+  // This is a store:
+  // a < *n
+  // For each points-to in src
+  auto &src_node = graph.getNode(src());
+  auto &src_pts = src_node.ptsto();
+  for (auto pts_id : src_pts) {
+    auto &pt_node = graph.getNode(pts_id);
+    bool ch = pt_node.succs().insert(dest());
+
+    if (ch) {
+      wl.push(&pt_node, priority[pts_id.val()]);
+    }
+  }
+}
+
+/*
+void AndersAllocCons::process(AndersGraph &graph, Worklist &wl,
+    const std::vector<uint32_t> &priority) const {
+  // Allocation:
+  //   Update the ptsto of dest with src
+  auto &dest_node = graph.getNode(dest());
+
+  bool ch = dest_node.ptsto().set(src());
+
+  if (ch) {
+    wl.push(&dest_node, priority[dest().val()]);
+  }
+}
+*/
+
+/*
+void AndersCopyCons::process(AndersGraph &graph, Worklist &wl,
+    const std::vector<uint32_t> &priority) const {
+  auto &dest_node = graph.getNode(dest());
+  auto &src_node = graph.getNode(src());
+
+  bool ch = dest_node.ptsto() |= src_node.ptsto();
+
+  if (ch) {
+    wl.push(&dest_node, priority[dest().val()]);
+  }
+}
+*/
+
+// Handles constraints related to indirect functions
+void AndersIndirCallCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
+    const std::vector<uint32_t> &priority) const {
+  // We keep track of the arg nodes for this callsite
+  auto &args = args_;
+
+  // We keep track of the ret for this callsite
+  auto ret_id = ret();
+
+  auto &callee_node = graph.getNode(callee());
+
+  // For each function in the points-to set of the callee pointer:
+  for (auto obj_id : callee_node.ptsto()) {
+    // Okay, we have a function here...
+    // Get the args for this function (from aux info in the graph)
+    auto &fcn_info = graph.getFcnInfo(obj_id);
+    auto &dest_args = fcn_info.second;
+    auto dest_ret = fcn_info.first;
+
+    // Create an edge from our args to their args
+    // ... and push that node to our worklist
+    int idx = 0;
+    for (auto src_arg_id : args) {
+      auto dest_arg_id = dest_args[idx];
+
+      // okay, got the dest args... add edges
+      // llvm::dbgs() << "  src_arg_id: " << src_arg_id << "\n";
+      auto &src_arg_node = graph.getNode(src_arg_id);
+      bool ch = src_arg_node.succs().insert(dest_arg_id);
+
+      // Also add all of those nodes to our worklist
+      if (ch) {
+        wl.push(&src_arg_node, priority[src_arg_id.val()]);
+      }
+
+      idx++;
+    }
+
+    // Get the rets for these functions (from the graph)
+    if (ret_id != ObjectMap::ObjID::invalid()) {
+      // Create an edge from their ret to our ret (if we have a ret)
+      // ... and push that node to our worklist
+      auto &ret_node = graph.getNode(dest_ret);
+      bool ch = ret_node.succs().insert(ret_id);
+      if (ch) {
+        wl.push(&ret_node, priority[dest_ret.val()]);
+      }
+    }
+  }
+}
+
+
+// FIXME: From solve helpers..
+void AndersNode::EdgeSet::unique(AndersGraph &graph) {
+  // Convert all ids to rep ids:
+  std::vector<ObjID> new_edges;
+  for (auto id : edges_) {
+    id = graph.getRep(id);
+
+    // Ignore invalid/deleted nodes
+    if (id == ObjID::invalid()) {
+      continue;
+    }
+
+    new_edges.push_back(id);
+  }
+
+  edges_ = std::move(new_edges);
+  std::sort(std::begin(edges_), std::end(edges_));
+  auto it = std::unique(std::begin(edges_), std::end(edges_));
+  edges_.erase(it, std::end(edges_));
+}
+
+
+//}}}
 

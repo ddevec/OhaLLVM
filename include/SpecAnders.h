@@ -2,14 +2,14 @@
  * Copyright (C) 2015 David Devecsery
  */
 
-#ifndef INCLUDE_SPECSFS_H_
-#define INCLUDE_SPECSFS_H_
+#ifndef INCLUDE_SPECANDERS_H_
+#define INCLUDE_SPECANDERS_H_
 
 #include <map>
 #include <memory>
 #include <vector>
 
-#include "include/Andersens.h"
+#include "include/AndersHelpers.h"
 #include "include/Assumptions.h"
 #include "include/ConstraintPass.h"
 #include "include/DUG.h"
@@ -26,12 +26,12 @@
 
 // The actual SFS module, most of the work is done via the ObjectMap and Def-Use
 // Graph (DUG), these methods mostly operate on them.
-class SpecSFS : public llvm::ModulePass,
+class SpecAnders : public llvm::ModulePass,
                 public llvm::AliasAnalysis {
  public:
   static char ID;
-  SpecSFS();
-  explicit SpecSFS(char &id);
+  SpecAnders();
+  explicit SpecAnders(char &id);
 
   virtual bool runOnModule(llvm::Module &M);
 
@@ -46,7 +46,7 @@ class SpecSFS : public llvm::ModulePass,
   }
 
   const char *getPassName() const override {
-    return "SpecSFS";
+    return "SpecAnders";
   }
 
   /*
@@ -69,13 +69,11 @@ class SpecSFS : public llvm::ModulePass,
   bool pointsToConstantMemory(const AliasAnalysis::Location &Loc,
       bool OrLocal = false);
 
+  /*
   virtual void deleteValue(llvm::Value *V);
 
   virtual void copyValue(llvm::Value *From, llvm::Value *To);
-
-  PtstoSet &getPtstoSet(const llvm::Value *val) {
-    return pts_top_.at(omap_.getValue(val));
-  }
+  */
 
   const AssumptionSet &getSpecAssumptions() const {
     return specAssumptions_;
@@ -86,33 +84,18 @@ class SpecSFS : public llvm::ModulePass,
   }
 
  private:
-  // The functions which do the primary (high-level) work of SFS
-
-
-  // Computes SSA form of the DUG, given its current edge set
-  //   Used to compute SSA for top lvl
-  void computeSSA(CFG::ControlFlowGraph &cfg);
-
   // Takes dynamic pointsto information, as well as hot/cold basic block
   //   information, and trims the edges of the DUG appropriately
   std::map<ObjectMap::ObjID, Bitmap>
-  addDynPtstoInfo(llvm::Module &m, DUG &graph, CFG &cfg, ObjectMap &omap);
-
-
-  // Computes partitons based on the conservative address-taken info, the
-  //   partitions are based on "access-equivalence"
-  // NOTE: ObjectMap is required to convert DUG::ObjID to llvm::Value as
-  //   Andersens works with llvm::Value's
-  bool computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
-      ObjectMap &omap);
-
-  // Computes the SSA form of each partition
-  bool addPartitionsToDUG(DUG &graph, CFG &cfg, const ObjectMap &omap);
+  addDynPtstoInfo(llvm::Module &m, DUG &graph, ObjectMap &omap);
 
   // Solves the remaining graph, providing full flow-sensitive inclusion-based
   // points-to analysis
-  bool solve(DUG &dug,
-      std::map<ObjectMap::ObjID, Bitmap> dyn_constraints);
+  bool solve();
+
+  // HVN
+  // HRU
+  // HCD
 
  protected:
   // Optimizes the top-level constraints in the DUG
@@ -123,38 +106,12 @@ class SpecSFS : public llvm::ModulePass,
   bool optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
       ObjectMap &omap);
 
-  // Adds additional indirect call info, given an AUX analysis
-  //   (in this case, Andersens analysis)
-  bool addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
-      const Andersens &aux, const IndirFunctionInfo *, ObjectMap &omap);
-
   // Private data {{{
   ObjectMap omap_;
-  TopLevelPtsto pts_top_;
+  AndersGraph graph_;
 
   AssumptionSet specAssumptions_;
-
-  // FIXME: Should put in another entity? oh well...
-  // std::map<int, ObjectMap::ObjID> aux_to_obj_;
-  std::vector<ObjectMap::ObjID> aux_to_obj_;
-  std::map<ObjectMap::ObjID, int> special_aux_;
-
-  ObjectMap::ObjID getObjIDRep(ObjectMap::ObjID id) {
-    auto it = obj_to_rep_.find(id);
-    if (it == std::end(obj_to_rep_)) {
-      return id;
-    }
-
-    it->second = getObjIDRep(it->second);
-    return it->second;
-  }
-
-  void setObjIDRep(ObjectMap::ObjID id, ObjectMap::ObjID rep) {
-    obj_to_rep_[id] = rep;
-  }
-
-  std::map<ObjectMap::ObjID, ObjectMap::ObjID> obj_to_rep_;
   //}}}
 };
 
-#endif  // INCLUDE_SPECSFS_H_
+#endif  // INCLUDE_SPECANDERS_H_

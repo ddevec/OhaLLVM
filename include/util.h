@@ -11,7 +11,9 @@
 #include <chrono>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "include/Debug.h"
 
@@ -25,7 +27,27 @@
 #define if_timers_else(X, Y) X
 #endif
 
+namespace std14 {
+// General Helpers {{{
+template <typename T, typename... va_args>
+std::unique_ptr<T> make_unique(va_args&&... args) {
+  return std::unique_ptr<T>(new T(std::forward<va_args>(args)...));
+}
+
+template <typename T>
+typename T::const_iterator cbegin(const T &container) {
+  return std::begin(container);
+}
+
+template <typename T>
+typename T::const_iterator cend(const T &container) {
+  return std::end(container);
+}
+//}}}
+}  // namespace std14
+
 namespace util {
+
 // PerfTimers {{{
 class PerfTimer {
   //{{{
@@ -145,6 +167,89 @@ class PerfTimerPrinter {
   //}}}
 };
 //}}}
+
+/*
+// Union-find data structure {{{
+template<typename v_type>
+class UnionFind {
+ public:
+  // Typedefs {{{
+  typedef v_type value_type;
+  typedef v_type & reference;
+  typedef const v_type & const_reference;
+  typedef v_type * pointer;
+  typedef const v_type * const_pointer;
+  //}}}
+  
+  // Constructors {{{
+  UnionFind() = default;
+  UnionFind(const UnionFind &rhs) {
+    data_.reserve(data_.size());
+    for (auto &node : data) {
+      data_.emplace_back(node);
+    }
+  }
+
+  UnionFind(UnionFind &&rhs) = default;
+
+  UnionFind &operator=(const UnionFind &rhs) {
+    data_.reserve(data_.size());
+    for (auto &node : data) {
+      data_.emplace_back(node);
+    }
+  }
+
+  UnionFind &operator=UnionFind(UnionFind &&rhs) = default;
+  //}}}
+
+  // Modifiers {{{
+  iterator emplace_back
+  // }}}
+
+ private:
+  class Node {
+    //{{{
+   public:
+    static size_t NODE_REP = std::numeric_limits<size_t>::max;
+
+    Node() = default;
+    Node(const value_type &data) : data_(new value_type(data)) { }
+    Node(value_type &&data) : data_(new value_type(data)) { }
+
+    template<typename... va_args>
+    Node(va_args&&... args) :
+      data_(new value_type(std::forward<va_args>(args)...)) { }
+
+    const_reference data() const {
+      return data_;
+    }
+
+    reference data() {
+      return data_;
+    }
+
+    bool isRep() const {
+      return rep_ == NODE_REP;
+    }
+
+    size_t rep() const {
+      return rep_;
+    }
+
+    void setRep(size_t rep) const {
+      rep_ = rep;
+    }
+
+   private:
+    std::unqiue_ptr<value_type> data_;
+    mutable size_t rep_ = NODE_REP;
+    //}}}
+  };
+
+  std::vector<Node> data_;
+};
+//}}}
+*/
 
 // map Key/Value iteration {{{
 // Value Iterators {{{

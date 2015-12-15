@@ -142,7 +142,7 @@ class ObjectMap {
         StructInfo(StructInfo &&) = default;
         StructInfo &operator=(StructInfo &&) = default;
 
-        StructInfo(const StructInfo &) = delete;
+        StructInfo(const StructInfo &) = default;
         StructInfo &operator=(const StructInfo &) = delete;
 
         // The number of elements in the structure
@@ -260,7 +260,10 @@ class ObjectMap {
 
     // Constructor/Copiers {{{
     ObjectMap();
-    ObjectMap(const ObjectMap &) = delete;
+    // FIXME: Not strictly safe, with the maxStructInfo pointer, but I don't
+    //   want to write a custom constructor which must be contained, for a
+    //   corner case that will likely never come back to bite me...
+    ObjectMap(const ObjectMap &) = default;
     ObjectMap(ObjectMap &&) = delete;
 
     ObjectMap &operator=(const ObjectMap &) = delete;
@@ -640,8 +643,8 @@ class ObjectMap {
       return id.val() >= phonyIdBase;
     }
     */
-
     //}}}
+
  private:
     // Private variables {{{
     // Forward mapping

@@ -107,7 +107,10 @@ set(SPECSFS_SOURCES
   lib/UnusedFunctions/UnusedFunctions.cpp
   lib/PrintID.cpp
 
+  src/ConstraintPass.cpp
+
   src/SpecSFS.cpp
+  src/SpecAnders.cpp
 
   src/Debug.cpp
 

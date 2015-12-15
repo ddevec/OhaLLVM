@@ -159,7 +159,7 @@ SpecSFS::addDynPtstoInfo(llvm::Module &m, DUG &,
                       dyn_bmp.set(cons.val());
                     }
 
-                    addSpeculativeAssumption(std::move(ptsto_aspn));
+                    specAssumptions_.add(std::move(ptsto_aspn));
                   }
                 }
               }

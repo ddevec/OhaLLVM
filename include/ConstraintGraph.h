@@ -98,9 +98,9 @@ class Constraint {
     }
       
 
-    // No copys, yes moves {{{
+    // copy / moves {{{
     Constraint(const Constraint &) = default;
-    Constraint &operator=(const Constraint&) = default;
+    Constraint &operator=(const Constraint &) = default;
 
     Constraint(Constraint &&) = default;
     Constraint &operator=(Constraint&&) = default;
@@ -239,14 +239,28 @@ class ConstraintGraph {
     typedef util::ID<cons_id, int32_t>  ConsID;
     //}}}
 
+    ConstraintGraph() = default;
+    ConstraintGraph(const ConstraintGraph &cg) :
+        P2ICast_(cg.P2ICast_),
+        indirectCalls_(cg.indirectCalls_) {
+      constraints_.reserve(cg.constraints_.size());
+      for (auto &pcons : cg.constraints_) {
+        constraints_.emplace_back(new Constraint(*pcons));
+      }
+    }
+
     class IndirectCallInfo {
       //{{{
      public:
-       IndirectCallInfo(bool is_pointer, std::vector<ObjID> args) :
-           isPointer_(is_pointer), args_(std::move(args)) { }
+       IndirectCallInfo(bool is_pointer, ObjID callee, std::vector<ObjID> args) :
+           isPointer_(is_pointer), callee_(callee), args_(std::move(args)) { }
 
        bool isPointer() const {
          return isPointer_;
+       }
+
+       ObjID callee() const {
+         return callee_;
        }
 
        typedef std::vector<ObjID>::const_iterator const_iterator;
@@ -260,8 +274,9 @@ class ConstraintGraph {
        }
 
      private:
-      bool isPointer_;
-      std::vector<ObjID> args_;
+      const bool isPointer_;
+      const ObjID callee_;
+      const std::vector<ObjID> args_;
       //}}}
     };
 
@@ -298,10 +313,11 @@ class ConstraintGraph {
       return id;
     }
 
-    void addIndirectCall(ObjID call_id, bool is_pointer, std::vector<ObjID> args) {
+    void addIndirectCall(ObjID call_id, bool is_pointer, ObjID callee,
+        std::vector<ObjID> args) {
       indirectCalls_.emplace(std::piecewise_construct,
           std::forward_as_tuple(call_id),
-          std::forward_as_tuple(is_pointer, std::move(args)));
+          std::forward_as_tuple(is_pointer, callee, std::move(args)));
     }
 
     bool isIndirCall(ObjectMap::ObjID id) const {

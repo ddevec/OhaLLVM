@@ -58,20 +58,10 @@ bool PrintID::runOnModule(llvm::Module &M) {
 
   // Clear the def-use graph
   // It should already be cleared, but I'm paranoid
-  ConstraintGraph cg;
-  CFG cfg;
-  ObjectMap &omap = omap_;
-
-  if (identifyObjects(omap, M)) {
-    abort();
-  }
-
-  const UnusedFunctions &unused_fcns =
-      getAnalysis<UnusedFunctions>();
-
-  if (createConstraints(cg, cfg, omap, M, unused_fcns)) {
-    abort();
-  }
+  const auto &cons_pass = getAnalysis<ConstraintPass>();
+  ConstraintGraph cg(cons_pass.getConstraintGraph());
+  CFG cfg(cons_pass.getControlFlowGraph());
+  ObjectMap omap(cons_pass.getObjectMap());
 
   // Also add indirect info... this means we have to wait for Andersen's
   Andersens aux;

@@ -62,20 +62,13 @@ static llvm::cl::opt<bool>
         "Verifies the calculated points-to set is a superset of the dynamic "
         "points-to to"));
 
-llvm::cl::opt<bool>
-  do_spec("specsfs-do-spec", llvm::cl::init(false),
-      llvm::cl::value_desc("bool"),
-      llvm::cl::desc("Determines if specsfs should include speculative dynamic "
-        "runtime information"));
-
 static llvm::cl::opt<std::string>
   glbl_name("specsfs-debug-glbl", llvm::cl::init(""),
       llvm::cl::value_desc("string"),
       llvm::cl::desc("if set specsfs will print the ptsto set for this global"
         " at the end of execution"));
 
-// Error handling functions
-/*{{{*/
+// Error handling functions {{{
 // Don't warn about this (if it is an) unused function... I'm being sloppy
 [[ gnu::unused ]]
 static void print_stack_trace(void) {
@@ -100,7 +93,7 @@ static void error(const std::string &msg) {
   print_stack_trace();
   assert(0);
 }
-/*}}}*/
+//}}}
 
 // Constructor
 SpecSFS::SpecSFS() : llvm::ModulePass(ID) { }
@@ -122,6 +115,13 @@ void SpecSFS::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   // AliasAnalysis::getAnalysisUsage(usage);
   usage.addRequired<llvm::AliasAnalysis>();
   usage.setPreservesAll();
+
+  // Calculates the constraints for this module for both sfs and andersens
+  usage.addRequired<ConstraintPass>();
+
+  // Staging analysis for sfs
+  // usage.addRequired<SpecAnders>();
+
   // For DCE
   usage.addRequired<UnusedFunctions>();
   // For indirect function following
@@ -153,38 +153,17 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
 
   // Clear the def-use graph
   // It should already be cleared, but I'm paranoid
-  ConstraintGraph cg;
-  CFG cfg;
-  ObjectMap &omap = omap_;
-
-  const UnusedFunctions &unused_fcns =
-      getAnalysis<UnusedFunctions>();
-
-  ObjectMap::replaceDbgOmap(omap);
-  {
-    util::PerfTimerPrinter id_timer(llvm::dbgs(), "Identify Objects");
-    // Identify all of the objects in the source
-    if (identifyObjects(omap, m)) {
-      error("Identify objects failure!");
-    }
-  }
-
-  // Get the initial (top-level) constraints set
-  // This should also track the def/use info
-  // NOTE: This function will create a graph of all top-level variables,
-  //   and a def/use mapping, but it will not fill in address-taken edges.
-  //   Those will be populated later, once we have AUX info available.
-  {
-    util::PerfTimerPrinter create_timer(llvm::dbgs(), "CreateConstraints");
-    if (createConstraints(cg, cfg, omap, m, unused_fcns)) {
-      error("CreateConstraints failure!");
-    }
-  }
+  const auto &cons_pass = getAnalysis<ConstraintPass>();
+  ConstraintGraph cg(cons_pass.getConstraintGraph());
+  CFG cfg(cons_pass.getControlFlowGraph());
+  ObjectMap omap(cons_pass.getObjectMap());
 
   // Initial optimization pass
   // Runs HU on the graph as it stands, w/ only top level info filled in
   // Removes any nodes deemed to be non-ptr (definitely null), and merges nodes
   //   with statically equivalent ptsto sets
+  // Does not consider doing anything with indirect edges, as we haven't taken
+  //   control-flow information for those nodes into account yet
   {
     util::PerfTimerPrinter opt_timer(llvm::dbgs(), "optimizeConstarints");
     if (optimizeConstraints(cg, cfg, omap)) {
@@ -279,6 +258,9 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
       aux_to_obj_[aux_val_id] = obj_id;
     });
   }
+
+  const UnusedFunctions &unused_fcns =
+      getAnalysis<UnusedFunctions>();
 
   // Now, fill in the indirect function calls
   {

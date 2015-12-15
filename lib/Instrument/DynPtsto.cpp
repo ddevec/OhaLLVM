@@ -85,6 +85,7 @@ class InstrDynPtsto : public SpecSFS {
 
 void InstrDynPtsto::getAnalysisUsage(llvm::AnalysisUsage &au) const {
   au.addRequired<UnusedFunctions>();
+  au.addRequired<ConstraintPass>();
   au.setPreservesAll();
 }
 
@@ -95,20 +96,10 @@ void InstrDynPtsto::setupSpecSFSids(llvm::Module &M) {
 
   // Clear the def-use graph
   // It should already be cleared, but I'm paranoid
-  ConstraintGraph cg;
-  CFG cfg;
-  ObjectMap &omap = omap_;
-
-  if (identifyObjects(omap, M)) {
-    abort();
-  }
-
-  const UnusedFunctions &unused_fcns =
-      getAnalysis<UnusedFunctions>();
-
-  if (createConstraints(cg, cfg, omap, M, unused_fcns)) {
-    abort();
-  }
+  const auto &cons_pass = getAnalysis<ConstraintPass>();
+  ConstraintGraph cg(cons_pass.getConstraintGraph());
+  CFG cfg(cons_pass.getControlFlowGraph());
+  ObjectMap omap(cons_pass.getObjectMap());
 
   if (optimizeConstraints(cg, cfg, omap)) {
     abort();
