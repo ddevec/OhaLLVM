@@ -6,7 +6,10 @@
 // #define SPECSFS_LOGDEBUG
 
 #include <algorithm>
+#include <limits>
 #include <map>
+#include <set>
+#include <stack>
 #include <utility>
 #include <vector>
 
@@ -16,6 +19,10 @@
 #include "include/SolveHelpers.h"
 #include "include/SpecAnders.h"
 #include "include/SpecSFS.h"
+
+// Number of edges/number of processed nodes before we allow LCD to run
+#define LCD_SIZE 300
+#define LCD_PERIOD std::numeric_limits<int32_t>::max()
 
 // SpecSFS Solve {{{
 int32_t dbg_dugnodeid(DUGNode *node) {
@@ -633,6 +640,147 @@ void DUG::ConstPartNode::process(DUG &dug, TopLevelPtsto &pts_top,
 }
 //}}}
 
+// SCC Helpers (For anders) {{{
+class RunNuutila {
+ public:
+  static const int32_t IndexInvalid = -1;
+
+  RunNuutila(AndersGraph &g, const std::set<AndersNode *> &nodes,
+      Worklist<AndersNode> &wl, const std::vector<uint32_t> &priority) :
+      graph_(g), wl_(wl), priority_(priority) {
+    // For each candidate node, visit it if it hasn't been visited, and compute
+    //   SCCs, as dicated by Nuutila's Tarjan variant
+    nodeData_.resize(graph_.size());
+    for (auto pnode : nodes) {
+      auto &node_data = getData(pnode->id());
+      if (pnode->isRep() && node_data.root == IndexInvalid) {
+        visit2(*pnode);
+      }
+    }
+
+    assert(nodeStack_.empty());
+  }
+
+ private:
+  struct TarjanData {
+    int32_t root = IndexInvalid;
+  };
+
+  struct TarjanData &getData(AndersGraph::ObjID id) {
+    assert(id != AndersGraph::ObjID::invalid());
+    assert(id.val() >= 0);
+    assert(static_cast<size_t>(id.val()) < nodeData_.size());
+    return nodeData_.at(id.val());
+  }
+
+  struct TarjanData &getRepData(AndersGraph::ObjID id) {
+    return getData(graph_.getRep(id));
+  }
+
+  void visit2(AndersNode &node) {
+    assert(merged_.find(node.id()) == std::end(merged_));
+    assert(node.isRep());
+    auto &node_data = getRepData(node.id());
+
+    /*
+    llvm::dbgs() << "Visit: " << node.id() << ": dfs = " << nextIndex_ << "\n";
+    */
+    node_data.root = nextIndex_;
+    auto dfs_idx = nextIndex_;
+    nextIndex_++;
+
+    for (auto succ_pr : node.succs()) {
+      // Don't deal w/ offset nodes in detecting sccs, because they do bad
+      //   things (we would have to calculate the transitive closure of the scc
+      //   for this to be safe...
+      if (succ_pr.second != 0) {
+        continue;
+      }
+
+      auto succ_id = succ_pr.first;
+
+      auto dest_id = graph_.getRep(succ_id);
+      auto dest_data = &getRepData(dest_id);
+
+      // FIXME: Edge cleanup here?
+
+      // Ignore merged successors
+      if (merged_.find(dest_id) == std::end(merged_)) {
+        /*
+        llvm::dbgs() << "      " << node.id() << " succ: " << dest_id << "\n";
+        */
+        if (dest_data->root == IndexInvalid) {
+          visit2(graph_.getNode(dest_id));
+
+          // Need to get new node_data, as we have have merged it in the prior
+          //   loop
+          dest_id = graph_.getRep(dest_id);
+          dest_data = &getRepData(dest_id);
+        }
+
+        if (dest_data->root < node_data.root) {
+          /*
+          llvm::dbgs() << "  node < dest: " << node.id()
+            << " (" << node_data.root << ") <= " << dest_id <<
+            " (" << dest_data->root << ")\n";
+            */
+          node_data.root = dest_data->root;
+        }
+      }
+    }
+
+    // FIXME: Finish edge cleanup here?
+
+    assert(node.isRep());
+
+    /*
+    llvm::dbgs() << "    " << node.id() << " root: " << node_data.root <<
+      ", dfs: " << dfs_idx << "\n";
+      */
+    if (node_data.root == dfs_idx) {
+      bool ch = false;
+
+      while (!nodeStack_.empty()) {
+        auto next_id = nodeStack_.top();
+        auto &next_data = getData(next_id);
+        if (next_data.root < dfs_idx) {
+          break;
+        }
+        // llvm::dbgs() << "  --Stack popping: " << next_id << "\n";
+        nodeStack_.pop();
+
+        auto rep_next = graph_.getRep(next_id);
+
+        // If we weren't already merged (HCD can cause this)
+        if (rep_next != node.id()) {
+          node.merge(graph_.getNode(rep_next));
+        }
+
+        ch = true;
+      }
+
+      merged_.insert(node.id());
+
+      if (ch) {
+        wl_.push(&node, priority_[node.id().val()]);
+      }
+    } else {
+      // llvm::dbgs() << "  ++Stack pushing: " << node.id() << "\n";
+      nodeStack_.push(node.id());
+    }
+  }
+
+  int32_t nextIndex_ = 1;
+  std::stack<AndersGraph::ObjID> nodeStack_;
+  std::vector<TarjanData> nodeData_;
+  std::set<AndersGraph::ObjID> merged_;
+
+  AndersGraph &graph_;
+  Worklist<AndersNode> &wl_;
+  const std::vector<uint32_t> &priority_;
+};
+//}}}
+
 // Anders Solve {{{
 bool SpecAnders::solve() {
   // We're initially given a graph of nodes, with constraints representing the
@@ -653,6 +801,10 @@ bool SpecAnders::solve() {
 
   int32_t vtime = 1;
   uint32_t prio;
+
+  int32_t lcd_last_time = 1;
+  std::set<std::pair<AndersGraph::ObjID, AndersGraph::ObjID>> lcd_edges;
+  std::set<AndersNode *> lcd_nodes;
   // While the worklist has work
   while (auto pnd = work.pop(prio)) {
     // Don't process the node if we've processed it this round
@@ -679,19 +831,54 @@ bool SpecAnders::solve() {
 
     // Cleanup succs?
     // pnd->succs().unique();
+    logout("Node: " << pnd->id() << "\n");
 
-    for (auto succ_id : pnd->succs()) {
+    // FIXME: not sure if this is too high overhead...
+    pnd->succs().unique(graph_);
+
+    for (auto succ_pr : pnd->succs()) {
+      auto succ_id = succ_pr.first;
+      auto succ_offs = succ_pr.second;
+
       auto &succ_node = graph_.getNode(succ_id);
 
       /*
       llvm::dbgs() << "Unioning succ: " << succ_node.id() << " and " <<
         pnd->id() << "\n";
-        */
-      bool ch = (succ_node.ptsto() |= pnd->ptsto());
+      */
+      auto &succ_pts = succ_node.ptsto();
+
+      logout("  i: " << pnd->ptsto() << "\n");
+      logout("  o: " << succ_id << ": " << succ_pts << "\n");
+
+      bool ch = succ_pts.orOffs(pnd->ptsto(), succ_offs,
+          graph_.getStructInfo());
+
+      auto edge = std::make_pair(pnd->id(), succ_node.id());
+      // If we haven't run LCD on this edge before, the points-to sets are not
+      //   empty, and the two points-to sets are equal
+      if (lcd_edges.find(edge) == std::end(lcd_edges) &&
+          !pnd->ptsto().empty() &&
+          pnd->ptsto() == succ_pts) {
+        lcd_nodes.insert(pnd);
+        lcd_edges.insert(edge);
+      }
 
       if (ch) {
         work.push(&succ_node, priority[succ_node.id().val()]);
       }
+    }
+
+
+    // llvm::dbgs() << "lcd_nodes.size(): " << lcd_nodes.size() << "\n";
+    if (lcd_nodes.size() > LCD_SIZE ||
+        (vtime - lcd_last_time) > LCD_PERIOD) {
+      // llvm::dbgs() << " !! Running lcd\n";
+      // Do lcd
+      RunNuutila(graph_, lcd_nodes, work, priority);
+      // Clear lcd_nodes
+      lcd_nodes.clear();
+      lcd_last_time = vtime;
     }
   }
 
@@ -773,42 +960,57 @@ void AndersIndirCallCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
 
   auto &callee_node = graph.getNode(callee());
 
+  logout("Update indir call to: " << callee() << ": " <<
+    callee_node.ptsto() << "\n");
+
   // For each function in the points-to set of the callee pointer:
   for (auto obj_id : callee_node.ptsto()) {
+    logout("  obj_id: " << obj_id << "\n");
     // Okay, we have a function here...
     // Get the args for this function (from aux info in the graph)
-    auto &fcn_info = graph.getFcnInfo(obj_id);
-    auto &dest_args = fcn_info.second;
-    auto dest_ret = fcn_info.first;
+    // auto &fcn_info = graph.getFcnInfo(obj_id);
+    auto fcn_itr = graph.tryGetFcnInfo(obj_id);
+    if (fcn_itr != graph.fcns_end()) {
+      auto &fcn_info = fcn_itr->second;
+      auto &dest_args = fcn_info.second;
+      auto dest_ret = fcn_info.first;
 
-    // Create an edge from our args to their args
-    // ... and push that node to our worklist
-    int idx = 0;
-    for (auto src_arg_id : args) {
-      auto dest_arg_id = dest_args[idx];
-
-      // okay, got the dest args... add edges
-      // llvm::dbgs() << "  src_arg_id: " << src_arg_id << "\n";
-      auto &src_arg_node = graph.getNode(src_arg_id);
-      bool ch = src_arg_node.succs().insert(dest_arg_id);
-
-      // Also add all of those nodes to our worklist
-      if (ch) {
-        wl.push(&src_arg_node, priority[src_arg_id.val()]);
-      }
-
-      idx++;
-    }
-
-    // Get the rets for these functions (from the graph)
-    if (ret_id != ObjectMap::ObjID::invalid()) {
-      // Create an edge from their ret to our ret (if we have a ret)
+      // Create an edge from our args to their args
       // ... and push that node to our worklist
-      auto &ret_node = graph.getNode(dest_ret);
-      bool ch = ret_node.succs().insert(ret_id);
-      if (ch) {
-        wl.push(&ret_node, priority[dest_ret.val()]);
+      int idx = 0;
+      for (auto src_arg_id : args) {
+        auto dest_arg_id = dest_args[idx];
+
+        // okay, got the dest args... add edges
+        logout("  src_arg_id: " << src_arg_id << "\n");
+        logout("  dest_arg_id: " << dest_arg_id << "\n");
+        auto &src_arg_node = graph.getNode(src_arg_id);
+        bool ch = src_arg_node.succs().insert(dest_arg_id);
+
+        // Also add all of those nodes to our worklist
+        if (ch) {
+          wl.push(&src_arg_node, priority[src_arg_id.val()]);
+        }
+
+        idx++;
       }
+
+      // Get the rets for these functions (from the graph)
+      if (ret_id != ObjectMap::ObjID::invalid()) {
+        // Create an edge from their ret to our ret (if we have a ret)
+        // ... and push that node to our worklist
+        auto &ret_node = graph.getNode(dest_ret);
+        bool ch = ret_node.succs().insert(ret_id);
+        if (ch) {
+          wl.push(&ret_node, priority[dest_ret.val()]);
+        }
+      }
+    } else {
+      logout("Couldn't find fcn for: " << obj_id << "\n");
+      /*
+      llvm::dbgs() << "Couldn't find fcn for: " << obj_id << ": " <<
+        ValPrint(obj_id) << "\n";
+        */
     }
   }
 }
@@ -817,16 +1019,16 @@ void AndersIndirCallCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
 // FIXME: From solve helpers..
 void AndersNode::EdgeSet::unique(AndersGraph &graph) {
   // Convert all ids to rep ids:
-  std::vector<ObjID> new_edges;
-  for (auto id : edges_) {
-    id = graph.getRep(id);
+  std::vector<std::pair<ObjID, int32_t>> new_edges;
+  for (auto id_pr : edges_) {
+    auto id = graph.getRep(id_pr.first);
 
     // Ignore invalid/deleted nodes
     if (id == ObjID::invalid()) {
       continue;
     }
 
-    new_edges.push_back(id);
+    new_edges.emplace_back(id, id_pr.second);
   }
 
   edges_ = std::move(new_edges);

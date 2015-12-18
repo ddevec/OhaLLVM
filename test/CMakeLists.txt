@@ -209,6 +209,10 @@ create_test(simple_fcn2
     simple_fcn2.c
   )
 
+create_test(simple_call
+    simple_call.c
+  )
+
 create_test(simple_indr_fcn
     simple_indr_fcn.c
   )

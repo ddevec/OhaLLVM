@@ -5,11 +5,14 @@
 #ifndef INCLUDE_ANDERSHELPERS_H_
 #define INCLUDE_ANDERSHELPERS_H_
 
+#include <map>
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include "include/ConstraintGraph.h"
 #include "include/ObjectMap.h"
 #include "include/SolveHelpers.h"
-
-#include <memory>
 
 class AndersGraph;
 class AndersNode;
@@ -43,13 +46,14 @@ class AndersCons {
     return kind_;
   }
   //}}}
-  
+
   virtual void process(AndersGraph &graph, Worklist<AndersNode> &wl,
       const std::vector<uint32_t> &priority) const;
- 
+
  protected:
   // Constructor {{{
-  AndersCons(Kind kind, ObjID src, ObjID dest) : AndersCons(kind, src, dest, 0) { }
+  AndersCons(Kind kind, ObjID src, ObjID dest) :
+    AndersCons(kind, src, dest, 0) { }
   AndersCons(Kind kind, ObjID src, ObjID dest, int32_t offs) :
     kind_(kind), src_(src), dest_(dest), offs_(offs) { }
 
@@ -134,7 +138,11 @@ class AndersNode {
     EdgeSet() = default;
 
     bool insert(ObjID id) {
-      edges_.push_back(id);
+      return insert(id, 0);
+    }
+
+    bool insert(ObjID id, int32_t offs) {
+      edges_.emplace_back(id, offs);
       return true;
     }
 
@@ -142,18 +150,6 @@ class AndersNode {
       edges_.insert(std::end(edges_),
           std::begin(rhs), std::end(rhs));
       return true;
-    }
-
-    // Returns true on success
-    bool erase(ObjID id) {
-      bool ret = false;
-      auto it = std::find(std::begin(edges_), std::end(edges_), id);
-      if (it != std::end(edges_)) {
-        *it = edges_.back();
-        edges_.pop_back();
-        ret = true;
-      }
-      return ret;
     }
 
     void clear() {
@@ -168,6 +164,7 @@ class AndersNode {
       return edges_.size();
     }
 
+    // implemented in Solve.cpp
     void unique(AndersGraph &graph);
 
     bool operator==(const EdgeSet &rhs) const {
@@ -181,8 +178,9 @@ class AndersNode {
       return ret;
     }
 
-    typedef std::vector<ObjID>::iterator iterator;
-    typedef std::vector<ObjID>::const_iterator const_iterator;
+    typedef std::vector<std::pair<ObjID, int32_t>>::iterator iterator;
+    typedef std::vector<std::pair<ObjID, int32_t>>::const_iterator
+      const_iterator;
 
     iterator begin() {
       return std::begin(edges_);
@@ -209,14 +207,13 @@ class AndersNode {
     }
 
    private:
-    std::vector<ObjID> edges_;
+    std::vector<std::pair<ObjID, int32_t>> edges_;
     //}}}
   };
   //}}}
 
   // Constructors {{{
-  //explicit AndersNode(Kind kind);
-  AndersNode(ObjID id) : id_(id), rep_(id) { }
+  explicit AndersNode(ObjID id) : id_(id), rep_(id) { }
 
   AndersNode(const AndersNode &) = delete;
   AndersNode(AndersNode &&) = default;
@@ -255,18 +252,23 @@ class AndersNode {
   void setRep(ObjID new_rep) {
     rep_ = new_rep;
   }
-  
+
   void addCons(std::unique_ptr<AndersCons> cons) {
     constraints_.emplace_back(std::move(cons));
   }
   //}}}
 
-  void merge(AndersNode *rhs) {
-    rhs->setRep(rep());
+  void merge(AndersNode &rhs) {
+    rhs.setRep(id());
 
-    succs_ |= rhs->succs_;
-    strong_ &= rhs->strong_;
-    ptsto_ |= rhs->ptsto_;
+    // Move their constraints to our constraints.
+    std::move(std::begin(rhs.constraints_), std::end(rhs.constraints_),
+        std::back_inserter(constraints_));
+    rhs.constraints_.clear();
+
+    succs_ |= rhs.succs_;
+    strong_ &= rhs.strong_;
+    ptsto_ |= rhs.ptsto_;
     oldPtsto_.clear();
   }
 
@@ -325,7 +327,7 @@ class AndersGraph {
 
     return ret;
   }
-  
+
   AndersNode &getNode(ObjID id) {
     auto rep = getRep(id);
 
@@ -360,6 +362,10 @@ class AndersGraph {
       });
       // + ret ids
       // Add to fcns_ map
+      /*
+      llvm::dbgs() << "Adding: " << fcn.getName() << " to fcns_ at: " << obj_id
+        << "\n";
+      */
       fcns_.emplace(std::piecewise_construct,
           std::forward_as_tuple(obj_id),
           std::forward_as_tuple(ret_id, std::move(args)));
@@ -388,6 +394,10 @@ class AndersGraph {
     });
 
     for (auto &pcons : cg) {
+      if (pcons == nullptr) {
+        continue;
+      }
+
       if (pcons->dest() > max_id) {
         max_id = pcons->dest();
       }
@@ -405,11 +415,19 @@ class AndersGraph {
     // Sanity check, there are no sources greater than max_id?
     if_debug_enabled(
       for (auto &pcons : cg) {
+        if (pcons == nullptr) {
+          continue;
+        }
         assert(pcons->src() <= max_id);
       });
 
+    // UGH, also need to handle "GEPs" constraints, to manage dynamically
+    //   indexed structures...
     // For each constraint, add it to the node associated with its source
     for (auto &pcons : cg) {
+      if (pcons == nullptr) {
+        continue;
+      }
       auto &cons = *pcons;
       switch (cons.type()) {
         case ConstraintType::Load:
@@ -439,7 +457,7 @@ class AndersGraph {
         case ConstraintType::Copy:
           {
             auto &node = getNode(cons.src());
-            node.succs().insert(cons.dest());
+            node.succs().insert(cons.dest(), cons.offs());
             break;
           }
         default:
@@ -465,8 +483,8 @@ class AndersGraph {
         ret_id = callinst;
       }
 
-      auto arg_begin = std::begin(call_info); 
-      auto arg_end = std::end(call_info); 
+      auto arg_begin = std::begin(call_info);
+      auto arg_end = std::end(call_info);
 
       auto callee = call_info.callee();
 
@@ -476,6 +494,29 @@ class AndersGraph {
           std14::make_unique<AndersIndirCallCons>(callee, ret_id,
             arg_begin, arg_end));
     });
+  }
+
+  void setStructInfo(const std::map<ObjID, int32_t> info) {
+    structInfo_ = info;
+  }
+
+  const std::map<ObjID, int32_t> &getStructInfo() const {
+    return structInfo_;
+  }
+
+  typedef std::map<ObjID, std::pair<ObjID, std::vector<ObjID>>>::const_iterator
+    const_fcn_iterator;
+
+  const_fcn_iterator fcns_begin() const {
+    return std::begin(fcns_);
+  }
+
+  const_fcn_iterator fcns_end() const {
+    return std::end(fcns_);
+  }
+
+  const_fcn_iterator tryGetFcnInfo(ObjID fcn_obj_id) {
+    return fcns_.find(fcn_obj_id);
   }
 
   const std::pair<ObjID, std::vector<ObjID>> &
@@ -494,10 +535,11 @@ class AndersGraph {
   }
 
  private:
-   // Nodes in the graph, one per object
-   std::vector<AndersNode> nodes_;
+  // Nodes in the graph, one per object
+  std::vector<AndersNode> nodes_;
 
-   std::map<ObjID, std::pair<ObjID, std::vector<ObjID>>> fcns_;
+  std::map<ObjID, std::pair<ObjID, std::vector<ObjID>>> fcns_;
+  std::map<ObjID, int32_t> structInfo_;
 };
 
 #endif  // INCLUDE_ANDERSHELPERS_H_

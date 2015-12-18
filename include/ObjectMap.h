@@ -266,7 +266,7 @@ class ObjectMap {
     ObjectMap(const ObjectMap &) = default;
     ObjectMap(ObjectMap &&) = delete;
 
-    ObjectMap &operator=(const ObjectMap &) = delete;
+    ObjectMap &operator=(const ObjectMap &) = default;
     ObjectMap &operator=(ObjectMap &&) = delete;
     //}}}
 

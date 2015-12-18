@@ -145,11 +145,13 @@ set(SPECSFS_SOURCES
 
 set(SPECSFS_HEADERS
   SpecSFS.h
+  SpecAnders.h
 
   util.h
   SEG.h
   Debug.h
 
+  AndersHelpers.h
   SolveHelpers.h
   Assumptions.h
 

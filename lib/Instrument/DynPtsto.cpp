@@ -99,7 +99,9 @@ void InstrDynPtsto::setupSpecSFSids(llvm::Module &M) {
   const auto &cons_pass = getAnalysis<ConstraintPass>();
   ConstraintGraph cg(cons_pass.getConstraintGraph());
   CFG cfg(cons_pass.getControlFlowGraph());
-  ObjectMap omap(cons_pass.getObjectMap());
+  omap_ = cons_pass.getObjectMap();
+
+  ObjectMap &omap = omap_;
 
   if (optimizeConstraints(cg, cfg, omap)) {
     abort();

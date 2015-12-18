@@ -38,8 +38,6 @@
 #include "llvm/Support/InstIterator.h"
 #include "llvm/Support/raw_ostream.h"
 
-
-
 // Using AUX with CFG helpers {{{
 ObjectMap::ObjID getConstValue(ConstraintGraph &cg, ObjectMap &omap,
     const llvm::Constant *c) {
@@ -1072,8 +1070,9 @@ static void addConstraintsForIndirectCall(ConstraintGraph &cg, ObjectMap &omap,
     llvm::isa<llvm::PointerType>(CS.getInstruction()->getType());
   std::vector<ObjectMap::ObjID> args;
   std::for_each(CS.arg_begin(), CS.arg_end(),
-      [&omap, &args] (const llvm::Use &arg) {
-    args.push_back(omap.createPhonyID(arg.get()));
+      [&cg, &omap, &args] (const llvm::Use &arg) {
+    // args.push_back(omap.createPhonyID(arg.get()));
+    args.push_back(getValue(cg, omap, arg.get()));
   });
   auto callee_id = omap.getValue(&called_val);
   cg.addIndirectCall(call_id, is_pointer, callee_id, std::move(args));
@@ -1589,6 +1588,7 @@ static void idBitcastInst(ConstraintGraph &cg, ObjectMap &omap,
 
   assert(llvm::isa<llvm::PointerType>(inst.getType()));
 
+  // llvm::dbgs() << "bitcast: " << bcast << "\n";
   auto dest_id = omap.getValue(&bcast);
   auto src_id = getValue(cg, omap, bcast.getOperand(0));
 
@@ -2035,7 +2035,16 @@ bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
       type, val_id, obj_id, true);
 
     // If its a global w/ an initalizer
-    if (glbl.hasDefinitiveInitializer()) {
+    // NOTE: We assume we have everything linked together, so the initializer
+    // wont be over-written by a library... this may be false in some cases,
+    // those should use "definitive initializer"...
+    // if (glbl.hasDefinitiveInitializer())
+    if (glbl.hasInitializer() &&
+        llvm::isa<llvm::ConstantPointerNull>(glbl.getInitializer())) {
+      dout("Global Zero Initializer: " << glbl.getName() << "\n");
+      // We don't add any ptsto constraints for null value here, because null
+      //   value points to nothing...
+    } else if (glbl.hasInitializer()) {
       dout("Adding glbl initializer for: " << glbl << "\n");
       addGlobalInitializerConstraints(cg, cfg, omap, val_id,
         glbl.getInitializer());
@@ -2045,19 +2054,14 @@ bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
       if (llvm::isa<llvm::PointerType>(glbl.getType())) {
         addConstraintForConstPtr(cg, omap, glbl);
       }
-
     // Doesn't have initializer
     } else {
-      if (glbl.hasInitializer() &&
-          llvm::isa<llvm::ConstantPointerNull>(glbl.getInitializer())) {
-        dout("Global Zero Initializer: " << glbl.getName() << "\n");
-        // We don't add any ptsto constraints for null value here, because null
-        //   value points to nothing...
+      if (glbl.hasInitializer()) {
+        llvm::dbgs() << "FIXME: IGNORED GLOBAL INITIALIZER: " <<
+          glbl.getName() << "\n";
+        // Ugh, how do I handle this guy?
+        // Well, we get the constant value out of it
       } else {
-        if (glbl.hasInitializer()) {
-          llvm::dbgs() << "FIXME: NO GLOBAL INITIALIZER: " << glbl.getName() <<
-            "\n";
-        }
         cg.add(ConstraintType::Copy, omap.getValue(&glbl),
             ObjectMap::UniversalValue);
 

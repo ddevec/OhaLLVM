@@ -147,9 +147,7 @@ void __DynPtsto_do_alloca(int32_t obj_id, int64_t size,
   // std::cout << "stacking: (" << obj_id << ") " << addr << std::endl;
   stack_allocs.back().push_back(addr);
   // Add ptstos to ptsto map
-#ifndef NDEBUG
   auto ret =
-#endif
     addr_to_objid.emplace(AddrRange(addr, size),
         std::vector<int32_t>(1, obj_id));
   if (!ret.second) {
@@ -235,14 +233,9 @@ void __DynPtsto_do_free(void *addr) {
 
 void __DynPtsto_do_visit(int32_t val_id, void *addr) {
   // Record that this val_id pts to this addr
-  // std::cout << "visit: Addr is " << addr << std::endl;
   auto it = addr_to_objid.find(AddrRange(addr));
   if (it != std::end(addr_to_objid)) {
     for (int32_t obj_id : it->second) {
-      if (obj_id == 3260) {
-        std::cerr << "Propigate " << obj_id << " for val: " << val_id <<
-          std::endl;
-      }
       valid_to_objids[val_id].insert(obj_id);
     }
   } else {

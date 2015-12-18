@@ -64,6 +64,18 @@ static void error(const std::string &msg) {
 }
 //}}}
 
+static ObjectMap::ObjID getRepID(ObjectMap::ObjID obj_id, ObjectMap &omap) {
+  ObjectMap::ObjID new_id = obj_id;
+
+  do {
+    obj_id = new_id;
+    auto val = omap.valueAtID(obj_id);
+    new_id = omap.getValue(val);
+  } while (new_id != obj_id);
+
+  return new_id;
+}
+
 static llvm::cl::opt<std::string>
   fcn_name("anders-debug-fcn", llvm::cl::init(""),
       llvm::cl::value_desc("string"),
@@ -77,11 +89,17 @@ static llvm::cl::opt<std::string>
         " at the end of execution"));
 
 static llvm::cl::opt<bool>
-  do_anders_print_result("specanders-do-print-result", llvm::cl::init(false),
+  do_anders_print_result("anders-do-print-result", llvm::cl::init(false),
       llvm::cl::value_desc("bool"),
       llvm::cl::desc(
         "if set specanders will print the ptsto sets for each value"));
 
+static llvm::cl::opt<bool>
+  do_spec_dyn_debug("anders-do-check-dyn", llvm::cl::init(false),
+      llvm::cl::value_desc("bool"),
+      llvm::cl::desc(
+        "Verifies the calculated points-to set is a superset of the dynamic "
+        "points-to to"));
 
 // Constructor
 SpecAnders::SpecAnders() : llvm::ModulePass(ID) { }
@@ -132,27 +150,41 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
     llvm::dbgs() << "Got debug gv: " << glbl_name << "\n";
   }
 
+  const UnusedFunctions &unused_fcns =
+      getAnalysis<UnusedFunctions>();
+
   // Clear the def-use graph
   // It should already be cleared, but I'm paranoid
   const auto &cons_pass = getAnalysis<ConstraintPass>();
   ConstraintGraph cg(cons_pass.getConstraintGraph());
-  ObjectMap omap(cons_pass.getObjectMap());
+  omap_ = cons_pass.getObjectMap();
+
+  ObjectMap &omap = omap_;
 
   // Now that we have the constraints, lets optimize a bit
   // First, do HVN
-  // HVN(cg, omap);
+  {
+    util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "HVN");
+    int32_t removed = HVN(cg, omap);
+    llvm::dbgs() << "hvn removed: " << removed << " constraints\n";
+  }
 
   // Then, do HRU
-  // HRU(cg, omap, 100);
+  {
+    util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "HRU");
+    HRU(cg, omap, 100);
+  }
 
   // Then, HCD
   // auto hcd_map = HCD(cg, omap);
 
-  // Fill our online graph with the initial constraint set
-  graph_.fill(cg, omap, m);
+  {
+    util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "Graph Creation");
+    // Fill our online graph with the initial constraint set
+    graph_.fill(cg, omap, m);
+  }
 
-  // Solve the graph
-  solve();
+  graph_.setStructInfo(omap.getIsStructSet());
 
   {
     util::PerfTimerPrinter solve_timer(llvm::dbgs(), "AndersSolve");
@@ -167,24 +199,16 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
     auto glbl = m.getNamedValue(glbl_name);
     auto val_id = omap.getValue(glbl);
 
-    // FIXME: This is a huge hack
     llvm::dbgs() << "ptsto[" << val_id << "]: " << ValPrint(val_id) <<
       "\n";
-    int32_t i = 0;
-    while (omap.valueAtID(val_id) == glbl) {
-      llvm::dbgs() << "  Offset: " << i << "\n";
 
-      auto &ptsto = graph_.getNode(val_id).ptsto();
+    auto &ptsto = graph_.getNode(val_id).ptsto();
 
-      std::for_each(std14::cbegin(ptsto), std14::cend(ptsto),
-          [&omap] (const ObjectMap::ObjID obj_id) {
-        llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
-            << "\n";
-      });
-
-      val_id++;
-      i++;
-    }
+    std::for_each(std14::cbegin(ptsto), std14::cend(ptsto),
+        [&omap] (const ObjectMap::ObjID obj_id) {
+      llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
+          << "\n";
+    });
     //}}}
   }
 
@@ -198,27 +222,16 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
         [this, &omap] (const llvm::Argument &arg) {
       if (llvm::isa<llvm::PointerType>(arg.getType())) {
         auto arg_id = omap.getValue(&arg);
-        auto arg_val = &arg;
-        // FIXME: This is a huge hack
         llvm::dbgs() << "ptsto[" << arg_id << "]: " << ValPrint(arg_id) <<
           "\n";
 
-        int32_t i = 0;
+        auto &ptsto = graph_.getNode(arg_id).ptsto();
 
-        while (omap.valueAtID(arg_id) == arg_val) {
-          llvm::dbgs() << "  Offset: " << i << "\n";
-
-          auto &ptsto = graph_.getNode(arg_id).ptsto();
-
-          std::for_each(std14::cbegin(ptsto), std14::cend(ptsto),
-              [&omap] (const ObjectMap::ObjID obj_id) {
-            llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
-                << "\n";
-          });
-
-          arg_id++;
-          i++;
-        }
+        std::for_each(std14::cbegin(ptsto), std14::cend(ptsto),
+            [&omap] (const ObjectMap::ObjID obj_id) {
+          llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
+              << "\n";
+        });
       }
     });
 
@@ -228,26 +241,16 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
       if (llvm::isa<llvm::PointerType>(inst.getType())) {
         auto val_id = omap.getValue(&inst);
 
-        // FIXME: This is a huge hack
         llvm::dbgs() << "ptsto[" << val_id << "]: " << ValPrint(val_id) <<
           "\n";
 
-        int32_t i = 0;
+        auto &ptsto = graph_.getNode(val_id).ptsto();
 
-        while (omap.valueAtID(val_id) == &inst) {
-          llvm::dbgs() << "  Offset: " << i << "\n";
-
-          auto &ptsto = graph_.getNode(val_id).ptsto();
-
-          std::for_each(std14::cbegin(ptsto), std14::cend(ptsto),
-              [&omap] (const ObjectMap::ObjID obj_id) {
-            llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
-                << "\n";
-          });
-
-          val_id++;
-          i++;
-        }
+        std::for_each(std14::cbegin(ptsto), std14::cend(ptsto),
+            [&omap] (const ObjectMap::ObjID obj_id) {
+          llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
+              << "\n";
+        });
       }
     });
     //}}}
@@ -306,6 +309,151 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
     //}}}
   }
   */
+
+  if (do_spec_dyn_debug) {
+    // DEBUG {{{
+    llvm::dbgs() << "Checking for dynamic points-to not in the static set\n";
+    // Here we check that our calculated "static" pointsto
+    // To do so, we iterate over each value in the dynamic points-to
+    // We then get that value form our top-level set
+    // We ensure that the dynamic version is a subset of the static one
+    //   ERROR otherwise
+    const auto &dyn_ptsto = getAnalysis<DynPtstoLoader>();
+    assert(dyn_ptsto.hasInfo());
+
+    // First, deal with nodes which have been optimized away from the
+    //   dyn_ptsto set
+    std::map<ObjectMap::ObjID, std::set<ObjectMap::ObjID>> new_dyn_ptsto;
+
+    for (auto &pr : dyn_ptsto) {
+      auto old_id = pr.first;
+      auto &old_set = pr.second;
+      auto val = omap.valueAtID(old_id);
+      auto new_id = omap.getValue(val);
+
+      auto &new_set = new_dyn_ptsto[new_id];
+
+      /*
+      if (old_id != new_id) {
+        llvm::dbgs() << "old_id(" << old_id << ") -> new_id("
+          << new_id << ")\n";
+
+
+        llvm::dbgs() << "old_set:";
+        for (auto elm : old_set) {
+          llvm::dbgs() << " " << elm;
+        }
+        llvm::dbgs() << "\n";
+      }
+      */
+
+      new_set.insert(std::begin(old_set), std::end(old_set));
+    }
+
+    // Okay, now we iterate the ptsto list:
+    for (auto &pr : new_dyn_ptsto) {
+      auto obj_id = pr.first;
+      auto set_obj_id = pr.first;
+      bool set_id_found = false;
+      auto &dyn_pts_set = pr.second;
+
+      // And we get the appropriate top-level ptsto variable:
+      // NOTE: We intentionally copy that set here
+      // Convert old node to new node:
+      auto corrected_obj_id = getRepID(obj_id, omap);
+      auto st_pts_set = graph_.getNode(corrected_obj_id).ptsto();
+
+      // We then add the base node of any struct fields in the static set
+      std::vector<ObjectMap::ObjID> to_add;
+      for (auto obj_id : st_pts_set) {
+        auto base_pr = omap.findObjBase(obj_id);
+        if (base_pr.first) {
+          to_add.emplace_back(base_pr.second);
+        }
+      }
+
+      for (auto id : to_add) {
+        st_pts_set.set(id);
+      }
+
+      // Now, iterate each element in st_pts_set and ensure that it isn't
+      //   present in dyn_pts_set
+      if (set_obj_id != ObjectMap::NullValue) {
+        for (auto obj_id : dyn_pts_set) {
+          // Ensure that this element is in the static set
+          if (st_pts_set.test(obj_id) == false) {
+            if (!set_id_found) {
+              const llvm::Function *fcn = nullptr;
+              const llvm::BasicBlock *bb = nullptr;
+              llvm::dbgs() << "Element: " << set_obj_id << ": ";
+              auto val = omap.valueAtID(set_obj_id);
+              if (val == nullptr) {
+                llvm::dbgs() << "Value NULL";
+              } else if (auto ins = dyn_cast<llvm::Instruction>(val)) {
+                llvm::dbgs() << ins->getParent()->getParent()->getName() << ", "
+                    << ins->getParent()->getName();
+                if (!unused_fcns.isUsed(ins->getParent())) {
+                  bb = ins->getParent();
+                }
+                if (!unused_fcns.isUsed(ins->getParent()->getParent())) {
+                  fcn = ins->getParent()->getParent();
+                }
+              } else if (auto ins = dyn_cast<llvm::Argument>(val)) {
+                llvm::dbgs() << ins->getParent()->getName() << ", (arg)";
+
+                if (!unused_fcns.isUsed(ins->getParent())) {
+                  fcn = ins->getParent();
+                }
+              } else if (auto fcn = dyn_cast<llvm::Function>(val)) {
+                llvm::dbgs() << fcn->getName() << ", (fcn)";
+              } else if (llvm::isa<llvm::GlobalVariable>(val)) {
+                llvm::dbgs() << "(global)";
+              }
+              llvm::dbgs() << ": " << ValPrint(set_obj_id) << "\n";
+
+              if (fcn) {
+                llvm::dbgs() << "  !! In Unused Function: " << fcn->getName() <<
+                  " !!\n";
+              }
+              if (bb) {
+                llvm::dbgs() << "  !! In Unused BasicBlock: " <<
+                  bb->getName() << " !!\n";
+              }
+
+              // Check if the ID given by the omap is equivalent to the ID given
+              //   by our anaysis
+              auto new_set_id = omap.getValue(val);
+              if (new_set_id != set_obj_id) {
+                llvm::dbgs() << "  !! Merged AWAY by cons_opt !!\n";
+                llvm::dbgs() << "  !! new id: " << new_set_id << " !!\n";
+                llvm::dbgs() << "  !! old id: " << set_obj_id << " !!\n";
+              }
+
+              set_id_found = true;
+            }
+            auto val = omap.valueAtID(obj_id);
+            llvm::dbgs() << "  Found element in dyn set not in static set:\n";
+            llvm::dbgs() << "    ";
+            if (val == nullptr) {
+              llvm::dbgs() << "(nullptr)";
+            } else if (auto ins = dyn_cast<llvm::Instruction>(val)) {
+              llvm::dbgs() << ins->getParent()->getParent()->getName() << ", "
+                  << ins->getParent()->getName();
+            } else if (auto ins = dyn_cast<llvm::Argument>(val)) {
+              llvm::dbgs() << ins->getParent()->getName() << ", (arg)";
+            } else if (auto fcn = dyn_cast<llvm::Function>(val)) {
+              llvm::dbgs() << fcn->getName() << ", (fcn)";
+            } else if (llvm::isa<llvm::GlobalVariable>(val)) {
+              llvm::dbgs() << "(global)";
+            }
+            llvm::dbgs() << ": " << ValPrint(obj_id) << "\n";
+            llvm::dbgs() << "    (obj_id): " << obj_id << "\n";
+          }
+        }
+      }
+    }
+    //}}}
+  }
 
   // We do not modify code, ever!
   return false;

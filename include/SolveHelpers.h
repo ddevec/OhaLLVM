@@ -312,6 +312,10 @@ class PtstoSet {
       return ptsto_.count();
     }
 
+    bool empty() const {
+      return ptsto_.empty();
+    }
+
     class iterator {
       //{{{
      public:

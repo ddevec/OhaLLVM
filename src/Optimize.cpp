@@ -21,6 +21,7 @@
 #include "include/SpecSFS.h"
 
 #include "include/SEG.h"
+#include "include/Tarjans.h"
 #include "include/util.h"
 
 static SEG::NodeID objToNode(ObjectMap::ObjID id) {
@@ -488,7 +489,6 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
         cons.src() == cons.dest() && cons.offs() == 0) {
       // llvm::dbgs() << __LINE__ << " Deleting rep: " << cons.rep() << "\n";
       // llvm::dbgs() << "  With dest: " << cons.dest() << "\n";
-        assert(id.val() != 120638);
       graph.removeConstraint(id);
       continue;
     }
@@ -505,7 +505,6 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
       } else {
         // llvm::dbgs() << __LINE__ << " Deleting rep: " << cons.rep() << "\n";
         // llvm::dbgs() << "  With dest: " << cons.dest() << "\n";
-        assert(id.val() != 120638);
         graph.removeConstraint(id);
       }
     }
@@ -566,3 +565,483 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
 }
 //}}}
 
+// Anders Optimizations {{{
+// HVN {{{
+
+class HVNNode : public SEG::Node {
+  //{{{
+ public:
+  typedef typename SEG::NodeID NodeID;
+
+  explicit HVNNode(NodeID node_id) :
+    SEG::Node(NodeKind::Unify, node_id) { }
+
+  void addPtsTo(int32_t id) {
+    ptsto_.set(id);
+  }
+
+  const Bitmap &ptsto() const {
+    return ptsto_;
+  }
+
+  Bitmap &ptsto() {
+    return ptsto_;
+  }
+
+  bool indirect() const {
+    return indirect_;
+  }
+
+  void setIndirect() {
+    indirect_ = true;
+  }
+
+  void unite(SEG &seg, SEG::Node &n) override {
+    auto &node = cast<HVNNode>(n);
+
+    indirect_ |= node.indirect();
+    ptsto() |= node.ptsto();
+
+    node.ptsto().clear();
+
+    SEG::Node::unite(seg, n);
+  }
+
+  // For LLVM RTTI {{{
+  // NOTE: We don't use RTTI with HVNNodes...
+  static bool classof(const SEG::Node *) {
+    return true;
+  }
+  //}}}
+
+  // Dot print support {{{
+  void print_label(dbg_ostream &o, const ObjectMap &) const override {
+    char idr_chr = indirect() ? 'I' : 'D';
+    o << id() << " (" << idr_chr << ")" << ":";
+    for (auto id : ptsto_) {
+      o << " " << id;
+    }
+  }
+  //}}}
+
+ private:
+  bool indirect_ = false;
+  Bitmap ptsto_;
+  //}}}
+};
+
+class HVNData {
+  //{{{
+ public:
+  static const int32_t PENonPtr = 0;
+
+  int32_t getNextPE() {
+    return nextPE_++;
+  }
+
+  int32_t getGEPPE(SEG::NodeID node_id, int32_t offs) {
+    auto it = gepToPE_.find(std::make_pair(node_id, offs));
+
+    if (it == std::end(gepToPE_)) {
+      auto rp = gepToPE_.emplace(std::make_pair(node_id, offs), getNextPE());
+      assert(rp.second);
+      it = rp.first;
+    }
+
+    return it->second;
+  }
+
+  static bool isNonPtr(HVNNode &nd) {
+    auto ret = nd.ptsto().test(PENonPtr);
+    assert(!ret || nd.ptsto().count() == 1);
+    return ret;
+  }
+
+ private:
+  // 0 is non-ptr
+  int32_t nextPE_ = 1;
+
+  std::map<std::pair<SEG::NodeID, int32_t>, int32_t> gepToPE_;
+  //}}}
+};
+
+// Does HVN optimization on offline graph constructed from cg, merges optimized
+//   ids in omap and cg
+// This is actually HU...
+// Returns the number of removed constraints
+int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
+  // Iterate the cg, and create a node for each constraint
+  // First calculate the number of nodes needed:
+
+  SEG hvn_graph;
+  HVNData data;
+
+  ObjectMap::ObjID max_src_dest_id = ObjectMap::ObjID(-1);
+  for (const auto &pcons : cg) {
+    if (pcons == nullptr) {
+      continue;
+    }
+    // Store constraints don't define nodes!
+    auto dest = pcons->dest();
+    auto src = pcons->src();
+    auto rep = pcons->rep();
+
+    if (dest > max_src_dest_id) {
+      max_src_dest_id = dest;
+    }
+
+    if (src > max_src_dest_id) {
+      max_src_dest_id = src;
+    }
+
+    if (rep > max_src_dest_id) {
+      max_src_dest_id = rep;
+    }
+  }
+
+  // Now, create a node for each possible destination:
+  for (int32_t i = 0; i < max_src_dest_id.val()+1; i++) {
+    auto node_id = hvn_graph.addNode<HVNNode>();
+    assert(node_id.val() == i);
+
+    // Force objects and indirect calls to be indirect
+    //  -- This isn't always managed properly in the next step, due to the
+    //     arithmetic associated with object locations.  This handles it
+    auto obj_id = nodeToObj(node_id);
+    // if (!omap.isValue(obj_id) || hvn_graph.isIndirCall(obj_id))
+    if (!omap.isValue(obj_id)) {
+      auto &node = hvn_graph.getNode<HVNNode>(node_id);
+      node.setIndirect();
+    }
+  }
+
+  // Also, set all indirect call arg and return nodes to indirect:
+  std::for_each(cg.indir_begin(), cg.indir_end(),
+      [&hvn_graph]
+      (const std::pair<const ObjectMap::ObjID,
+           ConstraintGraph::IndirectCallInfo> &pr) {
+    // Create an indir call cons
+    // Populate w/ callsite info
+    auto callinst = pr.first;
+    auto &call_info = pr.second;
+
+    // If this returns a pointer, that return is an indirect node
+    if (call_info.isPointer()) {
+      hvn_graph.getNode<HVNNode>(objToNode(callinst)).setIndirect();
+    }
+
+    // Each argument id is an indirect node
+    for (auto arg_id : call_info) {
+      hvn_graph.getNode<HVNNode>(objToNode(arg_id)).setIndirect();
+    }
+  });
+
+  // Now, fill in the graph edges:
+  std::set<SEG::NodeID> touched;
+  for (const auto &pcons : cg) {
+    if (pcons == nullptr) {
+      continue;
+    }
+    auto dest_node_id = objToNode(pcons->dest());
+    auto &dest_node = hvn_graph.getNode<HVNNode>(dest_node_id);
+    auto src_node_id = objToNode(pcons->src());
+    auto &src_node = hvn_graph.getNode<HVNNode>(src_node_id);
+
+    /*
+    auto &rep_node = hvn_graph.getNode<HVNNode>(objToNode(pcons->rep()));
+    if (rep_node.id() == SEG::NodeID(366)) {
+      llvm::dbgs() << "Have node with dest 366: " << *pcons << "\n";
+    }
+
+    if (src_node.id() == SEG::NodeID(366)) {
+      llvm::dbgs() << "Have node with src 366: " << *pcons << "\n";
+    }
+
+    if (dest_node.id() == SEG::NodeID(366)) {
+      llvm::dbgs() << "Have node with rep 366: " << *pcons << "\n";
+    }
+
+    if (dest_node.id() == SEG::NodeID(354)) {
+      llvm::dbgs() << "Have node with dest 354: " << *pcons << "\n";
+    }
+
+    if (src_node.id() == SEG::NodeID(354)) {
+      llvm::dbgs() << "Have node with src 354: " << *pcons << "\n";
+    }
+
+    if (rep_node.id() == SEG::NodeID(354)) {
+      llvm::dbgs() << "Have node with rep 354: " << *pcons << "\n";
+    }
+    */
+
+    touched.insert(dest_node_id);
+    touched.insert(src_node_id);
+
+    // Handle the edge addition appropriately
+    switch (pcons->type()) {
+      case ConstraintType::Load:
+        // Load cons cause the dest to be indirect, but add no edges
+        dest_node.setIndirect();
+        break;
+      case ConstraintType::Store:
+        // Store cons are ignored
+        // However, we need to ensure that the constraint is not optimized
+        //   out, so we set the node to be indirect
+        hvn_graph.getNode<HVNNode>(objToNode(pcons->rep())).setIndirect();
+        break;
+      case ConstraintType::AddressOf:
+        // Alloc cons cause the dest to be indirect, no need to put objects in
+        //   the graph (NOTE: They are set to indirect above)
+        dest_node.setIndirect();
+        break;
+      case ConstraintType::Copy:
+        // Copy cons:
+        // Without offsets are edges
+        if (pcons->offs() == 0) {
+          dest_node.addPred(hvn_graph, src_node.id());
+        // With offsets create a new PE, labeled by the src, offs combo
+        } else {
+          dest_node.addPtsTo(data.getGEPPE(src_node.id(), pcons->offs()));
+        }
+        break;
+    }
+  }
+
+  // Set any untouched nodes to be an "indirect node" so it isn't incorrectly
+  //   merged (since the untouched nodes may have been previously merged when
+  //   running HRU, we could cause incorrect points-to sets by merging them)
+  for (auto &pnode : hvn_graph) {
+    auto &node = cast<HVNNode>(*pnode);
+    if (touched.find(node.id()) == std::end(touched)) {
+      node.setIndirect();
+    }
+  }
+
+  // Calculate HVN algorithm:
+  //   Run Tarjans to find SCCs
+  //     Unite any nodes in scc (maintain indirection conservatively)
+  //     NOTE: This is done automatically by the HVNNode class (overriding
+  //         unite)
+  //   On topological traversal:
+  //     Merge PE sets with any preds PEs
+
+  // This is our tarjans topological order visit function
+  //   Here we calculate the appropriate PE set for the node, given its preds
+  auto traverse_pe = [&data, &hvn_graph] (const SEG::Node &nd) {
+    auto &node = cast<HVNNode>(nd);
+
+    // llvm::dbgs() << "visit: " << node.id() << "\n";
+
+    // If node is indirect, add a new PE
+    if (node.indirect()) {
+      node.addPtsTo(data.getNextPE());
+    }
+
+    // Now, unite any pred ids:
+    for (auto pred_id : node.preds()) {
+      auto &pred_node = hvn_graph.getNode<HVNNode>(pred_id);
+
+      // skip pointers to self
+      if (pred_node.id() == node.id()) {
+        continue;
+      }
+
+      // If the pred node isn't a non_ptr
+      if (!pred_node.ptsto().test(HVNData::PENonPtr)) {
+        node.ptsto() |= pred_node.ptsto();
+      }
+
+      if (node.ptsto().empty()) {
+        node.addPtsTo(HVNData::PENonPtr);
+      }
+    }
+  };
+
+  // hvn_graph.printDotFile("HVNStart.dot", *g_omap);
+  // Finally run Tarjan's:
+  RunTarjans<decltype(should_visit_default), decltype(traverse_pe)>
+    (hvn_graph, should_visit_default, traverse_pe);
+
+  // hvn_graph.printDotFile("HVNDone.dot", *g_omap);
+
+  // Now, use PE set as index into PE mapping, assign equivalent PEs
+  std::map<Bitmap, SEG::NodeID, BitmapLT> pts_to_pe;
+
+  // Find equiv classes for each node, unify the nodes in the class
+  for (auto &pnode : hvn_graph) {
+    auto &node = cast<HVNNode>(*pnode);
+
+    auto &ptsto = node.ptsto();
+
+    if (ptsto.empty() || ptsto.test(HVNData::PENonPtr)) {
+      ptsto.clear();
+      ptsto.set(HVNData::PENonPtr);
+    }
+
+    auto it = pts_to_pe.find(ptsto);
+
+    if (it == std::end(pts_to_pe)) {
+      pts_to_pe.emplace(ptsto, node.id());
+    } else {
+      auto &rep_node = hvn_graph.getNode<HVNNode>(it->second);
+
+      /*
+      if (rep_node.id() == SEG::NodeID(354)) {
+        llvm::dbgs() << "  merge " << node.id() << " with " <<
+          rep_node.id() << "\n";
+      }
+      */
+      rep_node.unite(hvn_graph, node);
+    }
+  }
+
+  // Finally, adjust omap and CG so all nodes have remapped ids according to the
+  //   elected leaders
+
+  // First, update the omap
+  for (int32_t i = 0; i < max_src_dest_id.val(); i++) {
+    SEG::NodeID node_id(i);
+    auto &node = hvn_graph.getNode(node_id);
+
+    auto rep_id = node.id();
+
+    if (rep_id != node_id) {
+      omap.updateObjID(nodeToObj(node_id), nodeToObj(rep_id));
+    }
+  }
+
+  int32_t num_removed = 0;
+  std::set<Constraint> dedup;
+  // Second, update the constraint graph
+  for (size_t i = 0; i < cg.constraintSize(); i++) {
+    ConstraintGraph::ConsID id(i);
+
+    auto pcons = cg.tryGetConstraint(id);
+    if (pcons == nullptr) {
+      continue;
+    }
+
+    auto &cons = *pcons;
+
+    auto rep_obj_id = cons.rep();
+    auto src_obj_id = cons.src();
+    auto dest_obj_id = cons.dest();
+    auto &src_rep_node = hvn_graph.getNode<HVNNode>(objToNode(src_obj_id));
+    auto &rep_rep_node = hvn_graph.getNode<HVNNode>(objToNode(rep_obj_id));
+    auto &dest_rep_node = hvn_graph.getNode<HVNNode>(objToNode(dest_obj_id));
+    auto src_rep_id = nodeToObj(src_rep_node.id());
+    auto dest_rep_id = nodeToObj(dest_rep_node.id());
+    auto rep_rep_id = nodeToObj(rep_rep_node.id());
+
+    /*
+    llvm::dbgs() << "Remapping:\n";
+    llvm::dbgs() << "  rep: " << rep_obj_id << " -> " << rep_rep_id  << "\n";
+    */
+    cons.updateRep(rep_rep_id);
+
+    if (cons.type() == ConstraintType::AddressOf) {
+      /*
+      llvm::dbgs() << "  src: " << src_obj_id << " -> " << src_obj_id << "\n";
+      llvm::dbgs() << "  dest: " << dest_obj_id << " -> " <<
+        dest_rep_id << "\n";
+      */
+      cons.retarget(src_obj_id, dest_rep_id);
+    } else {
+      /*
+      llvm::dbgs() << "  src: " << src_obj_id << " -> " << src_rep_id << "\n";
+      llvm::dbgs() << "  dest: " << dest_obj_id << " -> " <<
+        dest_rep_id << "\n";
+      */
+      cons.retarget(src_rep_id, dest_rep_id);
+    }
+
+    if (HVNData::isNonPtr(src_rep_node) || HVNData::isNonPtr(dest_rep_node)) {
+      /*
+      llvm::dbgs() << "Removing non-ptr: " << id << ": " << cg.getConstraint(id)
+        << "\n";
+      if (HVNData::isNonPtr(src_rep_node)) {
+        llvm::dbgs() << "  reason: non-ptr src: " << src_rep_node.id() << "\n";
+      }
+
+      if (HVNData::isNonPtr(dest_rep_node)) {
+        llvm::dbgs() << "  reason: non-ptr dest: " << dest_rep_node.id()
+          << "\n";
+      }
+      */
+      cg.removeConstraint(id);
+      num_removed++;
+      continue;
+    }
+
+    // If we have a copy to self, delete it
+    if (cons.type() == ConstraintType::Copy &&
+        cons.src() == cons.dest() && cons.offs() == 0) {
+      /*
+      llvm::dbgs() << "Removing copy to self: " << id << ": " <<
+        cg.getConstraint(id) << "\n";
+        */
+      cg.removeConstraint(id);
+      num_removed++;
+      // FIXME: Do I need to check dedup with this?  probably not...
+      continue;
+    }
+
+    if (cons.type() == ConstraintType::Copy ||
+        cons.type() == ConstraintType::AddressOf) {
+      auto it = dedup.find(cons);
+      if (it == std::end(dedup)) {
+        dedup.insert(cons);
+      } else {
+        /*
+        llvm::dbgs() << "Removing duplicate: " << id << ": " <<
+          cg.getConstraint(id) << "\n";
+          */
+        cg.removeConstraint(id);
+        num_removed++;
+      }
+    }
+  }
+
+  std::map<ObjectMap::ObjID, ConstraintGraph::IndirectCallInfo>
+    new_indirect_calls;
+  // Also manage indirect function calls?:
+  // FALSE: We haven't inserted constraints for indirect function calls yet
+  //    We just need to update the ObjIDs in the ConstraintGraph
+  std::for_each(cg.indir_begin(), cg.indir_end(),
+      [&new_indirect_calls, &omap]
+      (std::pair<const ObjectMap::ObjID,
+         ConstraintGraph::IndirectCallInfo> & pr) {
+    auto key_val = omap.valueAtID(pr.first);
+    auto new_key_id = omap.getValue(key_val);
+
+    auto &info = pr.second;
+
+    auto callee_val = omap.valueAtID(info.callee());
+    auto new_callee_id = omap.getValue(callee_val);
+
+    info.setCallee(new_callee_id);
+
+    new_indirect_calls.emplace(new_key_id,
+      std::move(info));
+  });
+
+  return num_removed;
+}
+//}}}
+
+// HRU {{{
+void HRU(ConstraintGraph &cg, ObjectMap &omap, int32_t min_removed) {
+  int32_t itr = 0;
+  int32_t num_removed;
+  do {
+    llvm::dbgs() << "HRU iter: " << itr << "\n";
+    num_removed = HVN(cg, omap);
+    llvm::dbgs() << "  num_removed: " << num_removed << "\n";
+    itr++;
+  } while (num_removed > min_removed);
+}
+//}}}
+
+// HCD {{{
+//}}}
+//}}}

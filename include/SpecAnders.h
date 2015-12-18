@@ -26,6 +26,12 @@
 
 // The actual SFS module, most of the work is done via the ObjectMap and Def-Use
 // Graph (DUG), these methods mostly operate on them.
+
+// Actually HU...
+int32_t HVN(ConstraintGraph &cg, ObjectMap &omap);
+
+void HRU(ConstraintGraph &cg, ObjectMap &omap, int32_t min_removed);
+
 class SpecAnders : public llvm::ModulePass,
                 public llvm::AliasAnalysis {
  public:
@@ -92,10 +98,6 @@ class SpecAnders : public llvm::ModulePass,
   // Solves the remaining graph, providing full flow-sensitive inclusion-based
   // points-to analysis
   bool solve();
-
-  // HVN
-  // HRU
-  // HCD
 
  protected:
   // Optimizes the top-level constraints in the DUG

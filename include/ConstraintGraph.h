@@ -64,7 +64,15 @@ class Constraint {
         assert(0);
       }
       */
+      // assert(!(src == ObjectMap::ObjID(72) && dest == ObjectMap::ObjID(28)));
+      //
+      /*
+      if (src == ObjectMap::ObjID(2076)) {
+        assert(0);
+      }
+      */
 
+      /*
       if (dest == ObjectMap::ObjID(22141)) {
         llvm::dbgs() << "!!!  Have edge to " << dest << " !!!\n";
         llvm::dbgs() << "   src is: " << src << "\n";
@@ -90,6 +98,7 @@ class Constraint {
         llvm::dbgs() << "   src is: " << src << "\n";
         llvm::dbgs() << "   type is: " << static_cast<int32_t>(type) << "\n";
       }
+      */
 
       // We shouldn't copy from the UV to null val... its bad
       assert(!(type == ConstraintType::Copy &&
@@ -149,7 +158,7 @@ class Constraint {
       strong_ = strong;
     }
 
-    virtual bool operator<(const Constraint &cons_rhs) const {
+    bool operator<(const Constraint &cons_rhs) const {
       if (type() != cons_rhs.type()) {
         return type() < cons_rhs.type();
       }
@@ -259,6 +268,10 @@ class ConstraintGraph {
          return isPointer_;
        }
 
+       void setCallee(ObjID callee) {
+         callee_ = callee;
+       }
+
        ObjID callee() const {
          return callee_;
        }
@@ -275,7 +288,7 @@ class ConstraintGraph {
 
      private:
       const bool isPointer_;
-      const ObjID callee_;
+      ObjID callee_;
       const std::vector<ObjID> args_;
       //}}}
     };
@@ -291,6 +304,7 @@ class ConstraintGraph {
         ") with type: " << static_cast<int32_t>(type) << "\n";
         */
       // assert(!(s == ObjectMap::ObjID(20852) && d == ObjectMap::ObjID(3167)));
+      // assert(!(s == ObjectMap::ObjID(72) && d == ObjectMap::ObjID(28)));
       if (s == ObjectMap::NullValue || d == ObjectMap::NullValue ||
           s == ObjectMap::NullObjectValue || d == ObjectMap::NullObjectValue) {
         // llvm::dbgs() << "Skipping null constraint....\n";
@@ -320,6 +334,10 @@ class ConstraintGraph {
           std::forward_as_tuple(is_pointer, callee, std::move(args)));
     }
 
+    void updateIndirectCalls(std::map<ObjID, IndirectCallInfo> indirect_calls) {
+      indirectCalls_ = std::move(indirect_calls);
+    }
+
     bool isIndirCall(ObjectMap::ObjID id) const {
       return indirectCalls_.find(id) != std::end(indirectCalls_);
     }
@@ -335,6 +353,10 @@ class ConstraintGraph {
     //}}}
 
     // Accessors {{{
+    Constraint *tryGetConstraint(ConsID id) {
+      return constraints_.at(id.val()).get();
+    }
+
     Constraint  &getConstraint(ConsID id) {
       return *constraints_.at(id.val());
     }
