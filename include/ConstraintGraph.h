@@ -382,6 +382,33 @@ class ConstraintGraph {
       return ret.second;
     }
 
+    ObjID getMaxID() const {
+      ObjectMap::ObjID max_src_dest_id = ObjectMap::ObjID(-1);
+      for (const auto &pcons : *this) {
+        if (pcons == nullptr) {
+          continue;
+        }
+        // Store constraints don't define nodes!
+        auto dest = pcons->dest();
+        auto src = pcons->src();
+        auto rep = pcons->rep();
+
+        if (dest > max_src_dest_id) {
+          max_src_dest_id = dest;
+        }
+
+        if (src > max_src_dest_id) {
+          max_src_dest_id = src;
+        }
+
+        if (rep > max_src_dest_id) {
+          max_src_dest_id = rep;
+        }
+      }
+
+      return max_src_dest_id;
+    }
+
     p2icast_iterator p2icast_end() const {
       return std::end(P2ICast_);
     }

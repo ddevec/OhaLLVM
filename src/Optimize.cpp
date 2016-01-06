@@ -18,6 +18,7 @@
 
 #include "include/Debug.h"
 
+#include "include/SpecAnders.h"
 #include "include/SpecSFS.h"
 
 #include "include/SEG.h"
@@ -293,7 +294,7 @@ static void addHUEdge(SEG::NodeID src, SEG::NodeID dest,
 
 }  // End anon namespace
 
-// optimizeConstraints {{{
+// SFS HU implementation {{{
 bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
     ObjectMap &omap) {
 
@@ -566,15 +567,197 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
 //}}}
 
 // Anders Optimizations {{{
+
+class OptNode : public SEG::Node {
+ public:
+  typedef SEG::NodeID NodeID;
+  explicit OptNode(NodeKind kind, NodeID node_id) :
+    SEG::Node(kind, node_id) { }
+
+  virtual bool isNonPtr() = 0;
+
+  static bool classof(const SEG::Node *node) {
+    return (node->getKind() > NodeKind::OptNode &&
+            node->getKind() <= NodeKind::OptNodeEnd);
+  }
+};
+
+// Cleanup constraints after optimizations {{{
+struct HCDNode;
+static int32_t updateAndersConstraints(ConstraintGraph &cg, ObjectMap &omap,
+    SEG &graph, ObjectMap::ObjID max_src_dest_id) {
+
+  // First, update the omap
+  for (int32_t i = 0; i < max_src_dest_id.val(); i++) {
+    SEG::NodeID node_id(i);
+    auto &node = graph.getNode(node_id);
+
+    auto rep_id = node.id();
+
+    if (rep_id != node_id) {
+      /*
+      llvm::dbgs() << "Updating omap rep from: " << node_id << " to: " <<
+        rep_id << "\n";
+      */
+      omap.updateObjID(nodeToObj(node_id), nodeToObj(rep_id));
+    }
+  }
+
+  int32_t num_removed = 0;
+  std::set<Constraint> dedup;
+  // Second, update the constraint graph
+  for (size_t i = 0; i < cg.constraintSize(); i++) {
+    ConstraintGraph::ConsID id(i);
+
+    auto pcons = cg.tryGetConstraint(id);
+    if (pcons == nullptr) {
+      continue;
+    }
+
+    auto &cons = *pcons;
+
+    auto rep_obj_id = cons.rep();
+    auto src_obj_id = cons.src();
+    auto dest_obj_id = cons.dest();
+    auto &src_rep_node = graph.getNode<OptNode>(objToNode(src_obj_id));
+    auto &rep_rep_node = graph.getNode<OptNode>(objToNode(rep_obj_id));
+    auto &dest_rep_node = graph.getNode<OptNode>(objToNode(dest_obj_id));
+    auto src_rep_id = nodeToObj(src_rep_node.id());
+    auto dest_rep_id = nodeToObj(dest_rep_node.id());
+    auto rep_rep_id = nodeToObj(rep_rep_node.id());
+
+    /*
+    // if (llvm::isa<HCDNode>(src_rep_node)) {
+      if (rep_obj_id != rep_rep_id || src_obj_id != src_rep_id || dest_obj_id !=
+          dest_rep_id) {
+        llvm::dbgs() << "Remapping:\n";
+      }
+      if (rep_obj_id != rep_rep_id) {
+        llvm::dbgs() << "  rep: " << rep_obj_id << " -> " <<
+          rep_rep_id  << "\n";
+      }
+    // }
+    */
+    cons.updateRep(rep_rep_id);
+
+    if (cons.type() == ConstraintType::AddressOf) {
+      /*
+      // if (llvm::isa<HCDNode>(src_rep_node)) {
+        if (dest_obj_id != dest_rep_id) {
+          llvm::dbgs() << "  src: " << src_obj_id << " -> " <<
+            src_obj_id << "\n";
+          llvm::dbgs() << "  dest: " << dest_obj_id << " -> " <<
+            dest_rep_id << "\n";
+        }
+      // }
+      */
+      cons.retarget(src_obj_id, dest_rep_id);
+    } else {
+      /*
+      // if (llvm::isa<HCDNode>(src_rep_node)) {
+        if (src_obj_id != src_rep_id || dest_obj_id != dest_rep_id) {
+          llvm::dbgs() << "  src: " << src_obj_id << " -> " <<
+            src_rep_id << "\n";
+          llvm::dbgs() << "  dest: " << dest_obj_id << " -> " <<
+            dest_rep_id << "\n";
+        }
+      // }
+      */
+      cons.retarget(src_rep_id, dest_rep_id);
+    }
+
+    if (src_rep_node.isNonPtr() || dest_rep_node.isNonPtr()) {
+      /*
+      // if (llvm::isa<HCDNode>(src_rep_node)) {
+        llvm::dbgs() << "Removing non-ptr: " << id << ": " <<
+          cg.getConstraint(id) << "\n";
+        if (src_rep_node.isNonPtr()) {
+          llvm::dbgs() << "  reason: non-ptr src: " <<
+            src_rep_node.id() << "\n";
+        }
+
+        if (dest_rep_node.isNonPtr()) {
+          llvm::dbgs() << "  reason: non-ptr dest: " << dest_rep_node.id()
+            << "\n";
+        }
+      // }
+      */
+      cg.removeConstraint(id);
+      num_removed++;
+      continue;
+    }
+
+    // If we have a copy to self, delete it
+    if (cons.type() == ConstraintType::Copy &&
+        cons.src() == cons.dest() && cons.offs() == 0) {
+      /*
+      // if (llvm::isa<HCDNode>(src_rep_node)) {
+        llvm::dbgs() << "Removing copy to self: " << id << ": " <<
+          cg.getConstraint(id) << "\n";
+      // }
+      */
+      cg.removeConstraint(id);
+      num_removed++;
+      // FIXME: Do I need to check dedup with this?  probably not...
+      continue;
+    }
+
+    if (cons.type() == ConstraintType::Copy ||
+        cons.type() == ConstraintType::AddressOf) {
+      auto it = dedup.find(cons);
+      if (it == std::end(dedup)) {
+        dedup.insert(cons);
+      } else {
+        /*
+        // if (llvm::isa<HCDNode>(src_rep_node)) {
+          llvm::dbgs() << "Removing duplicate: " << id << ": " <<
+            cg.getConstraint(id) << "\n";
+        // }
+        */
+        cg.removeConstraint(id);
+        num_removed++;
+      }
+    }
+  }
+
+  std::map<ObjectMap::ObjID, ConstraintGraph::IndirectCallInfo>
+    new_indirect_calls;
+  // Also manage indirect function calls?:
+  // FALSE: We haven't inserted constraints for indirect function calls yet
+  //    We just need to update the ObjIDs in the ConstraintGraph
+  std::for_each(cg.indir_begin(), cg.indir_end(),
+      [&new_indirect_calls, &omap]
+      (std::pair<const ObjectMap::ObjID,
+         ConstraintGraph::IndirectCallInfo> & pr) {
+    auto key_val = omap.valueAtID(pr.first);
+    auto new_key_id = omap.getValue(key_val);
+
+    auto &info = pr.second;
+
+    auto callee_val = omap.valueAtID(info.callee());
+    auto new_callee_id = omap.getValue(callee_val);
+
+    info.setCallee(new_callee_id);
+
+    new_indirect_calls.emplace(new_key_id,
+      std::move(info));
+  });
+
+  return num_removed;
+}
+//}}}
+
 // HVN {{{
 
-class HVNNode : public SEG::Node {
+class HVNNode : public OptNode {
   //{{{
  public:
+  static const int32_t PENonPtr = 0;
+
   typedef typename SEG::NodeID NodeID;
 
   explicit HVNNode(NodeID node_id) :
-    SEG::Node(NodeKind::Unify, node_id) { }
+    OptNode(NodeKind::HVNNode, node_id) { }
 
   void addPtsTo(int32_t id) {
     ptsto_.set(id);
@@ -596,6 +779,12 @@ class HVNNode : public SEG::Node {
     indirect_ = true;
   }
 
+  bool isNonPtr() override {
+    auto ret = ptsto().test(PENonPtr);
+    assert(!ret || ptsto().count() == 1);
+    return ret;
+  }
+
   void unite(SEG &seg, SEG::Node &n) override {
     auto &node = cast<HVNNode>(n);
 
@@ -609,8 +798,8 @@ class HVNNode : public SEG::Node {
 
   // For LLVM RTTI {{{
   // NOTE: We don't use RTTI with HVNNodes...
-  static bool classof(const SEG::Node *) {
-    return true;
+  static bool classof(const SEG::Node *node) {
+    return node->getKind() == NodeKind::HVNNode;
   }
   //}}}
 
@@ -633,8 +822,6 @@ class HVNNode : public SEG::Node {
 class HVNData {
   //{{{
  public:
-  static const int32_t PENonPtr = 0;
-
   int32_t getNextPE() {
     return nextPE_++;
   }
@@ -649,12 +836,6 @@ class HVNData {
     }
 
     return it->second;
-  }
-
-  static bool isNonPtr(HVNNode &nd) {
-    auto ret = nd.ptsto().test(PENonPtr);
-    assert(!ret || nd.ptsto().count() == 1);
-    return ret;
   }
 
  private:
@@ -676,29 +857,8 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
   SEG hvn_graph;
   HVNData data;
 
-  ObjectMap::ObjID max_src_dest_id = ObjectMap::ObjID(-1);
-  for (const auto &pcons : cg) {
-    if (pcons == nullptr) {
-      continue;
-    }
-    // Store constraints don't define nodes!
-    auto dest = pcons->dest();
-    auto src = pcons->src();
-    auto rep = pcons->rep();
-
-    if (dest > max_src_dest_id) {
-      max_src_dest_id = dest;
-    }
-
-    if (src > max_src_dest_id) {
-      max_src_dest_id = src;
-    }
-
-    if (rep > max_src_dest_id) {
-      max_src_dest_id = rep;
-    }
-  }
-
+  // retruns the largest id in the constraint graph
+  auto max_src_dest_id = cg.getMaxID();
   // Now, create a node for each possible destination:
   for (int32_t i = 0; i < max_src_dest_id.val()+1; i++) {
     auto node_id = hvn_graph.addNode<HVNNode>();
@@ -847,12 +1007,12 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
       }
 
       // If the pred node isn't a non_ptr
-      if (!pred_node.ptsto().test(HVNData::PENonPtr)) {
+      if (!pred_node.ptsto().test(HVNNode::PENonPtr)) {
         node.ptsto() |= pred_node.ptsto();
       }
 
       if (node.ptsto().empty()) {
-        node.addPtsTo(HVNData::PENonPtr);
+        node.addPtsTo(HVNNode::PENonPtr);
       }
     }
   };
@@ -873,9 +1033,9 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
 
     auto &ptsto = node.ptsto();
 
-    if (ptsto.empty() || ptsto.test(HVNData::PENonPtr)) {
+    if (ptsto.empty() || ptsto.test(HVNNode::PENonPtr)) {
       ptsto.clear();
-      ptsto.set(HVNData::PENonPtr);
+      ptsto.set(HVNNode::PENonPtr);
     }
 
     auto it = pts_to_pe.find(ptsto);
@@ -898,132 +1058,8 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
   // Finally, adjust omap and CG so all nodes have remapped ids according to the
   //   elected leaders
 
-  // First, update the omap
-  for (int32_t i = 0; i < max_src_dest_id.val(); i++) {
-    SEG::NodeID node_id(i);
-    auto &node = hvn_graph.getNode(node_id);
-
-    auto rep_id = node.id();
-
-    if (rep_id != node_id) {
-      omap.updateObjID(nodeToObj(node_id), nodeToObj(rep_id));
-    }
-  }
-
-  int32_t num_removed = 0;
-  std::set<Constraint> dedup;
-  // Second, update the constraint graph
-  for (size_t i = 0; i < cg.constraintSize(); i++) {
-    ConstraintGraph::ConsID id(i);
-
-    auto pcons = cg.tryGetConstraint(id);
-    if (pcons == nullptr) {
-      continue;
-    }
-
-    auto &cons = *pcons;
-
-    auto rep_obj_id = cons.rep();
-    auto src_obj_id = cons.src();
-    auto dest_obj_id = cons.dest();
-    auto &src_rep_node = hvn_graph.getNode<HVNNode>(objToNode(src_obj_id));
-    auto &rep_rep_node = hvn_graph.getNode<HVNNode>(objToNode(rep_obj_id));
-    auto &dest_rep_node = hvn_graph.getNode<HVNNode>(objToNode(dest_obj_id));
-    auto src_rep_id = nodeToObj(src_rep_node.id());
-    auto dest_rep_id = nodeToObj(dest_rep_node.id());
-    auto rep_rep_id = nodeToObj(rep_rep_node.id());
-
-    /*
-    llvm::dbgs() << "Remapping:\n";
-    llvm::dbgs() << "  rep: " << rep_obj_id << " -> " << rep_rep_id  << "\n";
-    */
-    cons.updateRep(rep_rep_id);
-
-    if (cons.type() == ConstraintType::AddressOf) {
-      /*
-      llvm::dbgs() << "  src: " << src_obj_id << " -> " << src_obj_id << "\n";
-      llvm::dbgs() << "  dest: " << dest_obj_id << " -> " <<
-        dest_rep_id << "\n";
-      */
-      cons.retarget(src_obj_id, dest_rep_id);
-    } else {
-      /*
-      llvm::dbgs() << "  src: " << src_obj_id << " -> " << src_rep_id << "\n";
-      llvm::dbgs() << "  dest: " << dest_obj_id << " -> " <<
-        dest_rep_id << "\n";
-      */
-      cons.retarget(src_rep_id, dest_rep_id);
-    }
-
-    if (HVNData::isNonPtr(src_rep_node) || HVNData::isNonPtr(dest_rep_node)) {
-      /*
-      llvm::dbgs() << "Removing non-ptr: " << id << ": " << cg.getConstraint(id)
-        << "\n";
-      if (HVNData::isNonPtr(src_rep_node)) {
-        llvm::dbgs() << "  reason: non-ptr src: " << src_rep_node.id() << "\n";
-      }
-
-      if (HVNData::isNonPtr(dest_rep_node)) {
-        llvm::dbgs() << "  reason: non-ptr dest: " << dest_rep_node.id()
-          << "\n";
-      }
-      */
-      cg.removeConstraint(id);
-      num_removed++;
-      continue;
-    }
-
-    // If we have a copy to self, delete it
-    if (cons.type() == ConstraintType::Copy &&
-        cons.src() == cons.dest() && cons.offs() == 0) {
-      /*
-      llvm::dbgs() << "Removing copy to self: " << id << ": " <<
-        cg.getConstraint(id) << "\n";
-        */
-      cg.removeConstraint(id);
-      num_removed++;
-      // FIXME: Do I need to check dedup with this?  probably not...
-      continue;
-    }
-
-    if (cons.type() == ConstraintType::Copy ||
-        cons.type() == ConstraintType::AddressOf) {
-      auto it = dedup.find(cons);
-      if (it == std::end(dedup)) {
-        dedup.insert(cons);
-      } else {
-        /*
-        llvm::dbgs() << "Removing duplicate: " << id << ": " <<
-          cg.getConstraint(id) << "\n";
-          */
-        cg.removeConstraint(id);
-        num_removed++;
-      }
-    }
-  }
-
-  std::map<ObjectMap::ObjID, ConstraintGraph::IndirectCallInfo>
-    new_indirect_calls;
-  // Also manage indirect function calls?:
-  // FALSE: We haven't inserted constraints for indirect function calls yet
-  //    We just need to update the ObjIDs in the ConstraintGraph
-  std::for_each(cg.indir_begin(), cg.indir_end(),
-      [&new_indirect_calls, &omap]
-      (std::pair<const ObjectMap::ObjID,
-         ConstraintGraph::IndirectCallInfo> & pr) {
-    auto key_val = omap.valueAtID(pr.first);
-    auto new_key_id = omap.getValue(key_val);
-
-    auto &info = pr.second;
-
-    auto callee_val = omap.valueAtID(info.callee());
-    auto new_callee_id = omap.getValue(callee_val);
-
-    info.setCallee(new_callee_id);
-
-    new_indirect_calls.emplace(new_key_id,
-      std::move(info));
-  });
+  auto num_removed = updateAndersConstraints(cg, omap, hvn_graph,
+      max_src_dest_id);
 
   return num_removed;
 }
@@ -1043,5 +1079,241 @@ void HRU(ConstraintGraph &cg, ObjectMap &omap, int32_t min_removed) {
 //}}}
 
 // HCD {{{
+class HCDNode : public OptNode {
+  //{{{
+ public:
+  typedef typename SEG::NodeID NodeID;
+
+  explicit HCDNode(NodeID node_id) :
+    OptNode(NodeKind::HCDNode, node_id) { }
+
+  void unite(SEG &seg, SEG::Node &n) override {
+    auto &node = cast<HCDNode>(n);
+
+    // If we are not both ref nodes, the non-ref should be the leader
+    if (ref() && !node.ref()) {
+      node.unite(seg, *this);
+      return;
+    }
+
+    /*
+    llvm::dbgs() << "Merging: " << id() << (ref() ? " R " : " D ") << " and "
+        << node.id() << (node.ref() ? " R " : " D ") << "\n";
+    */
+
+    // Add any ref nodes to our ref set
+    if (node.ref()) {
+      refReps_.insert(node.id());
+    }
+    refReps_.insert(std::begin(node.refReps_), std::end(node.refReps_));
+
+    SEG::Node::unite(seg, n);
+  }
+
+  // setters {{{
+  void setRef() {
+    ref_ = true;
+  }
+  //}}}
+
+  // Accessors {{{
+  bool ref() const {
+    return ref_;
+  }
+
+  const std::set<NodeID> &getRefs() const {
+    return refReps_;
+  }
+
+  bool isNonPtr() override {
+    return false;
+  }
+  //}}}
+
+  // For LLVM RTTI {{{
+  // NOTE: We don't use RTTI with HCDNode...
+  static bool classof(const SEG::Node *n) {
+    return n->getKind() == NodeKind::HCDNode;
+  }
+  //}}}
+
+  // Dot print support {{{
+  void print_label(dbg_ostream &o, const ObjectMap &) const override {
+    char idr_chr = ref() ? 'R' : 'D';
+    o << id() << " (" << idr_chr << ")";
+  }
+  //}}}
+
+ private:
+  bool ref_ = false;
+  std::set<NodeID> refReps_;
+  //}}}
+};
+
+class HCDData {
+  //{{{
+ public:
+  explicit HCDData(SEG &hcd_graph) : hcdGraph_(hcd_graph) { }
+
+  HCDData(const HCDData &) = delete;
+  HCDData &operator=(const HCDData &) = delete;
+
+  HCDNode &getRefNode(SEG::NodeID id) {
+    auto ref_it = nodeToRef_.find(id);
+
+    if (ref_it == std::end(nodeToRef_)) {
+      auto new_node_id = hcdGraph_.addNode<HCDNode>();
+      auto &hcd_node = hcdGraph_.getNode<HCDNode>(new_node_id);
+      hcd_node.setRef();
+
+      auto rc = nodeToRef_.emplace(id, new_node_id);
+      refToNode_.emplace(new_node_id, id);
+      assert(rc.second);
+      ref_it = rc.first;
+    }
+
+    auto &ret = hcdGraph_.getNode<HCDNode>(ref_it->second);
+    assert(ret.ref());
+    return ret;
+  }
+
+  HCDNode &getNodeDeref(SEG::NodeID id) {
+    auto ref_it = refToNode_.find(id);
+
+    assert(ref_it != std::end(refToNode_));
+
+    auto &ret = hcdGraph_.getNode<HCDNode>(ref_it->second);
+    assert(!ret.ref());
+    return ret;
+  }
+
+ private:
+  SEG &hcdGraph_;
+  std::map<SEG::NodeID, SEG::NodeID> nodeToRef_;
+  std::map<SEG::NodeID, SEG::NodeID> refToNode_;
+  //}}}
+};
+
+void SpecAnders::HCD(ConstraintGraph &graph, ObjectMap &omap) {
+  // Okay, need to get our hcd constarints....
+  SEG hcd_graph;
+
+  HCDData data(hcd_graph);
+
+  // Now, initailize the nodelist
+  auto max_id = graph.getMaxID();
+
+  // Fill up the offline constraint graph
+  for (ObjectMap::ObjID obj_id(0); obj_id <= max_id; obj_id++) {
+    auto node_id = hcd_graph.addNode<HCDNode>();
+    assert(node_id.val() == obj_id.val());
+  }
+
+  // NOTE: This is done in HCDData...
+  // Denote which edges in the graph are indirect
+  //  Iterate each constraint, if it is the dest of a load, it loads to/stores
+  //  from a REF node.  We will need to add a REF node,
+  //      and make a REF to nodeid mapping...
+
+  // Populate the edges of the offline constraint graph:
+  for (auto &pcons : graph) {
+    if (pcons == nullptr) {
+      continue;
+    }
+    auto dest_node_id = objToNode(pcons->dest());
+    auto &dest_node = hcd_graph.getNode<HCDNode>(dest_node_id);
+    auto src_node_id = objToNode(pcons->src());
+    auto &src_node = hcd_graph.getNode<HCDNode>(src_node_id);
+
+    /*
+    if (pcons->rep() == ObjectMap::ObjID(188850)) {
+      llvm::dbgs() << "Have cons: " << *pcons << "\n";
+      llvm::dbgs() << "  " << ValPrint(pcons->rep()) << "\n";
+    }
+
+    if (pcons->dest() == ObjectMap::ObjID(3253)) {
+      llvm::dbgs() << "Have cons: " << *pcons << "\n";
+      llvm::dbgs() << "  " << ValPrint(pcons->rep()) << "\n";
+    }
+
+    if (pcons->rep() == ObjectMap::ObjID(98027)) {
+      llvm::dbgs() << "Have cons: " << *pcons << "\n";
+      llvm::dbgs() << "  " << ValPrint(pcons->rep()) << "\n";
+    }
+
+    if (pcons->rep() == ObjectMap::ObjID(188842)) {
+      llvm::dbgs() << "Have cons: " << *pcons << "\n";
+      llvm::dbgs() << "  " << ValPrint(pcons->rep()) << "\n";
+    }
+    */
+
+    switch (pcons->type()) {
+      case ConstraintType::Load:
+        //   Load -- REF(src) -> dest
+        {
+          // Get the ref of this source:
+          auto &src_ref = data.getRefNode(src_node.id());
+
+          // Now, add some edges
+          dest_node.addPred(hcd_graph, src_ref.id());
+        }
+        break;
+      case ConstraintType::Store:
+        //   Store -- src -> REF(dest)
+        {
+          auto &dest_ref = data.getRefNode(dest_node.id());
+
+          dest_ref.addPred(hcd_graph, src_node.id());
+        }
+        break;
+      case ConstraintType::Copy:
+        //   Copy -- normal
+        //     GEP (copy w/ offset) -- Ignore
+        if (pcons->offs() == 0) {
+          dest_node.addPred(hcd_graph, src_node.id());
+        }
+        break;
+      case ConstraintType::AddressOf:
+        //   AddrOf -- ignore
+        break;
+      default:
+        llvm_unreachable("HCD bad constraint type");
+        break;
+    }
+  }
+
+  // Use Tarjans to detect SCCs
+  RunTarjans<decltype(should_visit_default), decltype(scc_visit_default)>
+    (hcd_graph, should_visit_default, scc_visit_default);
+
+  // Update our HCD data structure
+  // And update our constraints/cg for any merged node ids...
+  // To update constraint strucutres:
+  // Iterate through each constraint:
+  //   Get rep node
+  //   Merge
+  for (auto &pn : hcd_graph) {
+    auto pnode = cast<HCDNode>(pn.get());
+
+    // This node must either have 0 ref'd nodes, or be a ref node itself
+    //   (ref nodes cannot be the leaders of non-trivial scc groups)
+    assert(pnode->getRefs().size() == 0 || !pnode->ref());
+
+    if (pnode->ref() || !pnode->isRep()) {
+      continue;
+    }
+
+    auto &ref_nodes = pnode->getRefs();
+    for (auto &ref_id : ref_nodes) {
+      // Convert from ref_id to node_id
+      auto deref_id = data.getNodeDeref(ref_id).id();
+      hcdPairs_.emplace(nodeToObj(deref_id),
+         nodeToObj(pnode->id()));
+    }
+  }
+
+  // Handle non-ref SCCs here (update constraints/graph info)
+  updateAndersConstraints(graph, omap, hcd_graph, max_id);
+}
 //}}}
 //}}}

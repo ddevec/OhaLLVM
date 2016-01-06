@@ -176,7 +176,11 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
   }
 
   // Then, HCD
-  // auto hcd_map = HCD(cg, omap);
+  {
+    util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "HCD");
+    // Gather hybrid cycle info from our graph
+    HCD(cg, omap);
+  }
 
   {
     util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "Graph Creation");
@@ -361,6 +365,10 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
       // NOTE: We intentionally copy that set here
       // Convert old node to new node:
       auto corrected_obj_id = getRepID(obj_id, omap);
+      /*
+      llvm::dbgs() << "corrected_id: " << corrected_obj_id << ", obj_id: " <<
+        obj_id << "\n";
+      */
       auto st_pts_set = graph_.getNode(corrected_obj_id).ptsto();
 
       // We then add the base node of any struct fields in the static set

@@ -21,7 +21,7 @@
 #include "include/SpecSFS.h"
 
 // Number of edges/number of processed nodes before we allow LCD to run
-#define LCD_SIZE 300
+#define LCD_SIZE 600
 #define LCD_PERIOD std::numeric_limits<int32_t>::max()
 
 // SpecSFS Solve {{{
@@ -819,6 +819,29 @@ bool SpecAnders::solve() {
     // Pop the next node from the worklist
     priority[pnd->id().val()] = vtime;
     vtime++;
+
+    // If this node is part of HCD:
+    auto hcd_itr = hcdPairs_.find(pnd->id());
+    if (hcd_itr != std::end(hcdPairs_)) {
+      // For each ptsto in this node:
+      auto &rep_node = graph_.getNode(hcd_itr->second);
+      for (auto dest_id : pnd->ptsto()) {
+        // Collapse (pointed-to-node, rep)
+        // Add rep to worklist
+        auto &dest_node = graph_.getNode(dest_id);
+
+        // Don't merge w/ self
+        if (dest_node.id() != rep_node.id()) {
+          /*
+          llvm::dbgs() << "HCD live merging: " << rep_node.id() << " and " <<
+            dest_node.id() << "\n";
+          */
+          rep_node.merge(dest_node);
+        }
+      }
+
+      work.push(&rep_node, priority[rep_node.id().val()]);
+    }
 
     // llvm::dbgs() << "Processing node: " << pnd->id() << "\n";
     // For each constraint in this node

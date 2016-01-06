@@ -96,7 +96,12 @@ enum class NodeKind {
   Unify,
   HUNode,
   CFGNode,
-  UnifyEnd
+  UnifyEnd,
+
+  OptNode,
+  HVNNode,
+  HCDNode,
+  OptNodeEnd
 };
 
 enum class EdgeKind {

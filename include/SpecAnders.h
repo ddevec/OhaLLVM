@@ -95,6 +95,8 @@ class SpecAnders : public llvm::ModulePass,
   std::map<ObjectMap::ObjID, Bitmap>
   addDynPtstoInfo(llvm::Module &m, DUG &graph, ObjectMap &omap);
 
+  void HCD(ConstraintGraph &, ObjectMap &);
+
   // Solves the remaining graph, providing full flow-sensitive inclusion-based
   // points-to analysis
   bool solve();
@@ -113,6 +115,8 @@ class SpecAnders : public llvm::ModulePass,
   AndersGraph graph_;
 
   AssumptionSet specAssumptions_;
+
+  std::map<ObjectMap::ObjID, ObjectMap::ObjID> hcdPairs_;
   //}}}
 };
 
