@@ -12,6 +12,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -511,6 +512,9 @@ class ID {
     // Explicit conversion to get back the impl:
     explicit operator impl() const { return val_; }
 
+    // To work with container types
+    explicit operator size_t() const { return val_; }
+
     constexpr impl val() const { return val_; }
 
     bool operator<(const ID &id) const {
@@ -609,6 +613,141 @@ std::ostream &operator<<(std::ostream &o,
   o << id.val_;
   return o;
 }
+//}}}
+
+// Union Find {{{
+// id_type must be construtable from a size_t, have the
+//    bool operator<(size_t) const;
+// and be castable to a size_t (aka):
+//    explicit size_t() const;
+// Implements union-find structure, with union-by-rank and path-compression
+template<typename id_type = int32_t>
+class UnionFind {
+ public:
+  UnionFind() = default;
+  explicit UnionFind(size_t default_size) :
+        ranks_(default_size, 0), ids_(default_size) {
+    std::iota(std::begin(ids_), std::end(ids_), id_type(0));
+  }
+
+  id_type add() {
+    ids_.emplace_back(ids_.size());
+    ranks_.emplace_back(0);
+    return id_type(ids_.size() - 1);
+  }
+
+  id_type find(id_type idx) {
+    assert(static_cast<size_t>(idx) < ids_.size());
+    // If this is not a rep
+    if (ids_[static_cast<size_t>(idx)] != idx) {
+      ids_[static_cast<size_t>(idx)] =
+        find(ids_[static_cast<size_t>(idx)]);
+    }
+
+    return ids_[static_cast<size_t>(idx)];
+  }
+
+  void merge(id_type rhs, id_type lhs) {
+    id_type rhs_root = find(rhs);
+    id_type lhs_root = find(lhs);
+    auto &rhs_rank = ranks_[static_cast<size_t>(rhs_root)];
+    auto &lhs_rank = ranks_[static_cast<size_t>(lhs_root)];
+
+    if (rhs_rank < lhs_rank) {
+      ids_[static_cast<size_t>(rhs_root)] = lhs_root;
+    } else if (lhs_rank < rhs_rank) {
+      ids_[static_cast<size_t>(lhs_root)] = rhs_root;
+    } else {
+      ids_[static_cast<size_t>(lhs_root)] = rhs_root;
+      rhs_rank++;
+    }
+  }
+
+  size_t size() const {
+    assert(ids_.size() == ranks_.size());
+    return ids_.size();
+  }
+
+ private:
+  std::vector<int32_t> ranks_;
+  std::vector<id_type> ids_;
+};
+
+// Excludes the union by rank optimization, for when ordering matters
+template<typename id_type = int32_t>
+class UnionFindNoRank {
+ public:
+  UnionFindNoRank() = default;
+  explicit UnionFindNoRank(size_t default_size) :
+        ids_(default_size) {
+    std::iota(std::begin(ids_), std::end(ids_), id_type(0));
+  }
+
+  id_type add() {
+    ids_.emplace_back(ids_.size());
+    return id_type(ids_.size() - 1);
+  }
+
+  id_type __debugFind(id_type idx,
+      std::set<id_type> &cycle_detect,
+      std::vector<id_type> &cycle_order) {
+    assert(static_cast<size_t>(idx) < ids_.size());
+    assert(ids_[static_cast<size_t>(idx)] <= idx);
+
+    auto cycle_it = cycle_detect.find(idx);
+    if (cycle_it != std::end(cycle_detect)) {
+      // Print cycle and crash
+      std::cerr << "Union Find cycle:" << std::endl;
+      for (auto prev_idx : cycle_order) {
+        std::cerr << "  " << prev_idx << std::endl;
+      }
+      std::cerr << "  -> " << idx << std::endl;
+      abort();
+    } else {
+      cycle_detect.emplace(idx);
+      cycle_order.emplace_back(idx);
+    }
+
+    // If this is not a rep
+    if (ids_[static_cast<size_t>(idx)] != idx) {
+      ids_[static_cast<size_t>(idx)] =
+        find(ids_[static_cast<size_t>(idx)]);
+    }
+
+    return ids_[static_cast<size_t>(idx)];
+  }
+
+  id_type debugFind(id_type idx) {
+    std::vector<id_type> a;
+    std::set<id_type> b;
+    return __debugFind(idx, b, a);
+  }
+
+  id_type find(id_type idx) {
+    assert(static_cast<size_t>(idx) < ids_.size());
+    // If this is not a rep
+    if (ids_[static_cast<size_t>(idx)] != idx) {
+      ids_[static_cast<size_t>(idx)] =
+        find(ids_[static_cast<size_t>(idx)]);
+    }
+
+    return ids_[static_cast<size_t>(idx)];
+  }
+
+  void merge(id_type lhs, id_type rhs) {
+    id_type rhs_root = find(rhs);
+    id_type lhs_root = find(lhs);
+
+    ids_[static_cast<size_t>(rhs_root)] = lhs_root;
+  }
+
+  size_t size() const {
+    return ids_.size();
+  }
+
+ private:
+  std::vector<id_type> ids_;
+};
 //}}}
 }  // namespace util
 

@@ -271,31 +271,8 @@ class ObjectMap {
     //}}}
 
     // Value insertion {{{
-    // Used to create phony identifers for nodes that don't have values
-    /*
-    ObjID createPhonyID() {
-      return phonyIdGen_.next();
-    }
-
-    ObjID createPhonyID(const llvm::Value *val) {
-      auto ret = phonyIdGen_.next();
-
-      assert(phonyMap_.find(ret) == std::end(phonyMap_));
-      phonyMap_.emplace(ret, val);
-
-      return ret;
-    }
-
-    ObjID createPhonyObjectID(const llvm::Value *val) {
-      auto ret = phonyIdGen_.next();
-
-      assert(phonyMap_.find(ret) == std::end(phonyMap_));
-      idToObj_.emplace(ret, val);
-
-      return ret;
-    }
-    */
-
+    // Used to create phony identifers for nodes that don't have llvm::Values
+    //    (actual program values) associated with them
     ObjID createPhonyID() {
       return createMapping(nullptr);
     }
@@ -326,12 +303,23 @@ class ObjectMap {
       return id;
     }
 
-    void updateObjID(ObjID orig_id, ObjID new_id) {
+    void mergeObjRep(ObjID orig_id, ObjID new_id) {
+      // if (isValue(orig_id) && isValue(new_id)) {
+        reps_.merge(orig_id, new_id);
+      /*
+      } else {
+        llvm::dbgs() << "      Ignored merge: " << orig_id << ", " << new_id <<
+          "\n";
+      }
+      */
+      /*
       auto val = valueAtID(orig_id);
 
+      // Only merge non-object and non-specials
       if (isValue(orig_id)) {
         valToID_[val] = new_id;
       }
+      */
     }
 
     void addValues(const llvm::Type *type, const llvm::Value *val) {
@@ -419,6 +407,24 @@ class ObjectMap {
       }
     }
 
+    ObjID getRep(ObjID id) const {
+      return reps_.find(id);
+    }
+
+    const llvm::Value *valueAtRep(ObjID id) const {
+      auto rep = reps_.find(id);
+      /*
+      if (isPhony(id)) {
+        auto phony_it = phonyMap_.find(id);
+        if (phony_it != std::end(phonyMap_)) {
+          return phony_it->second;
+        }
+        return nullptr;
+      }
+      */
+      return mapping_.at(rep.val());
+    }
+
     const llvm::Value *valueAtID(ObjID id) const {
       /*
       if (isPhony(id)) {
@@ -430,6 +436,16 @@ class ObjectMap {
       }
       */
       return mapping_.at(id.val());
+    }
+
+    ObjID getValueRep(const llvm::Value *val) {
+      // This function doesn't support contstants -- except global values
+      assert(!llvm::isa<llvm::Constant>(val) ||
+          llvm::isa<llvm::GlobalValue>(val));
+
+      auto id = __do_get(val, valToID_);
+      auto ret = reps_.find(id);
+      return ret;
     }
 
     ObjID getValue(const llvm::Value *val) {
@@ -457,7 +473,12 @@ class ObjectMap {
 
     // Allocated object id
     ObjID getObject(const llvm::Value *val) {
-      return __do_get(val, objToID_);
+      auto id = __do_get(val, objToID_);
+
+      // Objects should never be merged
+      assert(reps_.find(id) == id);
+
+      return id;
     }
 
     bool isObject(const ObjID id) const {
@@ -477,6 +498,18 @@ class ObjectMap {
 
     ObjID getVarArg(const llvm::Value *val) const {
       return __do_get(val, vargToID_);
+    }
+
+    ObjID getReturnRep(const llvm::Value *val) const {
+      auto id = __do_get(val, retToID_);
+      auto ret = reps_.find(id);
+      return ret;
+    }
+
+    ObjID getVarArgRep(const llvm::Value *val) const {
+      auto id = __do_get(val, vargToID_);
+      auto ret = reps_.find(id);
+      return ret;
     }
 
     // ddevec -- FIXME: Does this really belong here?
@@ -673,15 +706,15 @@ class ObjectMap {
     idToValMap idToVararg_;
     idToValMap phonyMap_;
 
+    // Rep useage (for optimization merging)
+    mutable util::UnionFind<ObjID> reps_;
+
     // Struct info
     std::map<const llvm::StructType *, StructInfo> structInfo_;
     std::map<ObjID, std::vector<ObjID>> objToAliases_;
     std::map<ObjID, ObjID> aliasToObjs_;
     std::map<ObjID, int32_t> objIsStruct_;
     const StructInfo *maxStructInfo_ = nullptr;
-
-    // static constexpr int32_t phonyIdBase = 1<<30;
-    // IDGenerator<ObjID, phonyIdBase> phonyIdGen_;
     ///}}}
 
     // Internal helpers {{{
@@ -693,6 +726,9 @@ class ObjectMap {
     ObjID createMapping(const llvm::Value *val) {
       ObjID ret = getNextID();
       mapping_.emplace_back(val);
+      if_debug_enabled(auto rep_id =)
+        reps_.add();
+      assert(rep_id == ret);
       // assert(ret.val() >= 0 && ret.val() < phonyIdBase);
       assert(ret.val() >= 0);
       return ret;
@@ -956,6 +992,48 @@ class ValPrint {
           o << fcn->getName();
         } else if (auto bb = dyn_cast<const llvm::BasicBlock>(val)) {
           o << bb->getParent()->getName() << ": " << bb->getName();
+        } else {
+          o << *val;
+        }
+      } else {
+        // If its a special value:
+        if (ObjectMap::isSpecial(pr.id_)) {
+          ObjectMap::printSpecial(o, pr.id_);
+        } else {
+          o << "(null)";
+        }
+      }
+      return o;
+    }
+
+ private:
+    ObjectMap::ObjID id_;
+    const ObjectMap *omap_;
+  //}}}
+};
+
+class FullValPrint {
+  //{{{
+ public:
+    explicit FullValPrint(ObjectMap::ObjID id) : id_(id), omap_(g_omap) { }
+    FullValPrint(ObjectMap::ObjID id, const ObjectMap &omap) : id_(id),
+        omap_(&omap) { }
+
+    friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
+        const FullValPrint &pr) {
+      // If its not in the map, its probably been added later as an indirect
+      // object...
+      auto val = pr.omap_->valueAtID(pr.id_);
+
+      if (val != nullptr) {
+        if (auto gv = dyn_cast<const llvm::GlobalValue>(val)) {
+          o << gv->getName();
+        } else if (auto fcn = dyn_cast<const llvm::Function>(val)) {
+          o << fcn->getName();
+        } else if (auto bb = dyn_cast<const llvm::BasicBlock>(val)) {
+          o << bb->getParent()->getName() << ": " << bb->getName();
+        } else if (auto ins = dyn_cast<const llvm::Instruction>(val)) {
+          o << ins->getParent()->getParent()->getName() << ": " << *val;
         } else {
           o << *val;
         }

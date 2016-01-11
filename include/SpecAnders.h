@@ -91,6 +91,7 @@ class SpecAnders : public llvm::ModulePass,
 
   ObjectMap::ObjID getRep(ObjectMap::ObjID id) {
     // Convert input objID to rep ObjID:
+    /*
     auto rep_id = id;
     auto val = omap_.valueAtID(id);
     const llvm::Value *old_val = nullptr;
@@ -101,6 +102,8 @@ class SpecAnders : public llvm::ModulePass,
     }
 
     return rep_id;
+    */
+    return omap_.getRep(id);
   }
 
   const PtstoSet &getPointsTo(ObjectMap::ObjID id) {

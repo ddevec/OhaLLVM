@@ -183,24 +183,10 @@ class DUG {
           SEG::NodeID node_id;
 
           dout("Adding node to DUG for obj_id: " << dest << ": " <<
-              ValPrint(dest) << "\n");
+              FullValPrint(dest) << "\n");
 
           dout("  node src_obj_id: " << src << ": " <<
               ValPrint(src) << "\n");
-
-          /*
-          if (src == ObjectMap::ObjID(108470) &&
-              dest == ObjectMap::ObjID(108469))
-              */
-          if (src == ObjectMap::ObjID(16036)) {
-            llvm::dbgs() << "!!!  Creating DUG node for eye  !!!\n";
-
-            llvm::dbgs() << "Adding node to DUG for obj_id: " << dest << ": " <<
-                ValPrint(dest) << "\n";
-
-            llvm::dbgs() << "  node src_obj_id: " << src << ": " <<
-                ValPrint(src) << "\n";
-          }
 
           switch (cons.type()) {
             case ConstraintType::AddressOf:
@@ -248,7 +234,7 @@ class DUG {
                 dout("  node is Load\n");
                 auto ld_id = cons.rep();
                 dout("  Actual load_id is: (" << ld_id << ") " <<
-                  ValPrint(ld_id) << "\n");
+                  FullValPrint(ld_id) << "\n");
                 node_id = DUG_.addNode<LoadNode>(ld_id, dest, src, offs);
                 // logout("n " << ret << "\n");
                 dout("  DUGid is " << node_id << "\n");

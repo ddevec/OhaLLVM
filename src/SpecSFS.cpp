@@ -673,7 +673,7 @@ void SpecSFS::deleteValue(llvm::Value *V) {
 }
 
 void SpecSFS::copyValue(llvm::Value *From, llvm::Value *To) {
-  // FIXME: Should do this
+  assert(0 && "Unimplemented -- need to fix after omap reps were added");
   auto from_id = omap_.getValue(From);
   auto to_id = omap_.getValue(To);
 
@@ -687,7 +687,7 @@ void SpecSFS::copyValue(llvm::Value *From, llvm::Value *To) {
   assert(from_id != ObjectMap::ObjID::invalid());
 
   // Make to point to from
-  omap_.updateObjID(to_id, from_id);
+  omap_.mergeObjRep(to_id, from_id);
 
   getAnalysis<AliasAnalysis>().copyValue(From, To);
 }

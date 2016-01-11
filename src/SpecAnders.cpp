@@ -183,7 +183,6 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
   }
   */
 
-  /*
   // Then, do HRU
   {
     util::PerfTimerPrinter hru_timer(llvm::dbgs(), "HRU");
@@ -196,7 +195,6 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
     // Gather hybrid cycle info from our graph
     HCD(cg, omap);
   }
-  */
 
   /*
   if (getRep(ObjectMap::ObjID(3441)) == ObjectMap::ObjID(3440)) {

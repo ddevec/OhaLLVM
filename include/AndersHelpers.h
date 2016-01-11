@@ -449,13 +449,15 @@ class AndersGraph {
     //   callsite info
     // For each function object (not value)
     for (auto &fcn : m) {
+      // Objects should always be their own rep...
       auto obj_id = omap.getObject(&fcn);
-      auto ret_id = omap.getReturn(&fcn);
+      assert(omap.getRep(obj_id) == obj_id);
+      auto ret_id = omap.getReturnRep(&fcn);
       // Generate an array containing all of that function's arguments
       std::vector<ObjID> args;
       std::for_each(fcn.arg_begin(), fcn.arg_end(),
           [&args, &omap, &max_id] (const llvm::Argument &arg) {
-        auto arg_id = omap.getValue(&arg);
+        auto arg_id = omap.getValueRep(&arg);
 
         args.push_back(arg_id);
 

@@ -435,7 +435,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
         ValPrint(nodeToObj(node_id)) << " -> " << rep_id << "\n";
       */
       setObjIDRep(nodeToObj(node_id), nodeToObj(rep_id));
-      omap.updateObjID(nodeToObj(node_id), nodeToObj(rep_id));
+      omap.mergeObjRep(nodeToObj(node_id), nodeToObj(rep_id));
     }
   }
 
@@ -598,7 +598,7 @@ static int32_t updateAndersConstraints(ConstraintGraph &cg, ObjectMap &omap,
       llvm::dbgs() << "Updating omap rep from: " << node_id << " to: " <<
         rep_id << "\n";
       */
-      omap.updateObjID(nodeToObj(node_id), nodeToObj(rep_id));
+      omap.mergeObjRep(nodeToObj(node_id), nodeToObj(rep_id));
     }
   }
 
@@ -621,9 +621,9 @@ static int32_t updateAndersConstraints(ConstraintGraph &cg, ObjectMap &omap,
     auto &src_rep_node = graph.getNode<OptNode>(objToNode(src_obj_id));
     auto &rep_rep_node = graph.getNode<OptNode>(objToNode(rep_obj_id));
     auto &dest_rep_node = graph.getNode<OptNode>(objToNode(dest_obj_id));
-    auto src_rep_id = nodeToObj(src_rep_node.id());
-    auto dest_rep_id = nodeToObj(dest_rep_node.id());
-    auto rep_rep_id = nodeToObj(rep_rep_node.id());
+    auto src_rep_id = omap.getRep(nodeToObj(src_rep_node.id()));
+    auto dest_rep_id = omap.getRep(nodeToObj(dest_rep_node.id()));
+    auto rep_rep_id = omap.getRep(nodeToObj(rep_rep_node.id()));
 
     /*
     // if (llvm::isa<HCDNode>(src_rep_node)) {
@@ -728,13 +728,11 @@ static int32_t updateAndersConstraints(ConstraintGraph &cg, ObjectMap &omap,
       [&new_indirect_calls, &omap]
       (std::pair<const ObjectMap::ObjID,
          ConstraintGraph::IndirectCallInfo> & pr) {
-    auto key_val = omap.valueAtID(pr.first);
-    auto new_key_id = omap.getValue(key_val);
+    auto new_key_id = omap.getRep(pr.first);
 
     auto &info = pr.second;
 
-    auto callee_val = omap.valueAtID(info.callee());
-    auto new_callee_id = omap.getValue(callee_val);
+    auto new_callee_id = omap.getRep(info.callee());
 
     info.setCallee(new_callee_id);
 
@@ -1043,6 +1041,7 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
     } else {
       auto &rep_node = hvn_graph.getNode<HVNNode>(it->second);
 
+      /*
       if (rep_node.id() == SEG::NodeID(4957) ||
           node.id() == SEG::NodeID(4957)) {
         llvm::dbgs() << "  merge " << node.id() << " with " <<
@@ -1057,6 +1056,12 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
 
       if (rep_node.id() == SEG::NodeID(3440) ||
           node.id() == SEG::NodeID(3440)) {
+        llvm::dbgs() << "  merge " << node.id() << " with " <<
+          rep_node.id() << "\n";
+      }
+      */
+      if (rep_node.id() == SEG::NodeID(6509) ||
+          node.id() == SEG::NodeID(6509)) {
         llvm::dbgs() << "  merge " << node.id() << " with " <<
           rep_node.id() << "\n";
       }

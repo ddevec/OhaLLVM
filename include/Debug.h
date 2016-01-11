@@ -80,6 +80,7 @@ const target_type *dyn_cast(const base_type *b) {
 
 #define cast llvm::cast
 #define dyn_cast llvm::dyn_cast
+#define dyn_cast_or_null llvm::dyn_cast_or_null
 #endif
 
 [[ gnu::unused ]]

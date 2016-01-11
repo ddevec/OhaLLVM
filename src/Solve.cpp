@@ -2,7 +2,7 @@
  * Copyright (C) 2015 David Devecsery
  */
 
-#define SPECSFS_DEBUG
+// #define SPECSFS_DEBUG
 // #define SPECANDERS_DEBUG
 // #define SPECSFS_LOGDEBUG
 
@@ -1006,22 +1006,24 @@ void AndersIndirCallCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
 
       // Create an edge from our args to their args
       // ... and push that node to our worklist
-      int idx = 0;
+      size_t idx = 0;
       for (auto src_arg_id : args) {
-        auto dest_arg_id = dest_args[idx];
+        if (idx < dest_args.size()) {
+          auto dest_arg_id = dest_args[idx];
 
-        // okay, got the dest args... add edges
-        adout("  src_arg_id: " << src_arg_id << "\n");
-        adout("  dest_arg_id: " << dest_arg_id << "\n");
-        auto &src_arg_node = graph.getNode(src_arg_id);
-        bool ch = src_arg_node.succs().insert(dest_arg_id);
+          // okay, got the dest args... add edges
+          adout("  src_arg_id: " << src_arg_id << "\n");
+          adout("  dest_arg_id: " << dest_arg_id << "\n");
+          auto &src_arg_node = graph.getNode(src_arg_id);
+          bool ch = src_arg_node.succs().insert(dest_arg_id);
 
-        // Also add all of those nodes to our worklist
-        if (ch) {
-          wl.push(&src_arg_node, priority[src_arg_id.val()]);
+          // Also add all of those nodes to our worklist
+          if (ch) {
+            wl.push(&src_arg_node, priority[src_arg_id.val()]);
+          }
+
+          idx++;
         }
-
-        idx++;
       }
 
       // Get the rets for these functions (from the graph)

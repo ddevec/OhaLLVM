@@ -99,6 +99,7 @@ class Constraint {
         llvm::dbgs() << "   type is: " << static_cast<int32_t>(type) << "\n";
       }
       */
+      /*
       if (dest == ObjectMap::ObjID(4957) || dest == ObjectMap::ObjID(3441) ||
          dest == ObjectMap::ObjID(3446)) {
         llvm::dbgs() << "!!!  Have edge to " << dest << " !!!\n";
@@ -109,6 +110,12 @@ class Constraint {
       if (src == ObjectMap::ObjID(1819)) {
         llvm::dbgs() << "!!!  Have edge FROM " << dest << " !!!\n";
         llvm::dbgs() << "   dest is: " << dest << "\n";
+        llvm::dbgs() << "   type is: " << static_cast<int32_t>(type) << "\n";
+      }
+      */
+      if (dest == ObjectMap::ObjID(6509)) {
+        llvm::dbgs() << "!!!  Have edge to " << dest << " !!!\n";
+        llvm::dbgs() << "   src is: " << src << "\n";
         llvm::dbgs() << "   type is: " << static_cast<int32_t>(type) << "\n";
       }
 

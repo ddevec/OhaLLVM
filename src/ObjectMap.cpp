@@ -71,6 +71,7 @@ ObjectMap::ObjectMap() {
   for (int32_t i = 0; i < static_cast<int32_t>(ObjEnum::eNumDefaultObjs);
       i++) {
     mapping_.push_back(nullptr);
+    reps_.add();
   }
 }
 
@@ -108,61 +109,4 @@ ObjectMap::getValueInfo(ObjectMap::ObjID id) const {
   // llvm_unreachable("Couldn't Find id!!");
   return std::make_pair(Type::Value, nullptr);
 }
-
-/*
-ObjectMap::ObjID ObjectMap::__const_node_helper(const llvm::Constant *C,
-    ObjID (ObjectMap::*diff)(const llvm::Value *),
-    ObjID nullv) {
-  if (llvm::isa<const llvm::ConstantPointerNull>(C) ||
-      llvm::isa<const llvm::UndefValue>(C)) {
-    return nullv;
-  } else if (auto GV = dyn_cast<llvm::GlobalValue>(C)) {
-    return (this->*diff)(GV);
-  } else if (auto CE = dyn_cast<llvm::ConstantExpr>(C)) {
-    switch (CE->getOpcode()) {
-      case llvm::Instruction::GetElementPtr:
-        {
-          // Need to calc offset here...
-          // But this encounters obj vs value issues...
-          auto offs = getGEPOffs(*this, *CE);
-          auto obj_id = __const_node_helper(CE->getOperand(0), diff, nullv);
-          return getOffsID(obj_id, offs);
-        }
-      case llvm::Instruction::IntToPtr:
-        return UniversalValue;
-      case llvm::Instruction::PtrToInt:
-        return IntValue;
-      case llvm::Instruction::BitCast:
-        auto base_id = __const_node_helper(CE->getOperand(0), diff, nullv);
-        // Now, if we cast from a struct to a non-struct, we need to merge
-        //   nodes...
-
-        auto base_type = CE->getOperand(0)->getType();
-        assert(llvm::isa<llvm::PointerType(base_type));
-        auto base_nptr_type = base_type->getContainedType(0);
-
-        // if the base type is a struct ptr, and the dest type is an array ptr
-        //   merge all the points-tos together
-        if (llvm::isa<llvm::StructType>(base_nptr_type)) {
-          auto ret_id = createPhonyID();
-
-          // UGH, need to modify the constraint graph for this!!!
-
-          // Now, for each struct in hte
-          return ret_id;
-        }
-
-        return base_id;
-      default:
-        llvm::errs() << "Const Expr not yet handled: " << *CE << "\n";
-        llvm_unreachable(0);
-    }
-  } else if (llvm::isa<llvm::ConstantInt>(C)) {
-    return IntValue;
-  } else {
-    llvm::errs() << "Const Expr not yet handled: " << *C << "\n";
-    llvm_unreachable("Unknown constant expr ptr");
-  }
-}
-*/
 

@@ -79,8 +79,10 @@ ObjectMap::ObjID getConstValue(ConstraintGraph &cg, ObjectMap &omap,
             // First, get the structure type
             auto &si = omap.getStructInfo(st);
 
+            /* FIXME: Print a count of this somewhere?
             llvm::dbgs() << "Adding grouping constraints for struct cast: " <<
                 *c << "\n";
+            */
 
             // Then, for each field in the struct type
             for (size_t i = 0; i < si.numSizes(); i++) {
@@ -2250,7 +2252,7 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
         // const llvm::Function *fcn = omap.getFunction(fcn_id);
 
         const llvm::Function *fcn =
-            dyn_cast<llvm::Function>(omap.valueAtID(fcn_id));
+            dyn_cast_or_null<llvm::Function>(omap.valueAtID(fcn_id));
         /*
         llvm::dbgs() << "Checking fcnTarget for: " << *ci <<
             " : " << fcn->getName() << "\n";
