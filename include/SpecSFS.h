@@ -9,11 +9,11 @@
 #include <memory>
 #include <vector>
 
-#include "include/Andersens.h"
 #include "include/Assumptions.h"
 #include "include/ConstraintPass.h"
 #include "include/DUG.h"
 #include "include/ObjectMap.h"
+#include "include/SpecAnders.h"
 #include "include/lib/UnusedFunctions.h"
 #include "include/lib/IndirFcnTarget.h"
 
@@ -103,7 +103,7 @@ class SpecSFS : public llvm::ModulePass,
   //   partitions are based on "access-equivalence"
   // NOTE: ObjectMap is required to convert DUG::ObjID to llvm::Value as
   //   Andersens works with llvm::Value's
-  bool computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
+  bool computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
       ObjectMap &omap);
 
   // Computes the SSA form of each partition
@@ -126,18 +126,13 @@ class SpecSFS : public llvm::ModulePass,
   // Adds additional indirect call info, given an AUX analysis
   //   (in this case, Andersens analysis)
   bool addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
-      const Andersens &aux, const IndirFunctionInfo *, ObjectMap &omap);
+      SpecAnders &aux, const IndirFunctionInfo *, ObjectMap &omap);
 
   // Private data {{{
   ObjectMap omap_;
   TopLevelPtsto pts_top_;
 
   AssumptionSet specAssumptions_;
-
-  // FIXME: Should put in another entity? oh well...
-  // std::map<int, ObjectMap::ObjID> aux_to_obj_;
-  std::vector<ObjectMap::ObjID> aux_to_obj_;
-  std::map<ObjectMap::ObjID, int> special_aux_;
 
   ObjectMap::ObjID getObjIDRep(ObjectMap::ObjID id) {
     auto it = obj_to_rep_.find(id);

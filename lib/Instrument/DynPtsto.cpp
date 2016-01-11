@@ -86,10 +86,11 @@ class InstrDynPtsto : public SpecSFS {
 void InstrDynPtsto::getAnalysisUsage(llvm::AnalysisUsage &au) const {
   au.addRequired<UnusedFunctions>();
   au.addRequired<ConstraintPass>();
+  au.addRequired<SpecAnders>();
   au.setPreservesAll();
 }
 
-void InstrDynPtsto::setupSpecSFSids(llvm::Module &M) {
+void InstrDynPtsto::setupSpecSFSids(llvm::Module &) {
   // Set up our alias analysis
   // -- This is required for the llvm AliasAnalysis interface
   // InitializeAliasAnalysis(this);
@@ -108,12 +109,7 @@ void InstrDynPtsto::setupSpecSFSids(llvm::Module &M) {
   }
 
   // Also add indirect info... this means we have to wait for Andersen's
-  Andersens aux;
-  // Get AUX info, in this instance we choose Andersens
-  if (aux.runOnModule(M)) {
-    // Andersens had better not change M!
-    abort();
-  }
+  SpecAnders &aux = getAnalysis<SpecAnders>();
 
   // Now, fill in the indirect function calls
   if (addIndirectCalls(cg, cfg, aux, nullptr, omap)) {

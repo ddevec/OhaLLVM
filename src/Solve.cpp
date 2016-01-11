@@ -2,8 +2,15 @@
  * Copyright (C) 2015 David Devecsery
  */
 
-// #define SPECSFS_DEBUG
+#define SPECSFS_DEBUG
+// #define SPECANDERS_DEBUG
 // #define SPECSFS_LOGDEBUG
+
+#ifdef SPECANDERS_DEBUG
+#  define adout(...) dout(__VA_ARGS__)
+#else
+#  define adout(...)
+#endif
 
 #include <algorithm>
 #include <limits>
@@ -843,27 +850,41 @@ bool SpecAnders::solve() {
       work.push(&rep_node, priority[rep_node.id().val()]);
     }
 
+    adout("Node: " << pnd->id() << "\n");
+
     // llvm::dbgs() << "Processing node: " << pnd->id() << "\n";
     // For each constraint in this node
-    for (auto &pcons : pnd->constraints()) {
-      // Process the constraint
-      pcons->process(graph_, work, priority);
+    if (pnd->updated()) {
+      pnd->clearUpdated();
+      for (auto &pcons : pnd->constraints()) {
+        // Process the constraint
+        pcons->process(graph_, work, priority);
+      }
     }
 
     // Also, now that they've updated their info, lets update pointsto sets
-
-    // Cleanup succs?
-    // pnd->succs().unique();
-    logout("Node: " << pnd->id() << "\n");
-
-    // FIXME: not sure if this is too high overhead...
-    pnd->succs().unique(graph_);
-
-    for (auto succ_pr : pnd->succs()) {
+    auto &edges = pnd->succs();
+    std::set<ObjectMap::ObjID> seen_edges;
+    // for (auto succ_pr : pnd->succs())
+    for (size_t idx = 0; idx < edges.size();) {
+      auto &succ_pr = edges.getEdge(idx);
       auto succ_id = succ_pr.first;
       auto succ_offs = succ_pr.second;
 
       auto &succ_node = graph_.getNode(succ_id);
+
+      if (succ_offs == 0) {
+        if (seen_edges.find(succ_node.id()) != std::end(seen_edges)) {
+          edges.removeEdge(idx);
+          continue;
+        } else {
+          seen_edges.insert(succ_node.id());
+        }
+      }
+      idx++;
+
+
+      adout("  succ: " << succ_node.id() << "\n");
 
       /*
       llvm::dbgs() << "Unioning succ: " << succ_node.id() << " and " <<
@@ -871,11 +892,17 @@ bool SpecAnders::solve() {
       */
       auto &succ_pts = succ_node.ptsto();
 
-      logout("  i: " << pnd->ptsto() << "\n");
-      logout("  o: " << succ_id << ": " << succ_pts << "\n");
+      adout("  f: " << succ_offs << "\n");
+      adout("  i: " << pnd->ptsto() << "\n");
+      adout("  o: " << succ_id << ": " << succ_pts << "\n");
 
       bool ch = succ_pts.orOffs(pnd->ptsto(), succ_offs,
           graph_.getStructInfo());
+
+      adout("  ch: " << ch << "\n");
+      adout("  O: " << succ_id << ": " << succ_pts << "\n");
+
+
 
       auto edge = std::make_pair(pnd->id(), succ_node.id());
       // If we haven't run LCD on this edge before, the points-to sets are not
@@ -918,10 +945,14 @@ void AndersStoreCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
   auto &dest_pts = dest_node.ptsto();
   auto &src_node = graph.getNode(src());
   for (auto pts_id : dest_pts) {
-    ch |= src_node.succs().insert(pts_id);
+    // Don't add ptr to yourself
+    if (graph.getNode(pts_id).id() != src_node.id()) {
+      ch |= src_node.succs().insert(pts_id);
+    }
   }
 
   if (ch) {
+    adout("  LoadCons: added: " << src_node.id() << " to WL\n");
     wl.push(&src_node, priority[src().val()]);
   }
 }
@@ -935,42 +966,17 @@ void AndersLoadCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
   auto &src_pts = src_node.ptsto();
   for (auto pts_id : src_pts) {
     auto &pt_node = graph.getNode(pts_id);
-    bool ch = pt_node.succs().insert(dest());
+    // Don't add ptr to yourself
+    if (pt_node.id() != src_node.id()) {
+      bool ch = pt_node.succs().insert(dest());
 
-    if (ch) {
-      wl.push(&pt_node, priority[pts_id.val()]);
+      if (ch) {
+        adout("  LoadCons: added: " << pt_node.id() << " to WL\n");
+        wl.push(&pt_node, priority[pts_id.val()]);
+      }
     }
   }
 }
-
-/*
-void AndersAllocCons::process(AndersGraph &graph, Worklist &wl,
-    const std::vector<uint32_t> &priority) const {
-  // Allocation:
-  //   Update the ptsto of dest with src
-  auto &dest_node = graph.getNode(dest());
-
-  bool ch = dest_node.ptsto().set(src());
-
-  if (ch) {
-    wl.push(&dest_node, priority[dest().val()]);
-  }
-}
-*/
-
-/*
-void AndersCopyCons::process(AndersGraph &graph, Worklist &wl,
-    const std::vector<uint32_t> &priority) const {
-  auto &dest_node = graph.getNode(dest());
-  auto &src_node = graph.getNode(src());
-
-  bool ch = dest_node.ptsto() |= src_node.ptsto();
-
-  if (ch) {
-    wl.push(&dest_node, priority[dest().val()]);
-  }
-}
-*/
 
 // Handles constraints related to indirect functions
 void AndersIndirCallCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
@@ -983,12 +989,12 @@ void AndersIndirCallCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
 
   auto &callee_node = graph.getNode(callee());
 
-  logout("Update indir call to: " << callee() << ": " <<
+  adout("Update indir call to: " << callee() << ": " <<
     callee_node.ptsto() << "\n");
 
   // For each function in the points-to set of the callee pointer:
   for (auto obj_id : callee_node.ptsto()) {
-    logout("  obj_id: " << obj_id << "\n");
+    adout("  obj_id: " << obj_id << "\n");
     // Okay, we have a function here...
     // Get the args for this function (from aux info in the graph)
     // auto &fcn_info = graph.getFcnInfo(obj_id);
@@ -1005,8 +1011,8 @@ void AndersIndirCallCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
         auto dest_arg_id = dest_args[idx];
 
         // okay, got the dest args... add edges
-        logout("  src_arg_id: " << src_arg_id << "\n");
-        logout("  dest_arg_id: " << dest_arg_id << "\n");
+        adout("  src_arg_id: " << src_arg_id << "\n");
+        adout("  dest_arg_id: " << dest_arg_id << "\n");
         auto &src_arg_node = graph.getNode(src_arg_id);
         bool ch = src_arg_node.succs().insert(dest_arg_id);
 
@@ -1029,7 +1035,7 @@ void AndersIndirCallCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
         }
       }
     } else {
-      logout("Couldn't find fcn for: " << obj_id << "\n");
+      adout("Couldn't find fcn for: " << obj_id << "\n");
       /*
       llvm::dbgs() << "Couldn't find fcn for: " << obj_id << ": " <<
         ValPrint(obj_id) << "\n";
@@ -1037,29 +1043,6 @@ void AndersIndirCallCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
     }
   }
 }
-
-
-// FIXME: From solve helpers..
-void AndersNode::EdgeSet::unique(AndersGraph &graph) {
-  // Convert all ids to rep ids:
-  std::vector<std::pair<ObjID, int32_t>> new_edges;
-  for (auto id_pr : edges_) {
-    auto id = graph.getRep(id_pr.first);
-
-    // Ignore invalid/deleted nodes
-    if (id == ObjID::invalid()) {
-      continue;
-    }
-
-    new_edges.emplace_back(id, id_pr.second);
-  }
-
-  edges_ = std::move(new_edges);
-  std::sort(std::begin(edges_), std::end(edges_));
-  auto it = std::unique(std::begin(edges_), std::end(edges_));
-  edges_.erase(it, std::end(edges_));
-}
-
 
 //}}}
 

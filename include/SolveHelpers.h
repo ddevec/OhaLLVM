@@ -175,7 +175,11 @@ class PtstoSet {
 
     PtstoSet &operator=(const PtstoSet &rhs) {
       ptsto_ = rhs.ptsto_;
-      dynPtsto_ = std::unique_ptr<Bitmap>(new Bitmap(*rhs.dynPtsto_));
+      if (rhs.dynPtsto_ != nullptr) {
+        dynPtsto_ = std::unique_ptr<Bitmap>(new Bitmap(*rhs.dynPtsto_));
+      } else {
+        dynPtsto_ = nullptr;
+      }
       return *this;
     }
     PtstoSet &operator=(PtstoSet &&) = default;
@@ -245,6 +249,10 @@ class PtstoSet {
 
     bool orOffs(const PtstoSet &rhs, int32_t offs,
         const std::map<ObjectMap::ObjID, int32_t> &struct_set) {
+      if (offs == 0) {
+        return operator|=(rhs);
+      }
+
       bool ret = false;
       Bitmap init = ptsto_;
       std::for_each(std::begin(rhs.ptsto_), std::end(rhs.ptsto_),
@@ -341,12 +349,6 @@ class PtstoSet {
         value_type operator*() const {
           return ObjectMap::ObjID(itr_.operator*());
         }
-
-        /*
-        value_type operator->() const {
-          return ObjectMap::ObjID(itr_.operator->());
-        }
-        */
 
         iterator &operator++() {
           ++itr_;

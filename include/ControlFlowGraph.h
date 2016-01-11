@@ -308,7 +308,15 @@ class CFG {
     }
 
     CFG(const CFG &other) :
-      CFG_(other.getSEG().clone<Node>()) { }
+      CFG_(other.getSEG().clone<Node>()), 
+      cfgFcnToCallRet_(other.cfgFcnToCallRet_),
+      cfgDirCallsites_(other.cfgDirCallsites_),
+      indirectCalls_(other.indirectCalls_),
+      indirFcns_(other.indirFcns_),
+      cfgCallSuccessors_(other.cfgCallSuccessors_),
+      cfgFunctionReturns_(other.cfgFunctionReturns_),
+      objToCFG_(other.objToCFG_),
+      unusedFunctions_(other.unusedFunctions_) { }
     CFG(CFG &&) = default;
 
     CFG &operator=(const CFG &) = delete;

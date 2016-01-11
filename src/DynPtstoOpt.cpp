@@ -13,9 +13,11 @@
 
 #include "llvm/Analysis/ProfileInfo.h"
 
+#include "include/AllocInfo.h"
 #include "include/ControlFlowGraph.h"
 #include "include/DUG.h"
 #include "include/Debug.h"
+#include "include/LLVMHelper.h"
 #include "include/SEG.h"
 #include "include/util.h"
 #include "include/lib/DynPtsto.h"

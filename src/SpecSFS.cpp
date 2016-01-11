@@ -21,15 +21,16 @@
 #include "llvm/Pass.h"
 #include "llvm/PassSupport.h"
 #include "llvm/Function.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/InstIterator.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/ProfileInfo.h"
 
-#include "include/Andersens.h"
 #include "include/Debug.h"
 #include "include/ObjectMap.h"
+#include "include/SpecAnders.h"
 #include "include/lib/UnusedFunctions.h"
 #include "include/lib/IndirFcnTarget.h"
 #include "include/lib/DynPtsto.h"
@@ -120,7 +121,7 @@ void SpecSFS::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   usage.addRequired<ConstraintPass>();
 
   // Staging analysis for sfs
-  // usage.addRequired<SpecAnders>();
+  usage.addRequired<SpecAnders>();
 
   // For DCE
   usage.addRequired<UnusedFunctions>();
@@ -156,7 +157,8 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   const auto &cons_pass = getAnalysis<ConstraintPass>();
   ConstraintGraph cg(cons_pass.getConstraintGraph());
   CFG cfg(cons_pass.getControlFlowGraph());
-  ObjectMap omap(cons_pass.getObjectMap());
+  omap_ = cons_pass.getObjectMap();
+  ObjectMap &omap = omap_;
 
   // Initial optimization pass
   // Runs HU on the graph as it stands, w/ only top level info filled in
@@ -175,89 +177,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
 
   cfg.cleanup();
 
-  Andersens aux;
-  // Get AUX info, in this instance we choose Andersens
-  {
-    util::PerfTimerPrinter andersens_timer(llvm::dbgs(), "Andersens");
-    if (aux.runOnModule(m)) {
-      // Andersens had better not change m!
-      error("Andersens changes m???");
-    }
-  }
-
-  {
-    util::PerfTimerPrinter(llvm::dbgs(), "aux_to_obj fill");
-    // Converting from aux_id to obj_ids
-    // For each pointer value we care about:
-    // dout("Filling aux_to_obj:\n");
-    auto &aux_val_nodes = aux.getObjectMap();
-
-    special_aux_.emplace(ObjectMap::NullValue, Andersens::NullPtr);
-    special_aux_.emplace(ObjectMap::NullObjectValue, Andersens::NullObject);
-    special_aux_.emplace(ObjectMap::ArgvValue, Andersens::ArgvValue);
-    special_aux_.emplace(ObjectMap::ArgvValueObject,
-        Andersens::ArgvValueObject);
-    special_aux_.emplace(ObjectMap::ArgvObject, Andersens::ArgvObject);
-    special_aux_.emplace(ObjectMap::ArgvObjectObject,
-        Andersens::ArgvObjectObject);
-    special_aux_.emplace(ObjectMap::IntValue, aux.IntNode);
-    special_aux_.emplace(ObjectMap::UniversalValue, Andersens::UniversalSet);
-    special_aux_.emplace(ObjectMap::LocaleObject, Andersens::LocaleObject);
-    special_aux_.emplace(ObjectMap::CTypeObject, Andersens::CTypeObject);
-    special_aux_.emplace(ObjectMap::ErrnoObject, Andersens::ErrnoObject);
-    special_aux_.emplace(ObjectMap::CLibObject, Andersens::CLibObject);
-    special_aux_.emplace(ObjectMap::TermInfoObject, Andersens::TermInfoObject);
-    special_aux_.emplace(ObjectMap::PthreadSpecificValue,
-        aux.PthreadSpecificNode);
-
-    uint32_t max_aux_id = std::max(aux.IntNode, aux.PthreadSpecificNode);
-    std::for_each(std::begin(aux_val_nodes), std::end(aux_val_nodes),
-        [this, &aux, &omap, &max_aux_id]
-        (const std::pair<const llvm::Value *, uint32_t> &pr) {
-      if (max_aux_id < pr.second) {
-        max_aux_id = pr.second;
-      }
-    });
-
-    // We should have less than 100mill ids, right?
-    assert(max_aux_id < 100000000);
-
-    llvm::dbgs() << "max_aux_id is: " << max_aux_id << "\n";
-    aux_to_obj_.resize(max_aux_id + 1);
-
-    aux_to_obj_[Andersens::NullPtr] = ObjectMap::NullValue;
-    aux_to_obj_[Andersens::NullObject] = ObjectMap::NullObjectValue;
-    aux_to_obj_[Andersens::ArgvValue] = ObjectMap::ArgvValue;
-    aux_to_obj_[Andersens::ArgvObject] = ObjectMap::ArgvObject;
-    aux_to_obj_[Andersens::ArgvValueObject] = ObjectMap::ArgvValueObject;
-    aux_to_obj_[Andersens::ArgvObjectObject] = ObjectMap::ArgvObjectObject;
-    assert(aux.IntNode < aux_to_obj_.size());
-    aux_to_obj_[aux.IntNode] = ObjectMap::IntValue;
-    aux_to_obj_[Andersens::UniversalSet] = ObjectMap::UniversalValue;
-    aux_to_obj_[Andersens::LocaleObject] = ObjectMap::LocaleObject;
-    aux_to_obj_[Andersens::CTypeObject] = ObjectMap::CTypeObject;
-    aux_to_obj_[Andersens::ErrnoObject] = ObjectMap::ErrnoObject;
-    aux_to_obj_[Andersens::CLibObject] = ObjectMap::CLibObject;
-    aux_to_obj_[Andersens::TermInfoObject] = ObjectMap::TermInfoObject;
-    aux_to_obj_[aux.PthreadSpecificNode] =
-      ObjectMap::PthreadSpecificValue;
-
-    std::for_each(std::begin(aux_val_nodes), std::end(aux_val_nodes),
-        [this, &aux, &omap]
-        (const std::pair<const llvm::Value *, uint32_t> &pr) {
-      auto obj_id = omap.getObject(pr.first);
-      // auto obj_id = omap.getValue(pr.first);
-      auto aux_val_id = pr.second;
-
-      /*
-      dout("  " << aux_val_id << "->" << obj_id <<
-        "\n");
-      */
-      // assert(aux_to_obj_.find(aux_val_id) == std::end(aux_to_obj_));
-      assert(aux_to_obj_.size() > aux_val_id);
-      aux_to_obj_[aux_val_id] = obj_id;
-    });
-  }
+  SpecAnders &aux = getAnalysis<SpecAnders>();
 
   const UnusedFunctions &unused_fcns =
       getAnalysis<UnusedFunctions>();

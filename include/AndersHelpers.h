@@ -7,6 +7,7 @@
 
 #include <map>
 #include <memory>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -146,7 +147,7 @@ class AndersNode {
       return true;
     }
 
-    bool insert(const EdgeSet &rhs) {
+    bool insert(EdgeSet &rhs) {
       edges_.insert(std::end(edges_),
           std::begin(rhs), std::end(rhs));
       return true;
@@ -164,14 +165,24 @@ class AndersNode {
       return edges_.size();
     }
 
-    // implemented in Solve.cpp
-    void unique(AndersGraph &graph);
+    std::pair<ObjID, int32_t> &getEdge(size_t idx) {
+      return edges_[idx];
+    }
+
+    const std::pair<ObjID, int32_t> &getEdge(size_t idx) const {
+      return edges_[idx];
+    }
+
+    void removeEdge(size_t idx) {
+      edges_[idx] = edges_.back();
+      edges_.pop_back();
+    }
 
     bool operator==(const EdgeSet &rhs) const {
       return (edges_ == rhs.edges_);
     }
 
-    bool operator|=(const EdgeSet &rhs) {
+    bool operator|=(EdgeSet &rhs) {
       bool ret = false;
 
       ret = insert(rhs);
@@ -181,6 +192,88 @@ class AndersNode {
     typedef std::vector<std::pair<ObjID, int32_t>>::iterator iterator;
     typedef std::vector<std::pair<ObjID, int32_t>>::const_iterator
       const_iterator;
+    /*
+    // The iterator deduplicates the list as it iterates
+    class iterator :
+        public std::iterator<std::forward_iterator_tag,
+            std::pair<ObjID, int32_t>> {
+     public:
+      typedef std::iterator<std::forward_iterator_tag,
+                  std::pair<ObjID, int32_t>> iter_base;
+
+      iterator(std::vector<std::pair<ObjID, int32_t>> &v, bool end) :
+             v_(v), pos_(0), isEnd_(end) { }
+
+      explicit iterator(std::vector<std::pair<ObjID, int32_t>> &v) :
+             iterator(v, false) { }
+
+      iterator &operator++() {
+        ++pos_;
+        dedupCur();
+        return *this;
+      }
+
+      iterator &operator--() {
+        --pos_;
+        dedupCur();
+        return *this;
+      }
+
+      bool operator==(const iterator &rhs) const {
+        if (isEnd_ && rhs.isEnd_) {
+          return true;
+        } else if (isEnd_) {
+          return rhs.pos_ == rhs.v_.size();
+        } else if (rhs.isEnd_) {
+          return pos_ == v_.size();
+        } else {
+          return rhs.pos_ == pos_;
+        }
+      }
+
+      bool operator!=(const iterator &rhs) const {
+        if (isEnd_ && rhs.isEnd_) {
+          return false;
+        } else if (isEnd_) {
+          return rhs.pos_ != rhs.v_.size();
+        } else if (rhs.isEnd_) {
+          return pos_ != v_.size();
+        } else {
+          return rhs.pos_ != pos_;
+        }
+      }
+
+      iter_base::reference operator*() {
+        return v_[pos_];
+      }
+
+      iter_base::pointer operator->() {
+        return &v_[pos_];
+      }
+
+     private:
+      void dedupCur() {
+        bool check_failed;
+        do {
+          check_failed = false;
+          auto &pr = v_[pos_];
+          if (pr.second == 0) {
+            auto it = dedup_.find(pr.first);
+            if (it != std::end(dedup_)) {
+              v_[pos_] = v_.back();
+              v_.pop_back();
+              check_failed = true;
+            }
+          }
+        } while (check_failed);
+      }
+
+      std::set<ObjID> dedup_;
+      std::vector<std::pair<ObjID, int32_t>> &v_;
+      size_t pos_;
+      bool isEnd_;
+    };
+    */
 
     iterator begin() {
       return std::begin(edges_);
@@ -190,6 +283,7 @@ class AndersNode {
       return std::end(edges_);
     }
 
+    /*
     const_iterator begin() const {
       return std::begin(edges_);
     }
@@ -205,6 +299,7 @@ class AndersNode {
     const_iterator cend() const {
       return std::end(edges_);
     }
+    */
 
    private:
     std::vector<std::pair<ObjID, int32_t>> edges_;
@@ -241,6 +336,14 @@ class AndersNode {
 
   EdgeSet &succs() {
     return succs_;
+  }
+
+  bool updated() const {
+    return ptsto_ != oldPtsto_;
+  }
+
+  void clearUpdated() {
+    oldPtsto_ = ptsto_;
   }
 
   std::vector<std::unique_ptr<AndersCons>> &constraints() {

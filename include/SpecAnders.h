@@ -89,6 +89,27 @@ class SpecAnders : public llvm::ModulePass,
     return omap_;
   }
 
+  ObjectMap::ObjID getRep(ObjectMap::ObjID id) {
+    // Convert input objID to rep ObjID:
+    auto rep_id = id;
+    auto val = omap_.valueAtID(id);
+    const llvm::Value *old_val = nullptr;
+    while (!ObjectMap::isSpecial(id) && val != old_val) {
+      old_val = val;
+      rep_id = omap_.getValue(val);
+      val = omap_.valueAtID(rep_id);
+    }
+
+    return rep_id;
+  }
+
+  const PtstoSet &getPointsTo(ObjectMap::ObjID id) {
+    // Convert input objID to rep ObjID:
+    auto rep_id = getRep(id);
+
+    return graph_.getNode(rep_id).ptsto();
+  }
+
  private:
   // Takes dynamic pointsto information, as well as hot/cold basic block
   //   information, and trims the edges of the DUG appropriately

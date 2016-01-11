@@ -586,7 +586,6 @@ class OptNode : public SEG::Node {
 struct HCDNode;
 static int32_t updateAndersConstraints(ConstraintGraph &cg, ObjectMap &omap,
     SEG &graph, ObjectMap::ObjID max_src_dest_id) {
-
   // First, update the omap
   for (int32_t i = 0; i < max_src_dest_id.val(); i++) {
     SEG::NodeID node_id(i);
@@ -748,7 +747,6 @@ static int32_t updateAndersConstraints(ConstraintGraph &cg, ObjectMap &omap,
 //}}}
 
 // HVN {{{
-
 class HVNNode : public OptNode {
   //{{{
  public:
@@ -1045,12 +1043,23 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
     } else {
       auto &rep_node = hvn_graph.getNode<HVNNode>(it->second);
 
-      /*
-      if (rep_node.id() == SEG::NodeID(354)) {
+      if (rep_node.id() == SEG::NodeID(4957) ||
+          node.id() == SEG::NodeID(4957)) {
         llvm::dbgs() << "  merge " << node.id() << " with " <<
           rep_node.id() << "\n";
       }
-      */
+
+      if (rep_node.id() == SEG::NodeID(3441) ||
+          node.id() == SEG::NodeID(3441)) {
+        llvm::dbgs() << "  merge " << node.id() << " with " <<
+          rep_node.id() << "\n";
+      }
+
+      if (rep_node.id() == SEG::NodeID(3440) ||
+          node.id() == SEG::NodeID(3440)) {
+        llvm::dbgs() << "  merge " << node.id() << " with " <<
+          rep_node.id() << "\n";
+      }
       rep_node.unite(hvn_graph, node);
     }
   }
@@ -1066,6 +1075,7 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
 //}}}
 
 // HRU {{{
+// FIXME: This is actually HR... need to implement HU for anders...
 void HRU(ConstraintGraph &cg, ObjectMap &omap, int32_t min_removed) {
   int32_t itr = 0;
   int32_t num_removed;
@@ -1205,7 +1215,8 @@ void SpecAnders::HCD(ConstraintGraph &graph, ObjectMap &omap) {
 
   // Fill up the offline constraint graph
   for (ObjectMap::ObjID obj_id(0); obj_id <= max_id; obj_id++) {
-    auto node_id = hcd_graph.addNode<HCDNode>();
+    if_debug_enabled(auto node_id = )
+      hcd_graph.addNode<HCDNode>();
     assert(node_id.val() == obj_id.val());
   }
 
@@ -1317,3 +1328,4 @@ void SpecAnders::HCD(ConstraintGraph &graph, ObjectMap &omap) {
 }
 //}}}
 //}}}
+

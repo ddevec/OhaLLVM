@@ -15,6 +15,8 @@
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/ProfileInfo.h"
 
+#include "include/AllocInfo.h"
+#include "include/LLVMHelper.h"
 #include "include/SpecSFS.h"
 
 const int64_t PtrSizeBytes = sizeof(void *);

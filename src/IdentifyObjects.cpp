@@ -121,42 +121,16 @@ ObjectMap::ObjID getValue(ConstraintGraph &cg, ObjectMap &omap,
   return id;
 }
 
-// ID to keep track of anders return values
-struct aux_id { };
-typedef util::ID<aux_id, int32_t, -1> AuxID;
-
 void identifyAUXFcnCallRetInfo(CFG &cfg,
-    ObjectMap &omap, const Andersens &aux,
+    ObjectMap &omap, SpecAnders &aux,
     const IndirFunctionInfo *dyn_info) {
   // If we don't have dynamic info, or we're explicitly not using it:
   if (!do_spec || dyn_info == nullptr || !dyn_info->hasInfo()) {
-    // The mapping of andersen's values to functions
-    std::map<AuxID, ObjectMap::ObjID> anders_to_fcn;
-
-    auto &aux_val_nodes = aux.getObjectMap();
-    std::for_each(std::begin(aux_val_nodes), std::end(aux_val_nodes),
-        [&anders_to_fcn, &aux, &omap]
-        (const std::pair<const llvm::Value *, uint32_t> &pr) {
-      if (auto pfcn = dyn_cast<llvm::Function>(pr.first)) {
-        auto fcn_id = omap.getFunction(pfcn);
-        auto aux_val_id = pr.second;
-
-        anders_to_fcn.emplace(AuxID(aux_val_id), fcn_id);
-      }
-    });
-
-    if_debug(
-      dout("Got ids for functions:");
-      for (auto pr : anders_to_fcn) {
-        dout(" {" << ValPrint(pr.second) << ", " << pr.first << "}");
-      }
-      dout("\n"));
-
     // We iterate each indirect call in the CFG
     // to add the indirect info to the constraint map:
     std::for_each(cfg.indirect_cbegin(), cfg.indirect_cend(),
         // We take different arguments, depending on if we're debugging...
-        [&cfg, &aux, &anders_to_fcn, &omap]
+        [&cfg, &aux, &omap]
         (const std::pair<ConstraintGraph::ObjID, CFG::CFGid> &pair) {
       const llvm::CallInst *ci =
         cast<llvm::CallInst>(omap.valueAtID(pair.first));
@@ -166,12 +140,12 @@ void identifyAUXFcnCallRetInfo(CFG &cfg,
       auto fptr = CS.getCalledValue();
 
       // This is the andersen's node for this element
-      auto ptsto = aux.getPointsTo(fptr);
+      auto &ptsto = aux.getPointsTo(omap.getValue(fptr));
 
       if_debug(
         dout("have ptsto:");
-        for (auto aid : ptsto) {
-          dout(" " << aid);
+        for (auto obj_idid : ptsto) {
+          dout(" " << obj_id);
         }
         dout("\n"));
 
@@ -180,29 +154,17 @@ void identifyAUXFcnCallRetInfo(CFG &cfg,
       dout("call cfg_id: " << call_id << "\n");
       dout("ret cfg_id: " << ret_id << "\n");
 
-      for (auto anders_int_id : ptsto) {
+      for (ObjectMap::ObjID obj_id : ptsto) {
         // FIXME: Andersen's reports the function as pointing to the universal
         //   set... or all unknown functions... I'm ignoring this for now, but
         //   will fix if needed
-        if (anders_int_id == 0) {
-          /*
+        if (obj_id == ObjectMap::UniversalValue) {
           llvm::dbgs() << "FIXME: Function points to universal value..."
             " Ignoring the universal value ptr\n";
-          */
           continue;
         }
 
-        AuxID anders_id(anders_int_id);
-
-        auto fcn_id_it = anders_to_fcn.find(anders_id);
-        if (fcn_id_it == std::end(anders_to_fcn)) {
-          /*
-          llvm::dbgs() << "FIXME: Anders points to a function I don't"
-            " recognize???\n";
-          */
-          continue;
-        }
-        ObjectMap::ObjID fcn_id = fcn_id_it->second;
+        ObjectMap::ObjID fcn_id = obj_id;
 
         cfg.addIndirFcn(pair.first, fcn_id);
 
@@ -1241,8 +1203,13 @@ static void idRetInst(ConstraintGraph &cg, ObjectMap &omap,
   // The function in which ret was called
   const llvm::Function *F = ret.getParent()->getParent();
 
+  auto returned_id = getValue(cg, omap, src);
+  /*
+  llvm::dbgs() << "Adding return for " << F->getName() << " to id: " <<
+    omap.getReturn(F) << " from " << returned_id << "\n";
+  */
   cg.add(ConstraintType::Copy,
-      omap.getReturn(F), getValue(cg, omap, src));
+      omap.getReturn(F), returned_id);
 }
 
 static void addGlobalConstraintForType(ConstraintType ctype,
@@ -2220,7 +2187,7 @@ bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
 }
 
 bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
-    const Andersens &aux, const IndirFunctionInfo *dyn_indir_info,
+    SpecAnders &aux, const IndirFunctionInfo *dyn_indir_info,
     ObjectMap &omap) {
   //{{{
   identifyAUXFcnCallRetInfo(cfg, omap, aux, dyn_indir_info);
@@ -2245,9 +2212,15 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
     llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
     auto fptr = CS.getCalledValue();
 
+    /*
+    llvm::dbgs() << "Have call: " << pair.first << " " << ValPrint(pair.first)
+        << "\n";
+    */
+
     // Add an edge from this call to the fcn
     CFG::CFGid call_id = pair.second;
     CFG::CFGid ret_id = cfg.getCallSuccessor(call_id);
+
 
     // Get the functon call/ret info for this function:
     auto &cr_vec = cfg.getCallRetInfo(getValue(cg, omap, fptr));
@@ -2261,22 +2234,30 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
     }
 
     bool is_ext = false;
-    // Its possible I cannot Identify the indir function from the list andersens
-    //   gave me.  I ignore it then, and that /should/ be safe?
     // I'm also only following indirect functions for functions I can precisely
     //   identify, otherwise things get too nasty
     if (cfg.haveIndirFcn(pair.first)) {
       const std::vector<ConstraintGraph::ObjID> &fcnTargets =
         cfg.getIndirFcns(pair.first);
+
+      // llvm::dbgs() << "  has " << fcnTargets.size() << " targets\n";
       // Also, add constraints if needed
-      std::for_each(std::begin(fcnTargets), std::end(fcnTargets),
-            [this, &aux, &cg, &cfg, &omap, &CS, &ci, &is_ext]
-            (const ConstraintGraph::ObjID fcn_id) {
-        const llvm::Function *fcn = omap.getFunction(fcn_id);
+      for (ConstraintGraph::ObjID fcn_id : fcnTargets) {
+        /*
+        llvm::dbgs() << "fcn_id is: " << fcn_id << " val: " <<
+            ValPrint(fcn_id, omap) << "\n";
+        */
+        // const llvm::Function *fcn = omap.getFunction(fcn_id);
+
+        const llvm::Function *fcn =
+            dyn_cast<llvm::Function>(omap.valueAtID(fcn_id));
         /*
         llvm::dbgs() << "Checking fcnTarget for: " << *ci <<
             " : " << fcn->getName() << "\n";
         */
+        if (fcn == nullptr) {
+          continue;
+        }
 
         // If this is an allocation we need to note that in our structures...
         if (AllocInfo::fcnIsMalloc(fcn) &&
@@ -2295,10 +2276,10 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
           // llvm::dbgs() << "adding indirect objects: " << inst << "\n";
 
           std::vector<ObjectMap::ObjID> alias_ptsto;
-          auto &aux_ptsto = aux.getPointsTo(ci);
+          auto &aux_ptsto = aux.getPointsTo(omap.getValue(ci));
           // Convert aux_ptsto to our ptsto
-          for (int32_t i : aux_ptsto) {
-            alias_ptsto.push_back(aux_to_obj_[i]);
+          for (auto aux_id : aux_ptsto) {
+            alias_ptsto.push_back(aux_id);
           }
 
           omap.addObjectsAlias(inferred_type, &inst, alias_ptsto);
@@ -2321,7 +2302,7 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
         }
 
         cfg.removeUnusedFunction(cg, fcn_id);
-      });
+      }
     // If we can't figure out the target, add a universal constraint
     } else {
       // FIXME: Evaluate the soundness of this...

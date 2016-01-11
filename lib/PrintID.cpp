@@ -51,7 +51,7 @@ static llvm::RegisterPass<PrintID>
       "Prints ids from id.out for SpecSFS", false, false);
 
 // runOnModule, the primary pass
-bool PrintID::runOnModule(llvm::Module &M) {
+bool PrintID::runOnModule(llvm::Module &) {
   // Set up our alias analysis
   // -- This is required for the llvm AliasAnalysis interface
   InitializeAliasAnalysis(this);
@@ -64,12 +64,7 @@ bool PrintID::runOnModule(llvm::Module &M) {
   ObjectMap omap(cons_pass.getObjectMap());
 
   // Also add indirect info... this means we have to wait for Andersen's
-  Andersens aux;
-  // Get AUX info, in this instance we choose Andersens
-  if (aux.runOnModule(M)) {
-    // Andersens had better not change M!
-    abort();
-  }
+  SpecAnders &aux = getAnalysis<SpecAnders>();
 
   // Now, fill in the indirect function calls
   const auto &dyn_indir_info = getAnalysis<IndirFunctionInfo>();

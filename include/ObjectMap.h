@@ -406,6 +406,14 @@ class ObjectMap {
         o << "(ctype)";
       } else if (id == ErrnoObject) {
         o << "(errno)";
+      } else if (id == CLibObject) {
+        o << "(clib)";
+      } else if (id == TermInfoObject) {
+        o << "(terminfo)";
+      } else if (id == ArgvObject) {
+        o << "(argv)";
+      } else if (id == ArgvObjectObject) {
+        o << "(argv obj)";
       } else {
         llvm_unreachable("not special");
       }

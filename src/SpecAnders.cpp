@@ -23,9 +23,10 @@
 #include "llvm/Pass.h"
 #include "llvm/PassSupport.h"
 #include "llvm/Function.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/InstIterator.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/ProfileInfo.h"
 
@@ -163,33 +164,65 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
 
   // Now that we have the constraints, lets optimize a bit
   // First, do HVN
+  /*
+  llvm::dbgs() << "HERE: " << __LINE__ << "\n";
+  // I"M DIEING HERE THIS SUXX
+  if (getRep(ObjectMap::ObjID(3441)) == ObjectMap::ObjID(3440)) {
+    abort();
+  }
+  */
+
   {
     util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "HVN");
     int32_t removed = HVN(cg, omap);
     llvm::dbgs() << "hvn removed: " << removed << " constraints\n";
   }
+  /*
+  if (getRep(ObjectMap::ObjID(3441)) == ObjectMap::ObjID(3440)) {
+    abort();
+  }
+  */
 
+  /*
   // Then, do HRU
   {
-    util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "HRU");
+    util::PerfTimerPrinter hru_timer(llvm::dbgs(), "HRU");
     HRU(cg, omap, 100);
   }
 
   // Then, HCD
   {
-    util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "HCD");
+    util::PerfTimerPrinter hcd_timer(llvm::dbgs(), "HCD");
     // Gather hybrid cycle info from our graph
     HCD(cg, omap);
   }
+  */
+
+  /*
+  if (getRep(ObjectMap::ObjID(3441)) == ObjectMap::ObjID(3440)) {
+    abort();
+  }
+  */
 
   {
-    util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "Graph Creation");
+    util::PerfTimerPrinter graph_timer(llvm::dbgs(), "Graph Creation");
     // Fill our online graph with the initial constraint set
     graph_.fill(cg, omap, m);
   }
 
+  /*
+  if (getRep(ObjectMap::ObjID(3441)) == ObjectMap::ObjID(3440)) {
+    abort();
+  }
+  */
+
   graph_.setStructInfo(omap.getIsStructSet());
 
+  /*
+  if (getRep(ObjectMap::ObjID(3441)) == ObjectMap::ObjID(3440)) {
+    abort();
+  }
+  */
   {
     util::PerfTimerPrinter solve_timer(llvm::dbgs(), "AndersSolve");
     if (solve()) {
@@ -205,8 +238,11 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
 
     llvm::dbgs() << "ptsto[" << val_id << "]: " << ValPrint(val_id) <<
       "\n";
-
-    auto &ptsto = graph_.getNode(val_id).ptsto();
+    auto rep_id = getRep(val_id);
+    if (rep_id != val_id) {
+      llvm::dbgs() << " REP: " << rep_id << ": " << ValPrint(rep_id) << "\n";
+    }
+    auto &ptsto = getPointsTo(rep_id);
 
     std::for_each(std14::cbegin(ptsto), std14::cend(ptsto),
         [&omap] (const ObjectMap::ObjID obj_id) {
@@ -229,7 +265,12 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
         llvm::dbgs() << "ptsto[" << arg_id << "]: " << ValPrint(arg_id) <<
           "\n";
 
-        auto &ptsto = graph_.getNode(arg_id).ptsto();
+        auto rep_id = getRep(arg_id);
+        if (rep_id != arg_id) {
+          llvm::dbgs() << " REP: " << rep_id << ": " << ValPrint(rep_id)
+              << "\n";
+        }
+        auto &ptsto = getPointsTo(rep_id);
 
         std::for_each(std14::cbegin(ptsto), std14::cend(ptsto),
             [&omap] (const ObjectMap::ObjID obj_id) {
@@ -248,7 +289,12 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
         llvm::dbgs() << "ptsto[" << val_id << "]: " << ValPrint(val_id) <<
           "\n";
 
-        auto &ptsto = graph_.getNode(val_id).ptsto();
+        auto rep_id = getRep(val_id);
+        if (rep_id != val_id) {
+          llvm::dbgs() << " REP: " << rep_id << ": " << ValPrint(rep_id)
+              << "\n";
+        }
+        auto &ptsto = getPointsTo(rep_id);
 
         std::for_each(std14::cbegin(ptsto), std14::cend(ptsto),
             [&omap] (const ObjectMap::ObjID obj_id) {
@@ -507,6 +553,4 @@ bool SpecAnders::pointsToConstantMemory(const AliasAnalysis::Location &loc,
     bool or_local) {
   return AliasAnalysis::pointsToConstantMemory(loc, or_local);
 }
-
-
 

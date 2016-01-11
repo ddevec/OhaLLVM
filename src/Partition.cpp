@@ -94,7 +94,7 @@ class DUGAccessEquiv {
 
 // Computes "access equivalent" partitions as described in "Flow-Sensitive
 // Pointer Analysis for Millions fo Lines of Code"
-bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
+bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
     ObjectMap &omap) {
   // Okay, heres what we do...
   // Let AE be a map from addr-taken variables to instructions
@@ -154,21 +154,17 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
       auto &node = dug.getNode(pr.first);
 
       ObjectMap::ObjID val_id;
-      /*
       dout("Creating part_nodes for obj_id " << pr.first << " : " <<
-          ValPrint(pr.first) << "\n");;
-      */
+          ValPrint(pr.first) << "\n");
       if (llvm::isa<DUG::StoreNode>(node)) {
         // val is dest for stores...
         val_id = node.dest();
-        /*
         dout("  Have store node: " << node.rep() << " : " <<
           ValPrint(node.rep()) << "\n");
         dout("    dest: " << node.dest() << " : " <<
           ValPrint(node.dest()) << "\n");
         dout("    src: " << node.src() << " : " <<
           ValPrint(node.src()) << "\n");
-        */
       } else {
         // dout("    node_id is: " << node.id() << "\n");
         assert(llvm::isa<DUG::LoadNode>(node) ||
@@ -184,22 +180,19 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
       // We use the value to label which part nodes are associated with which
       //   obj_ids
       auto obj_id = val_id;
-      /*
+
       dout("  Adding part_node for obj: " << obj_id << " : " <<
           ValPrint(obj_id) << "->" << node.id() << "\n");
-          */
 
       part_nodes[obj_id.val()].push_back(node.id());
     });
   }
 
   // std::map<DUG::ObjID, Bitmap> AE;
-  max_id = ObjectMap::ObjID(0);
-  for (auto obj_id : aux_to_obj_) {
-    if (max_id < obj_id) {
-      max_id = obj_id;
-    }
-  }
+  dout("omap.size() is: " << omap.size() << "\n");
+  max_id = ObjectMap::ObjID(omap.size());
+  dout("max_id is: " << max_id << "\n");
+  dout("part_nodes.size() is: " << part_nodes.size() << "\n");
   std::vector<Bitmap> AE(max_id.val() + 1);
 
   {
@@ -213,26 +206,11 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
         continue;
       }
 
-      const llvm::SparseBitVector<> *paux_ptsto;
-      // Specially handle our special object ids...
-      if (omap.isSpecial(obj_id)) {
-        auto aux_obj = special_aux_.at(obj_id);
-        paux_ptsto = &aux.getPointsTo(aux_obj);
-        // dout("Got Special ptsto: " << obj_id << "\n");
-      } else {
-        // If not special, just get the pointsto
-        auto val = omap.valueAtID(obj_id);
-        if (val == nullptr) {
-          auto &nd = dug.getNode(obj_id);
-
-          val = omap.valueAtID(nd.dest());
-        }
-
-        paux_ptsto = &aux.getPointsTo(val);
-      }
-      auto &aux_ptsto = *paux_ptsto;
-
+      auto &aux_ptsto = aux.getPointsTo(obj_id);
       /*
+      llvm::dbgs() << "aux_pts for " << obj_id << " is: " << aux_ptsto << "\n";
+      */
+
       if_debug(
         dout("aux ptsto for: " << obj_id << " : " << ValPrint(obj_id)
             << " is:");
@@ -240,23 +218,14 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
           dout(" " << id);
         }
         dout("\n"));
-        */
 
       std::for_each(std::begin(aux_ptsto), std::end(aux_ptsto),
           [this, &AE, &obj_id]
-          (uint32_t ptsto_id) {
-        // dout("  Checking aux_to_obj[" << ptsto_id << "]\n");
+          (ObjectMap::ObjID ptsto_id) {
+        dout("  Checking aux_to_obj[" << ptsto_id << "]\n");
 
-        if (aux_to_obj_.size() > ptsto_id &&
-            aux_to_obj_[ptsto_id] != ObjectMap::ObjID::invalid()) {
-          auto aux_obj_id = aux_to_obj_[ptsto_id];
-          /*
-          dout("  aux_to_obj[" << ptsto_id << "] is: " <<
-              aux_obj_id << "\n");
-          */
-          assert(AE.size() > static_cast<size_t>(aux_obj_id.val()));
-          AE[aux_obj_id.val()].set(obj_id.val());
-        }
+        assert(AE.size() > static_cast<size_t>(ptsto_id.val()));
+        AE[ptsto_id.val()].set(obj_id.val());
       });
     }
   }
@@ -273,12 +242,8 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, Andersens &aux,
   {
     util::PerfTimerPrinter rev_part_timer(llvm::dbgs(),
         "Populating rev_part_map");
+
     // Now, for each relevant DUGid, create an AE mapping
-    /*
-    std::for_each(AE.cbegin(), AE.cend(),
-        [&AE, &omap, &rev_part_map, &equiv_map, &part_id_generator]
-        (const std::pair<const ObjectMap::ObjID, Bitmap> &pr) {
-        */
     for (size_t i = 0; i < AE.size(); i++) {
       ObjectMap::ObjID obj_id(i);
       auto &ae_set = AE[i];
