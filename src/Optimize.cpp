@@ -13,6 +13,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -434,7 +435,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
       llvm::dbgs() << "Updating omap: (" << node_id << ") " <<
         ValPrint(nodeToObj(node_id)) << " -> " << rep_id << "\n";
       */
-      setObjIDRep(nodeToObj(node_id), nodeToObj(rep_id));
+      // setObjIDRep(nodeToObj(node_id), nodeToObj(rep_id));
       omap.mergeObjRep(nodeToObj(node_id), nodeToObj(rep_id));
     }
   }
@@ -451,11 +452,16 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
     auto src_obj_id = cons.src();
     auto dest_obj_id = cons.dest();
     auto &src_rep_node = hu_graph.getNode<HUNode>(objToNode(src_obj_id));
-    auto &rep_rep_node = hu_graph.getNode<HUNode>(objToNode(rep_obj_id));
     auto &dest_rep_node = hu_graph.getNode<HUNode>(objToNode(dest_obj_id));
-    auto src_rep_id = nodeToObj(src_rep_node.id());
-    auto dest_rep_id = nodeToObj(dest_rep_node.id());
-    auto rep_rep_id = nodeToObj(rep_rep_node.id());
+    /*
+    auto &rep_rep_node = hu_graph.getNode<HUNode>(objToNode(rep_obj_id));
+    auto src_rep_id = omap.getRep(nodeToObj(src_rep_node.id()));
+    auto dest_rep_id = omap.getRep(nodeToObj(dest_rep_node.id()));
+    auto rep_rep_id = omap.getRep(nodeToObj(rep_rep_node.id()));
+    */
+    auto src_rep_id = omap.getRep(src_obj_id);
+    auto dest_rep_id = omap.getRep(dest_obj_id);
+    auto rep_rep_id = omap.getRep(rep_obj_id);
 
     dout("Initial cons: " << cons << "\n");
     // Always change the rep
@@ -464,11 +470,23 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
     llvm::dbgs() << "Updating rep: " << rep_obj_id << " to: " << rep_rep_id <<
       "\n";
     */
+    /*
+    if (rep_obj_id.val() == 159943 || rep_rep_id.val() == 159943) {
+      llvm::dbgs() << "Updating cons rep " << rep_obj_id << " to: " <<
+          rep_rep_id << "\n";
+    }
+
+    if (dest_rep_id.val() == 159943 || dest_obj_id.val() == 159943) {
+      llvm::dbgs() << "Updating cons dest " << dest_obj_id << " to: " <<
+          dest_rep_id << "\n";
+    }
+    */
     cons.updateRep(rep_rep_id);
 
     // Update src and dest to reps
     //   but, don't change the src_id of addr_of nodes
     if (cons.type() == ConstraintType::AddressOf) {
+      assert(omap.getRep(src_obj_id) == src_obj_id);
       cons.retarget(src_obj_id, dest_rep_id);
     } else {
       cons.retarget(src_rep_id, dest_rep_id);
@@ -511,6 +529,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
     }
   }
 
+  // Don't update def-use or objToCFG, as the reps haven't changed?
   // Now fix up our defs, uses, and global inits w/in the CFG
   // Iterate each CFG node
   // Replace the ObjID with the rep ObjID as found in calc
@@ -519,21 +538,15 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
 
     std::set<ObjectMap::ObjID> new_uses;
     std::for_each(cfg_node.uses_begin(), cfg_node.uses_end(),
-        [&hu_graph, &new_uses] (ObjectMap::ObjID use) {
-      auto node_id = objToNode(use);
-      auto &node = hu_graph.getNode(node_id);
-      auto rep_node_id = node.id();
-      auto new_use = nodeToObj(rep_node_id);
+        [&omap, &hu_graph, &new_uses] (ObjectMap::ObjID use) {
+      auto new_use = omap.getRep(use);
       new_uses.insert(new_use);
     });
 
     std::set<ObjectMap::ObjID> new_defs;
     std::for_each(cfg_node.defs_begin(), cfg_node.defs_end(),
-        [&hu_graph, &new_defs] (ObjectMap::ObjID def) {
-      auto node_id = objToNode(def);
-      auto &node = hu_graph.getNode(node_id);
-      auto rep_node_id = node.id();
-      auto new_def = nodeToObj(rep_node_id);
+        [&omap, &hu_graph, &new_defs] (ObjectMap::ObjID def) {
+      auto new_def = omap.getRep(def);
       new_defs.insert(new_def);
     });
 
@@ -541,20 +554,26 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
     cfg_node.swapUses(new_uses);
   }
 
+  // I don't think I need to remap this, the old mapping should still be
+  //    legal...
   // Create new objToCFG for the cfg
   std::map<ObjectMap::ObjID, CFG::CFGid> new_obj_to_cfg;
   std::for_each(cfg.obj_to_cfg_cbegin(), cfg.obj_to_cfg_cend(),
       [&new_obj_to_cfg, &hu_graph, &omap]
       (const std::pair<const ObjectMap::ObjID, CFG::CFGid> &pr) {
-    auto node_id = objToNode(pr.first);
-    auto &node = hu_graph.getNode(node_id);
-    auto rep_id = node.id();
-    auto new_obj_id = nodeToObj(rep_id);
+    auto new_obj_id = omap.getRep(pr.first);
 
     /*
-    llvm::dbgs() << "Inserting " << new_obj_id << " to obj_to_cfg at: " <<
-        pr.second << "\n";
+    if (new_obj_id != pr.first) {
+      llvm::dbgs() << "Inserting " << new_obj_id << " to obj_to_cfg at: " <<
+          pr.second << "\n";
+      llvm::dbgs() << "  In place of: " << pr.first << "\n";
+    }
     */
+
+    // NOTE: I don't think the addition has to succeed.  THe two nodes are
+    // equivalent, so if they were on different CFG nodes that shouldn't matter,
+    // either is the same...
 
     if_debug_enabled(auto ret =)
       new_obj_to_cfg.emplace(new_obj_id, pr.second);
@@ -567,7 +586,6 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
 //}}}
 
 // Anders Optimizations {{{
-
 class OptNode : public SEG::Node {
  public:
   typedef SEG::NodeID NodeID;
@@ -594,10 +612,11 @@ static int32_t updateAndersConstraints(ConstraintGraph &cg, ObjectMap &omap,
     auto rep_id = node.id();
 
     if (rep_id != node_id) {
-      /*
-      llvm::dbgs() << "Updating omap rep from: " << node_id << " to: " <<
-        rep_id << "\n";
-      */
+      if (nodeToObj(rep_id) == ObjectMap::ObjID(112778) ||
+          nodeToObj(node_id) == ObjectMap::ObjID(112778)) {
+        llvm::dbgs() << "Updating omap rep from: " << rep_id << " to: " <<
+          node_id << "\n";
+      }
       omap.mergeObjRep(nodeToObj(node_id), nodeToObj(rep_id));
     }
   }
@@ -701,21 +720,18 @@ static int32_t updateAndersConstraints(ConstraintGraph &cg, ObjectMap &omap,
       continue;
     }
 
-    if (cons.type() == ConstraintType::Copy ||
-        cons.type() == ConstraintType::AddressOf) {
-      auto it = dedup.find(cons);
-      if (it == std::end(dedup)) {
-        dedup.insert(cons);
-      } else {
-        /*
-        // if (llvm::isa<HCDNode>(src_rep_node)) {
-          llvm::dbgs() << "Removing duplicate: " << id << ": " <<
-            cg.getConstraint(id) << "\n";
-        // }
-        */
-        cg.removeConstraint(id);
-        num_removed++;
-      }
+    auto it = dedup.find(cons);
+    if (it == std::end(dedup)) {
+      dedup.insert(cons);
+    } else {
+      /*
+      // if (llvm::isa<HCDNode>(src_rep_node)) {
+        llvm::dbgs() << "Removing duplicate: " << id << ": " <<
+          cg.getConstraint(id) << "\n";
+      // }
+      */
+      cg.removeConstraint(id);
+      num_removed++;
     }
   }
 
@@ -736,9 +752,15 @@ static int32_t updateAndersConstraints(ConstraintGraph &cg, ObjectMap &omap,
 
     info.setCallee(new_callee_id);
 
+    for (auto &arg_id : info) {
+      arg_id = omap.getRep(arg_id);
+    }
+
     new_indirect_calls.emplace(new_key_id,
       std::move(info));
   });
+
+  cg.updateIndirectCalls(std::move(new_indirect_calls));
 
   return num_removed;
 }
@@ -834,11 +856,39 @@ class HVNData {
     return it->second;
   }
 
+  int32_t getHashValue(const HVNNode &node) {
+    auto &ptsto = node.ptsto();
+
+    auto it = hashValueMap_.find(ptsto);
+    if (it == std::end(hashValueMap_)) {
+      auto rv = hashValueMap_.emplace(ptsto, getNextPE());
+      assert(rv.second);
+      it = rv.first;
+    }
+
+    return it->second;
+  }
+
+  int32_t getPEForID(SEG::NodeID id) {
+    auto it = idToPE_.find(id);
+    if (it == std::end(idToPE_)) {
+      auto rv = idToPE_.emplace(id, getNextPE());
+      assert(rv.second);
+      it = rv.first;
+    }
+
+    return it->second;
+  }
+
  private:
   // 0 is non-ptr
   int32_t nextPE_ = 1;
 
   std::map<std::pair<SEG::NodeID, int32_t>, int32_t> gepToPE_;
+
+  std::unordered_map<Bitmap, int32_t, BitmapHash> hashValueMap_;
+
+  std::unordered_map<SEG::NodeID, int32_t, SEG::NodeID::hasher> idToPE_;
   //}}}
 };
 
@@ -1004,7 +1054,7 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
 
       // If the pred node isn't a non_ptr
       if (!pred_node.ptsto().test(HVNNode::PENonPtr)) {
-        node.ptsto() |= pred_node.ptsto();
+        node.ptsto().set(data.getHashValue(pred_node));
       }
 
       if (node.ptsto().empty()) {
@@ -1059,12 +1109,12 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
         llvm::dbgs() << "  merge " << node.id() << " with " <<
           rep_node.id() << "\n";
       }
-      */
       if (rep_node.id() == SEG::NodeID(6509) ||
           node.id() == SEG::NodeID(6509)) {
         llvm::dbgs() << "  merge " << node.id() << " with " <<
           rep_node.id() << "\n";
       }
+      */
       rep_node.unite(hvn_graph, node);
     }
   }
@@ -1079,14 +1129,259 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
 }
 //}}}
 
+// HU {{{
+typedef HVNNode AndersHUNode;
+typedef HVNData AndersHUData;
+
+int32_t HU(ConstraintGraph &cg, ObjectMap &omap) {
+  // Iterate the cg, and create a node for each constraint
+  // First calculate the number of nodes needed:
+
+  SEG hu_graph;
+  AndersHUData data;
+
+  // retruns the largest id in the constraint graph
+  auto max_src_dest_id = cg.getMaxID();
+  // Now, create a node for each possible destination:
+  for (int32_t i = 0; i < max_src_dest_id.val()+1; i++) {
+    auto node_id = hu_graph.addNode<AndersHUNode>();
+    assert(node_id.val() == i);
+
+    // Force objects and indirect calls to be indirect
+    //  -- This isn't always managed properly in the next step, due to the
+    //     arithmetic associated with object locations.  This handles it
+    auto obj_id = nodeToObj(node_id);
+    // if (!omap.isValue(obj_id) || hu_graph.isIndirCall(obj_id))
+    if (!omap.isValue(obj_id)) {
+      auto &node = hu_graph.getNode<AndersHUNode>(node_id);
+      node.setIndirect();
+      node.addPtsTo(data.getNextPE());
+    }
+  }
+
+  // Also, set all indirect call arg and return nodes to indirect:
+  std::for_each(cg.indir_begin(), cg.indir_end(),
+      [&hu_graph, &data]
+      (const std::pair<const ObjectMap::ObjID,
+           ConstraintGraph::IndirectCallInfo> &pr) {
+    // Create an indir call cons
+    // Populate w/ callsite info
+    auto callinst = pr.first;
+    auto &call_info = pr.second;
+
+    // If this returns a pointer, that return is an indirect node
+    if (call_info.isPointer()) {
+      auto &node = hu_graph.getNode<AndersHUNode>(objToNode(callinst));
+      node.setIndirect();
+      node.addPtsTo(data.getNextPE());
+    }
+
+    // Each argument id is an indirect node
+    for (auto arg_id : call_info) {
+      auto &node = hu_graph.getNode<AndersHUNode>(objToNode(arg_id));
+      node.setIndirect();
+      node.addPtsTo(data.getNextPE());
+    }
+  });
+
+  // Now, fill in the graph edges:
+  std::set<SEG::NodeID> touched;
+  for (const auto &pcons : cg) {
+    if (pcons == nullptr) {
+      continue;
+    }
+    auto dest_node_id = objToNode(pcons->dest());
+    auto &dest_node = hu_graph.getNode<AndersHUNode>(dest_node_id);
+    auto src_node_id = objToNode(pcons->src());
+    auto &src_node = hu_graph.getNode<AndersHUNode>(src_node_id);
+
+    /*
+    auto &rep_node = hu_graph.getNode<AndersHUNode>(objToNode(pcons->rep()));
+    if (rep_node.id() == SEG::NodeID(366)) {
+      llvm::dbgs() << "Have node with dest 366: " << *pcons << "\n";
+    }
+
+    if (src_node.id() == SEG::NodeID(366)) {
+      llvm::dbgs() << "Have node with src 366: " << *pcons << "\n";
+    }
+
+    if (dest_node.id() == SEG::NodeID(366)) {
+      llvm::dbgs() << "Have node with rep 366: " << *pcons << "\n";
+    }
+
+    if (dest_node.id() == SEG::NodeID(354)) {
+      llvm::dbgs() << "Have node with dest 354: " << *pcons << "\n";
+    }
+
+    if (src_node.id() == SEG::NodeID(354)) {
+      llvm::dbgs() << "Have node with src 354: " << *pcons << "\n";
+    }
+
+    if (rep_node.id() == SEG::NodeID(354)) {
+      llvm::dbgs() << "Have node with rep 354: " << *pcons << "\n";
+    }
+    */
+
+    touched.insert(dest_node_id);
+    touched.insert(src_node_id);
+
+    // Handle the edge addition appropriately
+    switch (pcons->type()) {
+      case ConstraintType::Load:
+        // Load cons cause the dest to be indirect, but add no edges
+        dest_node.setIndirect();
+        // Nodes are equivalent if their source input set is (only for
+        //   andersens, as flow information may change this for sfs)
+        dest_node.addPtsTo(data.getPEForID(src_node.id()));
+        // dest_node.addPtsTo(data.getNextPE());
+        break;
+      case ConstraintType::Store:
+        // Store cons are ignored
+        // However, we need to ensure that the constraint is not optimized
+        //   out, so we set the node to be indirect
+        hu_graph.getNode<AndersHUNode>(objToNode(pcons->rep())).setIndirect();
+        break;
+      case ConstraintType::AddressOf:
+        // Alloc cons cause the dest to be indirect, no need to put objects in
+        //   the graph (NOTE: They are set to indirect above)
+        dest_node.setIndirect();
+        dest_node.addPtsTo(data.getNextPE());
+        break;
+      case ConstraintType::Copy:
+        // Copy cons:
+        // Without offsets are edges
+        if (pcons->offs() == 0) {
+          dest_node.addPred(hu_graph, src_node.id());
+        // With offsets create a new PE, labeled by the src, offs combo
+        } else {
+          dest_node.addPtsTo(data.getGEPPE(src_node.id(), pcons->offs()));
+        }
+        break;
+    }
+  }
+
+  // Set any untouched nodes to be an "indirect node" so it isn't incorrectly
+  //   merged (since the untouched nodes may have been previously merged when
+  //   running HRU, we could cause incorrect points-to sets by merging them)
+  for (auto &pnode : hu_graph) {
+    auto &node = cast<AndersHUNode>(*pnode);
+    if (touched.find(node.id()) == std::end(touched)) {
+      node.setIndirect();
+      node.addPtsTo(data.getNextPE());
+    }
+  }
+
+  // Calculate HU algorithm:
+  //   Run Tarjans to find SCCs
+  //     Unite any nodes in scc (maintain indirection conservatively)
+  //     NOTE: This is done automatically by the AndersHUNode class (overriding
+  //         unite)
+  //   On topological traversal:
+  //     Merge PE sets with any preds PEs
+
+  // This is our tarjans topological order visit function
+  //   Here we calculate the appropriate PE set for the node, given its preds
+  auto traverse_pe = [&data, &hu_graph] (const SEG::Node &nd) {
+    auto &node = cast<AndersHUNode>(nd);
+
+    // llvm::dbgs() << "visit: " << node.id() << "\n";
+
+
+    // Now, unite any pred ids:
+    for (auto pred_id : node.preds()) {
+      auto &pred_node = hu_graph.getNode<AndersHUNode>(pred_id);
+
+      // skip pointers to self
+      if (pred_node.id() == node.id()) {
+        continue;
+      }
+
+      // If the pred node isn't a non_ptr
+      if (!pred_node.ptsto().test(AndersHUNode::PENonPtr)) {
+        node.ptsto() |= pred_node.ptsto();
+      }
+
+      if (node.ptsto().empty()) {
+        node.addPtsTo(AndersHUNode::PENonPtr);
+      }
+    }
+  };
+
+  // hu_graph.printDotFile("HUStart.dot", *g_omap);
+  // Finally run Tarjan's:
+  RunTarjans<decltype(should_visit_default), decltype(traverse_pe)>
+    (hu_graph, should_visit_default, traverse_pe);
+
+  // hu_graph.printDotFile("HUDone.dot", *g_omap);
+
+  // Now, use PE set as index into PE mapping, assign equivalent PEs
+  std::unordered_map<Bitmap, SEG::NodeID, BitmapHash> pts_to_pe;
+
+  // Find equiv classes for each node, unify the nodes in the class
+  for (auto &pnode : hu_graph) {
+    auto &node = cast<AndersHUNode>(*pnode);
+
+    auto &ptsto = node.ptsto();
+
+    if (ptsto.empty() || ptsto.test(AndersHUNode::PENonPtr)) {
+      ptsto.clear();
+      ptsto.set(AndersHUNode::PENonPtr);
+    }
+
+    auto it = pts_to_pe.find(ptsto);
+
+    if (it == std::end(pts_to_pe)) {
+      pts_to_pe.emplace(ptsto, node.id());
+    } else {
+      auto &rep_node = hu_graph.getNode<AndersHUNode>(it->second);
+
+      /*
+      if (rep_node.id() == SEG::NodeID(4957) ||
+          node.id() == SEG::NodeID(4957)) {
+        llvm::dbgs() << "  merge " << node.id() << " with " <<
+          rep_node.id() << "\n";
+      }
+
+      if (rep_node.id() == SEG::NodeID(3441) ||
+          node.id() == SEG::NodeID(3441)) {
+        llvm::dbgs() << "  merge " << node.id() << " with " <<
+          rep_node.id() << "\n";
+      }
+
+      if (rep_node.id() == SEG::NodeID(3440) ||
+          node.id() == SEG::NodeID(3440)) {
+        llvm::dbgs() << "  merge " << node.id() << " with " <<
+          rep_node.id() << "\n";
+      }
+      */
+      if (rep_node.id() == SEG::NodeID(6509) ||
+          node.id() == SEG::NodeID(6509)) {
+        llvm::dbgs() << "  merge " << node.id() << " with " <<
+          rep_node.id() << "\n";
+      }
+      rep_node.unite(hu_graph, node);
+    }
+  }
+
+  // Finally, adjust omap and CG so all nodes have remapped ids according to the
+  //   elected leaders
+
+  auto num_removed = updateAndersConstraints(cg, omap, hu_graph,
+      max_src_dest_id);
+
+  return num_removed;
+}
+//}}}
+
+
 // HRU {{{
-// FIXME: This is actually HR... need to implement HU for anders...
 void HRU(ConstraintGraph &cg, ObjectMap &omap, int32_t min_removed) {
   int32_t itr = 0;
   int32_t num_removed;
   do {
     llvm::dbgs() << "HRU iter: " << itr << "\n";
-    num_removed = HVN(cg, omap);
+    num_removed = HU(cg, omap);
+    // num_removed = HVN(cg, omap);
     llvm::dbgs() << "  num_removed: " << num_removed << "\n";
     itr++;
   } while (num_removed > min_removed);
@@ -1240,28 +1535,6 @@ void SpecAnders::HCD(ConstraintGraph &graph, ObjectMap &omap) {
     auto &dest_node = hcd_graph.getNode<HCDNode>(dest_node_id);
     auto src_node_id = objToNode(pcons->src());
     auto &src_node = hcd_graph.getNode<HCDNode>(src_node_id);
-
-    /*
-    if (pcons->rep() == ObjectMap::ObjID(188850)) {
-      llvm::dbgs() << "Have cons: " << *pcons << "\n";
-      llvm::dbgs() << "  " << ValPrint(pcons->rep()) << "\n";
-    }
-
-    if (pcons->dest() == ObjectMap::ObjID(3253)) {
-      llvm::dbgs() << "Have cons: " << *pcons << "\n";
-      llvm::dbgs() << "  " << ValPrint(pcons->rep()) << "\n";
-    }
-
-    if (pcons->rep() == ObjectMap::ObjID(98027)) {
-      llvm::dbgs() << "Have cons: " << *pcons << "\n";
-      llvm::dbgs() << "  " << ValPrint(pcons->rep()) << "\n";
-    }
-
-    if (pcons->rep() == ObjectMap::ObjID(188842)) {
-      llvm::dbgs() << "Have cons: " << *pcons << "\n";
-      llvm::dbgs() << "  " << ValPrint(pcons->rep()) << "\n";
-    }
-    */
 
     switch (pcons->type()) {
       case ConstraintType::Load:

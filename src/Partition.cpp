@@ -28,6 +28,18 @@
 
 // Anon namespace...
 namespace {
+
+size_t __addnode1 = 0;
+size_t __addnode2 = 0;
+size_t __addnode3 = 0;
+size_t __addnode4 = 0;
+size_t __addnode5 = 0;
+size_t __addnode6 = 0;
+size_t __addnode7 = 0;
+size_t __addnode8 = 0;
+size_t __addnode9 = 0;
+size_t __addnode10 = 0;
+
 class DUGAccessEquiv {
  public:
     DUGAccessEquiv() = default;
@@ -65,6 +77,18 @@ class DUGAccessEquiv {
       }
 
       llvm::dbgs() << "Have " << idx << " ae sets for: " << count << " nodes\n";
+      llvm::dbgs() << "getAECount_ is: " << getAECount_ << "\n";
+
+      llvm::dbgs() << "  __addnode1: " << __addnode1 << "\n";
+      llvm::dbgs() << "  __addnode2: " << __addnode2 << "\n";
+      llvm::dbgs() << "  __addnode3: " << __addnode3 << "\n";
+      llvm::dbgs() << "  __addnode4: " << __addnode4 << "\n";
+      llvm::dbgs() << "  __addnode5: " << __addnode5 << "\n";
+      llvm::dbgs() << "  __addnode6: " << __addnode6 << "\n";
+      llvm::dbgs() << "  __addnode7: " << __addnode7 << "\n";
+      llvm::dbgs() << "  __addnode8: " << __addnode8 << "\n";
+      llvm::dbgs() << "  __addnode9: " << __addnode9 << "\n";
+      llvm::dbgs() << "  __addnode10: " << __addnode10 << "\n";
 
       return std::move(ret);
     }
@@ -72,6 +96,7 @@ class DUGAccessEquiv {
  private:
     int32_t getAEID(std::pair<CFG::CFGid, DUG::PartID> &pr) {
       auto it = AEIDMap_.find(pr);
+      getAECount_++;
 
       if (it == std::end(AEIDMap_)) {
         auto ret = AEIDMap_.emplace(pr, nextAEID_);
@@ -85,7 +110,23 @@ class DUGAccessEquiv {
     }
 
     int32_t nextAEID_ = 0;
-    std::map<std::pair<DUG::DUGid, DUG::PartID>, int32_t> AEIDMap_;
+    struct AEIDHasher {
+      size_t operator()(const std::pair<DUG::DUGid, DUG::PartID> &pr) const {
+        size_t ret = DUG::DUGid::hasher()(pr.first);
+        ret <<= 1;
+        ret ^= DUG::PartID::hasher()(pr.second);
+        return ret;
+      }
+    };
+
+    size_t getAECount_ = 0;
+    /*
+    std::unordered_map<std::pair<DUG::DUGid, DUG::PartID>, int32_t, AEIDHasher>
+      AEIDMap_;
+    std::unordered_map<DUG::DUGid, Bitmap, DUG::DUGid::hasher> AEMap_;
+    */
+    std::map<std::pair<DUG::DUGid, DUG::PartID>, int32_t>
+      AEIDMap_;
     std::map<DUG::DUGid, Bitmap> AEMap_;
 };
 
@@ -121,6 +162,12 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
       [&aux, &omap, &dug, &max_id]
       (const std::pair<const ObjectMap::ObjID, CFG::CFGid> &pr) {
     // Get info about this node
+    /*
+    auto rep_id = omap.getRep(pr.first);
+    llvm::dbgs() << "Getting node with rep: " << rep_id << " recorded id: " <<
+        pr.first << "\n";
+    */
+    // llvm::dbgs() << "Getting node: " << pr.first << "\n";
     auto &node = dug.getNode(pr.first);
 
     ObjectMap::ObjID val_id;
@@ -143,6 +190,8 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
   // Size the part_node array to be able to hold up to max_id ids
   std::vector<std::vector<DUG::DUGid>> part_nodes(max_id.val() + 1);
 
+  llvm::dbgs() << " Have max_id: " << max_id << "\n";
+
   // Group nodes based on relevant obj_id
   {
     util::PerfTimerPrinter part_nodes_timer(llvm::dbgs(),
@@ -152,6 +201,7 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
         (const std::pair<const ObjectMap::ObjID, CFG::CFGid> &pr) {
       // Get info about this node
       auto &node = dug.getNode(pr.first);
+
 
       ObjectMap::ObjID val_id;
       dout("Creating part_nodes for obj_id " << pr.first << " : " <<
@@ -173,6 +223,17 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
         // val is src for gv and loads
         val_id = node.src();
       }
+      /*
+      if (pr.first == ObjectMap::ObjID(77377)) {
+        llvm::dbgs() << "Have obj of: " << pr.first << "\n";
+        llvm::dbgs() << "At node: " << node.id() << "\n";
+      }
+
+      if (val_id == ObjectMap::ObjID(77377)) {
+        llvm::dbgs() << "Creating part_node for: " << val_id << "\n";
+        llvm::dbgs() << "At node: " << node.id() << "\n";
+      }
+      */
       /*
       auto val = omap.valueAtID(val_id);
       auto obj_id = omap.getObject(val);
@@ -208,6 +269,12 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
 
       auto &aux_ptsto = aux.getPointsTo(obj_id);
       /*
+      if (obj_id == ObjectMap::ObjID(77377)) {
+        llvm::dbgs() << "  aux_pts for " << obj_id << " is: " << aux_ptsto <<
+          "\n";
+      }
+      */
+      /*
       llvm::dbgs() << "aux_pts for " << obj_id << " is: " << aux_ptsto << "\n";
       */
 
@@ -222,8 +289,6 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
       std::for_each(std::begin(aux_ptsto), std::end(aux_ptsto),
           [this, &AE, &obj_id]
           (ObjectMap::ObjID ptsto_id) {
-        dout("  Checking aux_to_obj[" << ptsto_id << "]\n");
-
         assert(AE.size() > static_cast<size_t>(ptsto_id.val()));
         AE[ptsto_id.val()].set(obj_id.val());
       });
@@ -235,8 +300,10 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
   util::IDGenerator<DUG::PartID> part_id_generator;
 
   // Create a map to identify when I have a new part
-  std::map<Bitmap, DUG::PartID, BitmapLT> equiv_map;
+  std::unordered_map<Bitmap, DUG::PartID, BitmapHash> equiv_map;
+  // std::map<Bitmap, DUG::PartID, BitmapLT> equiv_map;
 
+  // FIXME: Replace vector w/ ?Bitmap?
   std::map<DUG::PartID, std::vector<ObjectMap::ObjID>> rev_part_map;
 
   {
@@ -247,9 +314,12 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
     for (size_t i = 0; i < AE.size(); i++) {
       ObjectMap::ObjID obj_id(i);
       auto &ae_set = AE[i];
+
+      // Non-pointer?
       if (ae_set.count() == 0) {
         continue;
       }
+
       auto equiv_it = equiv_map.find(ae_set);
 
       // I haven't encountered this mapping yet, add a new one
@@ -265,15 +335,35 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
 
       auto field_pr = omap.findObjAliases(obj_id);
 
+      /*
+      if (obj_id == ObjectMap::ObjID(77377)) {
+        llvm::dbgs() << "  Creating Part for " << obj_id << ": " << part_id
+          << "\n";
+      }
+
+      if (obj_id == ObjectMap::ObjID(77378)) {
+        llvm::dbgs() << "  Creating Part for " << obj_id << ": " << part_id
+          << "\n";
+      }
+      */
+
+      auto rev_it = rev_part_map.find(part_id);
+      if (rev_it == std::end(rev_part_map)) {
+        auto rv = rev_part_map.emplace(part_id,
+            std::vector<ObjectMap::ObjID>());
+        assert(rv.second);
+        rev_it = rv.first;
+      }
+
       if (field_pr.first) {
         auto &field_vec = field_pr.second;
-        std::for_each(std::begin(field_vec), std::end(field_vec),
-            [&rev_part_map, &part_id] (ObjectMap::ObjID id) {
-          rev_part_map[part_id].emplace_back(id);
-        });
+        for (auto &id : field_vec) {
+          rev_it->second.emplace_back(id);
+        }
       }
+
       // Set the object for this part into pr.first
-      rev_part_map[part_id].emplace_back(obj_id);
+      rev_it->second.emplace_back(obj_id);
     }
   }
 
@@ -318,6 +408,33 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
       });
     });
   }
+
+  /*
+  llvm::dbgs() << "  ObjID 941 is part of part_id: " <<
+    part_map[ObjectMap::ObjID(941)] << "\n";
+  for (auto id : AE[941]) {
+    llvm::dbgs() << " " << id;
+  }
+  llvm::dbgs() << "\n";
+  */
+
+  /*
+  llvm::dbgs() << "  ObjID 159944 is part of part_id: " <<
+    part_map[ObjectMap::ObjID(159944)] << "\n";
+  llvm::dbgs() << "    Partition reps nodes:";
+  for (auto id : AE[159944]) {
+    llvm::dbgs() << " " << id;
+  }
+  llvm::dbgs() << "\n";
+
+  llvm::dbgs() << "  ObjID 159943 is part of part_id: " <<
+    part_map[ObjectMap::ObjID(159943)] << "\n";
+  llvm::dbgs() << "    Partition reps nodes:";
+  for (auto id : AE[159943]) {
+    llvm::dbgs() << " " << id;
+  }
+  llvm::dbgs() << "\n";
+  */
 
   if_debug(
     dout("End partitionToNode map is:\n");
@@ -391,6 +508,15 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
       auto &rel_map = graph.getRelevantNodes();
       dout("Getting rel_map for: " << obj_id << "\n");
       auto &rel_bitmap = rel_map[obj_id.val()];
+      /*
+      if (part_id.val() == 46) {
+        llvm::dbgs() << "  Part " << part_id << " got rel_bitmap of:";
+        for (auto rel_id : rel_bitmap) {
+          llvm::dbgs() << " " << rel_id;
+        }
+        llvm::dbgs() << "\n";
+      }
+      */
 
       int num_loads = 0;
       int num_stores = 0;
@@ -410,7 +536,15 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
 
         auto &dug_ids = graph.getPartNodes(obj_id);
 
+
         for (auto dug_id : dug_ids) {
+          /*
+          if (part_id.val() == 46) {
+            llvm::dbgs() << "part: " << part_id <<
+                ": Getting obj_id: " << obj_id << " for dug_id: " << dug_id <<
+                "\n";
+          }
+          */
           dout("part: " << part_id <<
               ": Getting obj_id: " << obj_id << " for dug_id: " << dug_id <<
               "\n");
@@ -437,10 +571,20 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
           // If this is a load:
           if (llvm::isa<DUG::LoadNode>(node) ||
               llvm::isa<DUG::ConstPartNode>(node)) {
+            /*
+            if (part_id.val() == 46) {
+              llvm::dbgs() << "    Load!\n";
+            }
+            */
             part_load.emplace_back(dug_id, cfg_node.id());
             num_loads++;
           // If its a store:
           } else if (llvm::isa<DUG::StoreNode>(node)) {
+            /*
+            if (part_id.val() == 46) {
+              llvm::dbgs() << "    Store!\n";
+            }
+            */
             part_store.emplace_back(dug_id, cfg_node.id());
             num_stores++;
           }  else {
@@ -455,40 +599,65 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
         dout("Have simple CFG, skipping SSA calc\n");
 
         // This graph has only one store:
-        if (num_stores == 1 && num_loads > 0) {
+        if (num_stores == 1) {
           dout("Have 1 load, adding edges that way\n");
           auto st_id = part_store.front().first;
 
           // These are all part of an AE set...
+          __addnode1++;
           dug_ae.addNode(st_id, std::make_pair(CFG::CFGid::invalid(), part_id));
 
-          for (auto &pr : part_load) {
-            auto load_id = pr.first;
-            graph.addEdge(st_id, load_id, part_id);
-            // These are all part of an AE set...
-            dug_ae.addNode(load_id, std::make_pair(CFG::CFGid::invalid(),
-                  part_id));
+          if (num_loads > 0) {
+            for (auto &pr : part_load) {
+              auto load_id = pr.first;
+              graph.addEdge(st_id, load_id, part_id);
+              // These are all part of an AE set...
+              __addnode2++;
+              dug_ae.addNode(load_id, std::make_pair(CFG::CFGid::invalid(),
+                    part_id));
+            }
           }
         // This graph has only 1 load -- NOTE we ignore 0 store partitions
-        } else if (num_stores > 0 && num_loads == 1) {
+        } else if (num_loads == 1) {
           dout("Have 1 load, adding edges that way\n");
           auto load_id = part_load.front().first;
 
           CFG::CFGid inv_id(0);
           // These are all parts of different sets...
+          if (load_id == DUG::DUGid(108743)) {
+            llvm::dbgs() << __LINE__ << ": Adding load_id: " << load_id <<
+              " to part_id: " << part_id << " in DugAE\n";
+          }
+          __addnode3++;
           dug_ae.addNode(load_id, std::make_pair(inv_id, part_id));
           inv_id++;
 
+          if (num_stores > 0) {
+            for (auto &pr : part_store) {
+              auto st_id = pr.first;
+              graph.addEdge(st_id, load_id, part_id);
+              // These all have distrinct AE sets
+              __addnode4++;
+              dug_ae.addNode(st_id, std::make_pair(inv_id, part_id));
+              inv_id++;
+            }
+          }
+        } else {
+          // There are 0 stores or 0 loads we don't need to create edges, but we
+          // do need to add the nodes to the ae set:
+          CFG::CFGid inv_id(0);
           for (auto &pr : part_store) {
-            auto st_id = pr.first;
-            graph.addEdge(st_id, load_id, part_id);
-            // These all have distrinct AE sets
-            dug_ae.addNode(st_id, std::make_pair(inv_id, part_id));
+            __addnode5++;
+            dug_ae.addNode(pr.first, std::make_pair(inv_id, part_id));
             inv_id++;
           }
+
+          for (auto &pr : part_load) {
+            __addnode6++;
+            dug_ae.addNode(pr.first,
+                std::make_pair(CFG::CFGid::invalid(), part_id));
+          }
         }
-        // NOTE: It's possible that we fell through here (if we have 0
-        // loads or 0 stores).  In that case, I don't need to add any edges...
 
       // This isn't a simple graph, I need to calculate full SSA
       } else {
@@ -600,6 +769,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
             assert(llvm::isa<DUG::StoreNode>(graph.getNode(dug_id)));
 
             // Add the "leader" node to our AE set
+            __addnode7++;
             dug_ae.addNode(dug_id, std::make_pair(cfg_id, part_id));
           } else if (have_ld) {
             dug_id = DUG::DUGid(ld_it->val());
@@ -610,6 +780,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
             assert(llvm::isa<DUG::LoadNode>(graph.getNode(dug_id)) ||
                    llvm::isa<DUG::ConstPartNode>(graph.getNode(dug_id)));
             // Add the "leader" node to our AE set
+            __addnode8++;
             dug_ae.addNode(dug_id, std::make_pair(cfg_id, part_id));
 
           // There may also be none (in this case its an phi node)
@@ -656,6 +827,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
                   part_id << ")-> " << st_id << "}\n");
               graph.addEdge(dug_id, st_id, part_id);
               // Add the "leader" node to our AE set
+              __addnode9++;
               dug_ae.addNode(st_id, std::make_pair(cfg_id, part_id));
             });
           }
@@ -681,6 +853,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
                   part_id << ")-> " << ld_id << "}\n");
               graph.addEdge(dug_id, ld_id, part_id);
 
+              __addnode10++;
               dug_ae.addNode(ld_id, std::make_pair(cfg_id, part_id));
             });
           }
@@ -1000,6 +1173,18 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
 
       auto &part_node = cast<DUG::PartNode>(graph.getNode(dug_id));
 
+      /*
+      if (part_node.id() == DUG::DUGid(104681)) {
+        llvm::dbgs() << "  Adding addr_taken vars for node: " << part_node.id()
+          << "\n";;
+        llvm::dbgs() << "    rep: " << part_node.rep() << "\n";
+        llvm::dbgs() << "    src: " << part_node.src() << "\n";
+        llvm::dbgs() << "    dest: " << part_node.dest() << "\n";
+        llvm::dbgs() << "    dug_rep: " << graph.getRep(part_node.id()).id()
+          << "\n";
+      }
+      */
+
       // If this is a non-rep node don't populate its part graph info
       if (!part_node.isDUGRep()) {
         continue;
@@ -1011,12 +1196,22 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
 
       {
         util::PerfTimerTick tick(inner_loop);
-        std::for_each(std::begin(parts), std::end(parts),
-            [&graph, &vars, &omap] (const DUG::PartID &part_id) {
+        for (auto part_id : parts) {
           auto &objs = graph.getObjs(part_id);
+
+          /*
+          if (part_node.id() == graph.getRep(DUG::DUGid(108743)).id()) {
+            llvm::dbgs() << "   HAVE PART: " << part_id << "\n";
+          }
+          */
           dout("    Checking part_id: " << part_id << "\n");
-          std::for_each(std::begin(objs), std::end(objs),
-              [&graph, &vars, &omap] (ObjectMap::ObjID &obj_id) {
+
+          for (auto obj_id : objs) {
+            /*
+            if (part_node.id() == graph.getRep(DUG::DUGid(108743)).id()) {
+              llvm::dbgs() << "     PART OBJS: " << obj_id << "\n";
+            }
+            */
             // We're going to try converting these to objects instead
             //   of values...
             // Also adding pointers for aliased objects
@@ -1028,8 +1223,8 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
             }
 
             vars.emplace_back(obj_id);
-          });
-        });
+          }
+        }
       }
 
       std::sort(std::begin(vars), std::end(vars));

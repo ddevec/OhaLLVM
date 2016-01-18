@@ -24,7 +24,7 @@ typedef llvm::SparseBitVector<> Bitmap;
 
 // Required for using a Bitmap as a std::map key (used for ID gathering) {{{
 struct BitmapLT {
-  bool operator() (const Bitmap &b1, const Bitmap &b2) {
+  bool operator() (const Bitmap &b1, const Bitmap &b2) const {
     auto it1 = std::begin(b1);
     auto it2 = std::begin(b2);
     auto en1 = std::end(b1);
@@ -48,6 +48,16 @@ struct BitmapLT {
     }
 
     return false;
+  }
+};
+
+struct BitmapHash {
+  size_t operator() (const Bitmap &b1) const {
+    size_t hash = 0x7E7E7E7E7E7E7E7ELLU;
+    for (auto idx : b1) {
+      hash ^= std::hash<int32_t>()(idx);
+    }
+    return hash;
   }
 };
 //}}}
@@ -248,19 +258,18 @@ class PtstoSet {
     }
 
     bool orOffs(const PtstoSet &rhs, int32_t offs,
-        const std::map<ObjectMap::ObjID, int32_t> &struct_set) {
+        const ObjectMap::StructMap &struct_set) {
       if (offs == 0) {
         return operator|=(rhs);
       }
 
       bool ret = false;
       Bitmap init = ptsto_;
-      std::for_each(std::begin(rhs.ptsto_), std::end(rhs.ptsto_),
-          [this, &ret, &offs, &struct_set]
-          (const int32_t &val) {
+      for (auto val : rhs.ptsto_) {
         int32_t or_offs = offs;
 
         // If this isn't a structure, don't treat it with an offset
+        // FIXME: Return later, jus ttesting performance
         auto it = struct_set.find(ObjectMap::ObjID(val));
         if (it == std::end(struct_set)) {
           or_offs = 0;
@@ -271,7 +280,7 @@ class PtstoSet {
         }
 
         ret |= ptsto_.test_and_set(val + or_offs);
-      });
+      }
 
       if (ret) {
         clearDynPtsto();
@@ -684,6 +693,11 @@ class PtstoGraph {
       return it->pts();
     }
 
+    bool has(ObjID id) const {
+      auto it = std::lower_bound(std::begin(data_), std::end(data_), id);
+      return (it != std::end(data_) && it->id() == id);
+    }
+
     bool operator|=(PtstoGraph &rhs) {
       // Oh goody...
       bool ret = false;
@@ -744,8 +758,28 @@ class PtstoGraph {
       return ret;
     }
 
+    bool canOrPart(const PtstoGraph &rhs,
+        std::map<ObjID, __PartID> &part_map, __PartID part_id) const {
+      for (ObjID obj_id : rhs.change_) {
+        if (part_map.count(obj_id) == 0) {
+          continue;
+        }
+
+        if (part_map.at(obj_id) != part_id) {
+          continue;
+        }
+
+        if (!has(obj_id)) {
+          return false;
+        }
+      }
+
+      return true;
+    }
+
     bool orPart(const PtstoGraph &rhs,
-        std::map<ObjID, __PartID> &part_map, __PartID part_id) {
+        std::map<ObjID, __PartID> &part_map,
+        __PartID part_id) {
       bool ret = false;
 
       for (ObjID obj_id : rhs.change_) {

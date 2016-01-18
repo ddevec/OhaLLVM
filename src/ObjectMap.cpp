@@ -67,6 +67,14 @@ const ObjectMap::ObjID ObjectMap::ArgvObjectObject =
     ObjectMap::ObjID(
         static_cast<int32_t>(ObjectMap::ObjEnum::eArgvObjectObject));
 
+const ObjectMap::ObjID ObjectMap::StdIOValue =
+    ObjectMap::ObjID(
+        static_cast<int32_t>(ObjectMap::ObjEnum::eStdIOValue));
+
+const ObjectMap::ObjID ObjectMap::IoctlValue =
+    ObjectMap::ObjID(
+        static_cast<int32_t>(ObjectMap::ObjEnum::eIoctlValue));
+
 ObjectMap::ObjectMap() {
   for (int32_t i = 0; i < static_cast<int32_t>(ObjEnum::eNumDefaultObjs);
       i++) {

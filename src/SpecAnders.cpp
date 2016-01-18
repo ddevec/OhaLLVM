@@ -89,6 +89,11 @@ static llvm::cl::opt<std::string>
       llvm::cl::desc("if set anders will print the ptsto set for this global"
         " at the end of execution"));
 
+static llvm::cl::list<int32_t> //  NOLINT
+  id_debug("anders-debug-id",
+      llvm::cl::desc("Specifies IDs to print the nodes of after andersens "
+        "runs"));
+
 static llvm::cl::opt<bool>
   do_anders_print_result("anders-do-print-result", llvm::cl::init(false),
       llvm::cl::value_desc("bool"),
@@ -164,29 +169,97 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
 
   // Now that we have the constraints, lets optimize a bit
   // First, do HVN
-  /*
-  llvm::dbgs() << "HERE: " << __LINE__ << "\n";
-  // I"M DIEING HERE THIS SUXX
-  if (getRep(ObjectMap::ObjID(3441)) == ObjectMap::ObjID(3440)) {
-    abort();
+
+  llvm::dbgs() << "Original number of constraints: " << cg.getNumConstraints()
+    << "\n";
+  {
+    size_t num_alloc = 0;
+    size_t num_gep = 0;
+    size_t num_copy = 0;
+    size_t num_load = 0;
+    size_t num_store = 0;
+    for (auto &pcons : cg) {
+      if (pcons == nullptr) {
+        continue;
+      }
+
+      switch (pcons->type()) {
+        case ConstraintType::AddressOf:
+          num_alloc++;
+          break;
+        case ConstraintType::Copy:
+          if (pcons->offs() != 0) {
+            num_gep++;
+          } else {
+            num_copy++;
+          }
+          break;
+        case ConstraintType::Store:
+          num_store++;
+          break;
+        case ConstraintType::Load:
+          num_load++;
+          break;
+      }
+    }
+
+    llvm::dbgs() << "  num_alloc: " << num_alloc << "\n";
+    llvm::dbgs() << "  num_gep: " << num_gep << "\n";
+    llvm::dbgs() << "  num_copy: " << num_copy << "\n";
+    llvm::dbgs() << "  num_load: " << num_load << "\n";
+    llvm::dbgs() << "  num_store: " << num_store << "\n";
   }
-  */
 
   {
     util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "HVN");
     int32_t removed = HVN(cg, omap);
     llvm::dbgs() << "hvn removed: " << removed << " constraints\n";
   }
-  /*
-  if (getRep(ObjectMap::ObjID(3441)) == ObjectMap::ObjID(3440)) {
-    abort();
-  }
-  */
 
   // Then, do HRU
   {
     util::PerfTimerPrinter hru_timer(llvm::dbgs(), "HRU");
     HRU(cg, omap, 100);
+  }
+
+  llvm::dbgs() << "Constraints after HRU: " << cg.getNumConstraints()
+    << "\n";
+  {
+    size_t num_alloc = 0;
+    size_t num_gep = 0;
+    size_t num_copy = 0;
+    size_t num_load = 0;
+    size_t num_store = 0;
+    for (auto &pcons : cg) {
+      if (pcons == nullptr) {
+        continue;
+      }
+
+      switch (pcons->type()) {
+        case ConstraintType::AddressOf:
+          num_alloc++;
+          break;
+        case ConstraintType::Copy:
+          if (pcons->offs() != 0) {
+            num_gep++;
+          } else {
+            num_copy++;
+          }
+          break;
+        case ConstraintType::Store:
+          num_store++;
+          break;
+        case ConstraintType::Load:
+          num_load++;
+          break;
+      }
+    }
+
+    llvm::dbgs() << "  num_alloc: " << num_alloc << "\n";
+    llvm::dbgs() << "  num_gep: " << num_gep << "\n";
+    llvm::dbgs() << "  num_copy: " << num_copy << "\n";
+    llvm::dbgs() << "  num_load: " << num_load << "\n";
+    llvm::dbgs() << "  num_store: " << num_store << "\n";
   }
 
   // Then, HCD
@@ -196,11 +269,8 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
     HCD(cg, omap);
   }
 
-  /*
-  if (getRep(ObjectMap::ObjID(3441)) == ObjectMap::ObjID(3440)) {
-    abort();
-  }
-  */
+  llvm::dbgs() << "Constraints after HCD: " << cg.getNumConstraints()
+    << "\n";
 
   {
     util::PerfTimerPrinter graph_timer(llvm::dbgs(), "Graph Creation");
@@ -208,24 +278,50 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
     graph_.fill(cg, omap, m);
   }
 
-  /*
-  if (getRep(ObjectMap::ObjID(3441)) == ObjectMap::ObjID(3440)) {
-    abort();
-  }
-  */
-
   graph_.setStructInfo(omap.getIsStructSet());
 
-  /*
-  if (getRep(ObjectMap::ObjID(3441)) == ObjectMap::ObjID(3440)) {
-    abort();
-  }
-  */
   {
     util::PerfTimerPrinter solve_timer(llvm::dbgs(), "AndersSolve");
     if (solve()) {
       error("Solve failure!");
     }
+  }
+
+  for (auto &id_val : id_debug) {
+    // DEBUG {{{
+    llvm::dbgs() << "Printing node for id: " << id_val << "\n";
+    ObjectMap::ObjID val_id(id_val);
+
+    llvm::dbgs() << "ptsto[" << val_id << "]: " << FullValPrint(val_id) <<
+      "\n";
+    auto rep_id = getRep(val_id);
+    if (rep_id != val_id) {
+      llvm::dbgs() << " REP: " << rep_id << ": " <<
+        FullValPrint(rep_id) << "\n";
+    }
+
+    auto &ptsto = getPointsTo(rep_id);
+
+    std::for_each(std14::cbegin(ptsto), std14::cend(ptsto),
+        [&omap] (const ObjectMap::ObjID obj_id) {
+      llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
+          << "\n";
+    });
+
+    llvm::dbgs() << "copySuccs: {";
+    auto &succs = graph_.getNode(rep_id).copySuccs();
+    for (auto succ_id : succs) {
+      llvm::dbgs() << " " << succ_id;
+    }
+    llvm::dbgs() << " }\n";
+
+    llvm::dbgs() << "gepSuccs: {";
+    auto &gep_succs = graph_.getNode(rep_id).gepSuccs();
+    for (auto &succ_pr : gep_succs) {
+      llvm::dbgs() << " (" << succ_pr.first << " + " << succ_pr.second << ")";
+    }
+    llvm::dbgs() << " }\n";
+    //}}}
   }
 
   if (glbl_name != "") {

@@ -188,6 +188,16 @@ class DUG {
           dout("  node src_obj_id: " << src << ": " <<
               ValPrint(src) << "\n");
 
+          if (cons.rep() == ObjectMap::ObjID(101165)) {
+            llvm::dbgs() << "  load_rep is: (" << cons.rep() << ") " <<
+              FullValPrint(cons.rep()) << "\n";
+            llvm::dbgs() << "  src is: (" << cons.src() << ") " <<
+              FullValPrint(cons.src()) << "\n";
+            llvm::dbgs() << "  dest is: (" << cons.dest() << ") " <<
+              FullValPrint(cons.dest()) << "\n";
+            llvm::dbgs() << "  offs is: " << offs << "\n";
+          }
+
           switch (cons.type()) {
             case ConstraintType::AddressOf:
               {
@@ -258,6 +268,7 @@ class DUG {
           }
 
           auto &nd = DUG_.getNode<DUGNode>(node_id);
+          // llvm::dbgs() << "  Creating node: " << nd.rep() << "\n";
           nodeMap_.emplace(nd.rep(), node_id);
 
           // logout("s " << src << "\n");
@@ -412,7 +423,7 @@ class DUG {
       }
     }
 
-    void setStructInfo(const std::map<ObjID, int32_t> info) {
+    void setStructInfo(const ObjectMap::StructMap &info) {
       structInfo_ = info;
     }
     //}}}
@@ -434,7 +445,7 @@ class DUG {
     // }}}
 
     // Accessors {{{
-    const std::map<ObjID, int32_t> &getStructInfo() const {
+    const ObjectMap::StructMap &getStructInfo() const {
       return structInfo_;
     }
 
@@ -504,7 +515,8 @@ class DUG {
       partNodes_ = std::move(mapping);
     }
 
-    void setNodeToPartition(std::map<ObjID, PartID> mapping) {
+    void setNodeToPartition(
+        std::map<ObjID, PartID> mapping) {
       revPartitionMap_ = std::move(mapping);
     }
 
@@ -720,7 +732,7 @@ class DUG {
       void erasePartSucc(DUG::DUGid id) {
         // Swap out elm w/ end, then pop end
         for (size_t i = 0; i < part_succs_.size(); i++) {
-          while (part_succs_[i].second == id) {
+          while (i < part_succs_.size() && part_succs_[i].second == id) {
             part_succs_[i] = part_succs_.back();
             part_succs_.pop_back();
           }
@@ -967,7 +979,7 @@ class DUG {
 
     std::map<ObjID, SEG::NodeID> nodeMap_;
 
-    std::map<ObjID, int32_t> structInfo_;
+    ObjectMap::StructMap structInfo_;
 
     SEG DUG_;
     //}}}

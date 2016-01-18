@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "include/AndersHelpers.h"
+#include "include/ConstraintGraph.h"
 #include "include/DUG.h"
 #include "include/Debug.h"
 #include "include/SolveHelpers.h"
@@ -30,6 +31,8 @@
 // Number of edges/number of processed nodes before we allow LCD to run
 #define LCD_SIZE 600
 #define LCD_PERIOD std::numeric_limits<int32_t>::max()
+
+static size_t lcd_merge_count = 0;
 
 // SpecSFS Solve {{{
 int32_t dbg_dugnodeid(DUGNode *node) {
@@ -203,6 +206,9 @@ void DUG::LoadNode::processShared(DUG &dug, TopLevelPtsto &pts_top,
 
   logout("i " << in << "\n");
 
+  dout("src is " << src() << " " << src_pts << "\n");
+  dout("dest is " << dest() << " " << dest_pts << "\n");
+
   bool changed = false;
   std::for_each(std::begin(src_pts), std::end(src_pts),
       [this, &dug, &work, &changed, &dest_pts, &in]
@@ -230,20 +236,31 @@ void DUG::LoadNode::processShared(DUG &dug, TopLevelPtsto &pts_top,
   // Also propigate address taken info
   // We need to update the ptsto of all of our part_successors
   if (in.hasChanged()) {
-    std::for_each(std::begin(part_succs_), std::end(part_succs_),
-        [this, &dug, &work, &priority, &pts_top, &in]
-        (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
+    for (auto &part_pr : part_succs_) {
       auto part_id = part_pr.first;
       auto dug_id = part_pr.second;
 
       auto &nd = dug.getNode(dug_id);
+
+      if (!nd.in().canOrPart(in, dug.objToPartMap(), part_id)) {
+        llvm::dbgs() << "orPart failing, node: " << id() << "\n";
+        llvm::dbgs() << "  Load SHARED\n";
+        llvm::dbgs() << "  value at src() (" << src() << ")\n";
+        llvm::dbgs() << "  value at dest() (" << dest() << ")\n";
+        llvm::dbgs() << "  src is " << src() << " " << src_pts << "\n";
+        llvm::dbgs() << "  dest is " << dest() << " " << dest_pts << "\n";
+        llvm::dbgs() << "  nd.in() is: " << nd.in() << "\n";
+        llvm::dbgs() << "  in is: " << in << "\n";
+        llvm::dbgs() << "  part_id is: " << part_id << "\n";
+        llvm::dbgs() << "  nd is: " << nd.id() << "\n";
+      }
 
       bool ch = nd.in().orPart(in, dug.objToPartMap(), part_id);
 
       if (ch) {
         work.push(&nd, priority[nd.id().val()]);
       }
-    });
+    }
   }
 
   dout("  Load dest is: " << dest() << "\n");
@@ -291,17 +308,27 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top,
   logout("i " << in() << "\n");
 
   bool changed = false;
-  std::for_each(std::begin(src_pts), std::end(src_pts),
-      [this, &dug, &work, &changed, &dest_pts](DUG::ObjID id) {
+  for (auto id : src_pts) {
     dout("  id is: " << id << "\n");
     dout("  in is: " << in_ << "\n");
+
+    if (!in_.has(id)) {
+      llvm::dbgs() << "LOAD src or failing, node: " << DUGNode::id() << "\n";
+      llvm::dbgs() << "  LOAD\n";
+      llvm::dbgs() << "  value at src() (" << src() << ")\n";
+      llvm::dbgs() << "  value at dest() (" << dest() << ")\n";
+      llvm::dbgs() << "  src is " << src() << " " << src_pts << "\n";
+      llvm::dbgs() << "  dest is " << dest() << " " << dest_pts << "\n";
+      llvm::dbgs() << "  in_ is " << in_ << "\n";
+      llvm::dbgs() << "  id is: " << id << "\n";
+    }
 
     PtstoSet &pts = in_.at(id);
 
     dout("  pts is: " << pts << "\n");
 
     changed |= (dest_pts |= pts);
-  });
+  }
 
   logout("D " << dest() << " " << dest_pts << "\n");
 
@@ -322,9 +349,7 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top,
   dout("  Load src is: " << src() << "\n");
   // If our input set has changed, we alert our succs
   if (in().hasChanged()) {
-    std::for_each(std::begin(part_succs_), std::end(part_succs_),
-        [this, &dug, &work, &priority, &pts_top]
-        (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
+    for (auto &part_pr : part_succs_) {
       auto part_id = part_pr.first;
       auto dug_id = part_pr.second;
 
@@ -340,6 +365,16 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top,
 
         ld_nd.processShared(dug, pts_top, work, priority, in_);
       } else {
+        if (!nd.in().canOrPart(in_, dug.objToPartMap(), part_id)) {
+          llvm::dbgs() << "orPart failing, node: " << id() << "\n";
+          llvm::dbgs() << "  LOAD\n";
+          llvm::dbgs() << "  value at src() (" << src() << ")\n";
+          llvm::dbgs() << "  value at dest() (" << dest() << ")\n";
+          llvm::dbgs() << "  src is " << src() << " " << src_pts << "\n";
+          llvm::dbgs() << "  dest is " << dest() << " " << dest_pts << "\n";
+          llvm::dbgs() << "  nd.in() is: " << nd.in() << "\n";
+          llvm::dbgs() << "  nd is: " << nd.id() << "\n";
+        }
         bool ch = nd.in().orPart(in_, dug.objToPartMap(), part_id);
 
         if (ch) {
@@ -348,7 +383,7 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top,
           work.push(&nd, priority[nd.id().val()]);
         }
       }
-    });
+    }
 
     // Clear our changed info
     in().resetChanged();
@@ -432,10 +467,19 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top,
     change |= (out_ |= in());
 
     // Also, add the stored element(s):
-    std::for_each(std::begin(dest_pts), std::end(dest_pts),
-        [this, &change, &src_pts] (ObjectMap::ObjID elm) {
+    for (auto elm : dest_pts) {
+      if (!out_.has(elm)) {
+        llvm::dbgs() << "orElement failing, node: " << id() << "\n";
+        llvm::dbgs() << "  WEAK STORE\n";
+        llvm::dbgs() << "  value at src() (" << src() << ")\n";
+        llvm::dbgs() << "  value at dest() (" << dest() << ")\n";
+        llvm::dbgs() << "  src is " << src() << " " << src_pts << "\n";
+        llvm::dbgs() << "  dest is " << dest() << " " << dest_pts << "\n";
+        llvm::dbgs() << "  out_ is: " << out_ << "\n";
+        llvm::dbgs() << "  elm is: " << elm << "\n";
+      }
       change |= out_.orElement(elm, src_pts);
-    });
+    }
   }
 
 
@@ -451,9 +495,7 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top,
       dest() << "\n");
     // FIXME: Only do this for changed info?
     // For each successor partition of this store
-    std::for_each(std::begin(part_succs_), std::end(part_succs_),
-        [this, &work, &dug, &priority, &pts_top]
-        (std::pair<DUG::PartID, DUG::DUGid> &part_pr) {
+    for (auto &part_pr : part_succs_) {
       auto part_id = part_pr.first;
       auto dug_id = part_pr.second;
       auto &nd = dug.getNode(dug_id);
@@ -471,6 +513,20 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top,
         ld_nd.processShared(dug, pts_top, work, priority, out_);
       } else {
         // Update the input set of the successor node
+        //
+        if (!nd.in().canOrPart(out_, dug.objToPartMap(), part_id)) {
+          llvm::dbgs() << "orPart failing, node: " << id() << "\n";
+          llvm::dbgs() << "  LOAD\n";
+          llvm::dbgs() << "  value at src() (" << src() << ")\n";
+          llvm::dbgs() << "  value at dest() (" << dest() << ")\n";
+          llvm::dbgs() << "  src is " << src() << " " << src_pts << "\n";
+          llvm::dbgs() << "  dest is " << dest() << " " << dest_pts << "\n";
+          llvm::dbgs() << "  nd.in() is: " << nd.in() << "\n";
+          llvm::dbgs() << "  out_ is: " << out_ << "\n";
+          llvm::dbgs() << "  nd is: " << dug_id << "\n";
+          llvm::dbgs() << "  nd.id() is: " << nd.id() << "\n";
+        }
+
         bool c = nd.in().orPart(out_, dug.objToPartMap(), part_id);
 
         // dout("  after in for nd is: " << nd.in() << "\n");
@@ -482,7 +538,7 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top,
           work.push(&nd, priority[nd.id().val()]);
         }
       }
-    });
+    }
 
     out_.resetChanged();
   // Still have to run shared nodes
@@ -652,7 +708,7 @@ class RunNuutila {
  public:
   static const int32_t IndexInvalid = -1;
 
-  RunNuutila(AndersGraph &g, const std::set<AndersNode *> &nodes,
+  RunNuutila(AndersGraph &g, const std::unordered_set<AndersNode *> &nodes,
       Worklist<AndersNode> &wl, const std::vector<uint32_t> &priority) :
       graph_(g), wl_(wl), priority_(priority) {
     // For each candidate node, visit it if it hasn't been visited, and compute
@@ -696,15 +752,8 @@ class RunNuutila {
     auto dfs_idx = nextIndex_;
     nextIndex_++;
 
-    for (auto succ_pr : node.succs()) {
-      // Don't deal w/ offset nodes in detecting sccs, because they do bad
-      //   things (we would have to calculate the transitive closure of the scc
-      //   for this to be safe...
-      if (succ_pr.second != 0) {
-        continue;
-      }
-
-      auto succ_id = succ_pr.first;
+    for (auto succ_val : node.copySuccs()) {
+      auto succ_id = ObjectMap::ObjID(succ_val);
 
       auto dest_id = graph_.getRep(succ_id);
       auto dest_data = &getRepData(dest_id);
@@ -760,6 +809,7 @@ class RunNuutila {
 
         // If we weren't already merged (HCD can cause this)
         if (rep_next != node.id()) {
+          lcd_merge_count++;
           node.merge(graph_.getNode(rep_next));
         }
 
@@ -799,9 +849,11 @@ bool SpecAnders::solve() {
 
   logout("SOLVE\n");
 
-  // Populate the worklist with all nodes
+  // Populate the worklist with any node with a non-empty ptsto set
   for (auto &node : graph_) {
-    work.push(&node, 0);
+    if (!node.ptsto().empty()) {
+      work.push(&node, 0);
+    }
   }
 
   priority.assign(graph_.size(), 0);
@@ -809,21 +861,49 @@ bool SpecAnders::solve() {
   int32_t vtime = 1;
   uint32_t prio;
 
+  size_t hcd_merge_count = 0;
+  size_t lcd_check_count = 0;
+  size_t hcd_merge_last = 0;
+  size_t lcd_merge_last = 0;
+  size_t lcd_check_last = 0;
+
   int32_t lcd_last_time = 1;
-  std::set<std::pair<AndersGraph::ObjID, AndersGraph::ObjID>> lcd_edges;
-  std::set<AndersNode *> lcd_nodes;
+  struct lcd_edge_hash {
+    size_t operator()(const std::pair<AndersGraph::ObjID, AndersGraph::ObjID>
+        &pr) const {
+      size_t ret = AndersGraph::ObjID::hasher()(pr.first);
+      ret <<= 1;
+      ret ^= AndersGraph::ObjID::hasher()(pr.second);
+      return ret;
+    }
+  };
+  std::unordered_set<std::pair<AndersGraph::ObjID, AndersGraph::ObjID>,
+    lcd_edge_hash> lcd_edges;
+  std::unordered_set<AndersNode *> lcd_nodes;
   // While the worklist has work
+  // Pop the next node from the worklist
+
   while (auto pnd = work.pop(prio)) {
     // Don't process the node if we've processed it this round
-     /*
-    llvm::dbgs() << "pnd->id() is: " << pnd->id() << "\n";
-    llvm::dbgs() << "priority is: " << priority[pnd->id().val()] << "\n";
-    */
     if (prio < priority[pnd->id().val()]) {
       continue;
     }
 
-    // Pop the next node from the worklist
+    if (lcd_merge_last + 1000 <= lcd_merge_count) {
+      llvm::dbgs() << "LCD Merge Count: " << lcd_merge_count << "\n";
+      lcd_merge_last = lcd_merge_count;
+    }
+
+    if (lcd_check_last + 1000 <= lcd_merge_last) {
+      llvm::dbgs() << "LCD check count: " << lcd_check_count << "\n";
+      lcd_check_last = lcd_check_count;
+    }
+
+    if (hcd_merge_last + 1000 <= hcd_merge_count) {
+      llvm::dbgs() << "HCD Merge Count: " << hcd_merge_count << "\n";
+      hcd_merge_last = hcd_merge_count;
+    }
+
     priority[pnd->id().val()] = vtime;
     vtime++;
 
@@ -844,6 +924,7 @@ bool SpecAnders::solve() {
             dest_node.id() << "\n";
           */
           rep_node.merge(dest_node);
+          hcd_merge_count++;
         }
       }
 
@@ -856,33 +937,201 @@ bool SpecAnders::solve() {
     // For each constraint in this node
     if (pnd->updated()) {
       pnd->clearUpdated();
-      for (auto &pcons : pnd->constraints()) {
+
+      auto &cons_list = pnd->constraints();
+
+      // This is only safe because I guarantee that once a cons goes into the
+      // set I will never change its index
+      /*
+      auto ConsLT = [this, &cons_list] (size_t lhs_idx, size_t rhs_idx) {
+        auto &plhs = cons_list[lhs_idx];
+        auto &prhs = cons_list[rhs_idx];
+
+        auto lhs_src = graph_.getNode(plhs->src()).id();
+        auto rhs_src = graph_.getNode(prhs->src()).id();
+
+        auto lhs_dest = plhs->dest();
+        if (lhs_dest != AndersCons::ObjID::invalid()) {
+          lhs_dest = graph_.getNode(lhs_dest).id();
+        }
+
+        auto rhs_dest = prhs->dest();
+        if (rhs_dest != AndersCons::ObjID::invalid()) {
+          rhs_dest = graph_.getNode(rhs_dest).id();
+        }
+
+        auto lhs_offs = plhs->offs();
+        auto rhs_offs = prhs->offs();
+
+        if (plhs->getKind() != prhs->getKind()) {
+          return plhs->getKind() < prhs->getKind();
+        }
+
+        if (lhs_src != rhs_src) {
+          return lhs_src < rhs_src;
+        }
+
+        if (lhs_dest != rhs_dest) {
+          return lhs_dest < rhs_dest;
+        }
+
+        return lhs_offs < rhs_offs;
+      };
+      */
+
+      auto cons_eq = [this, &cons_list] (size_t lhs_idx, size_t rhs_idx) {
+        auto &plhs = cons_list[lhs_idx];
+        auto &prhs = cons_list[rhs_idx];
+
+        auto lhs_src = graph_.getNode(plhs->src()).id();
+        auto rhs_src = graph_.getNode(prhs->src()).id();
+
+        auto lhs_dest = plhs->dest();
+        if (lhs_dest != AndersCons::ObjID::invalid()) {
+          lhs_dest = graph_.getNode(lhs_dest).id();
+        }
+
+        auto rhs_dest = prhs->dest();
+        if (rhs_dest != AndersCons::ObjID::invalid()) {
+          rhs_dest = graph_.getNode(rhs_dest).id();
+        }
+
+        auto lhs_offs = plhs->offs();
+        auto rhs_offs = prhs->offs();
+
+        return plhs->getKind() == prhs->getKind() && lhs_src == rhs_src &&
+          lhs_dest == rhs_dest && lhs_offs == rhs_offs;
+      };
+
+      auto cons_hash = [this, &cons_list] (size_t idx) {
+        assert(idx < cons_list.size());
+
+        auto &pcons = cons_list[idx];
+
+        // llvm::dbgs() << "  idx: " << idx << "\n";
+        // llvm::dbgs() << "  pcons->src: " << pcons->src() << "\n";
+        // llvm::dbgs() << "  pcons->dest: " << pcons->dest() << "\n";
+        assert(pcons->src() != AndersCons::ObjID::invalid());
+        auto src = graph_.getNode(pcons->src()).id();
+        // llvm::dbgs() << "  src: " << src << "\n";
+        // Invalid can happen for indirect constraints
+        auto dest = pcons->dest();
+        if (dest != AndersCons::ObjID::invalid()) {
+          dest = graph_.getNode(dest).id();
+        }
+        // llvm::dbgs() << "  dest: " << dest << "\n";
+        auto kind = pcons->getKind();
+        auto offs = pcons->offs();
+
+        auto ret = AndersCons::ObjID::hasher()(src);
+        ret <<= 1;
+        ret ^= AndersCons::ObjID::hasher()(dest);
+        ret <<= 1;
+        ret ^= std::hash<int32_t>()(offs);
+        ret <<= 1;
+        ret ^= std::hash<int32_t>()(static_cast<int32_t>(kind));
+
+        return ret;
+      };
+      std::unordered_set<size_t, decltype(cons_hash), decltype(cons_eq)>
+        cons_set(cons_list.size() * 2 , cons_hash, cons_eq);
+
+      // std::set<size_t, decltype(ConsLT)> cons_set(ConsLT);
+      // llvm::dbgs() << "pnd->id() " << pnd->id() << "\n";
+      // llvm::dbgs() << "cons_list.size() " << cons_list.size() << "\n";
+      // auto old_cons_size = cons_list.size();
+      for (size_t idx = 0; idx < cons_list.size();) {
+        auto &pcons = cons_list[idx];
+
+        // Don't remove indir call constraints
+        if (!llvm::isa<AndersIndirCallCons>(pcons.get())) {
+          if (cons_set.find(idx) == std::end(cons_set)) {
+            cons_set.insert(idx);
+          } else {
+            cons_list[idx] = std::move(cons_list.back());
+            cons_list.pop_back();
+            continue;
+          }
+        }
+        ++idx;
+
         // Process the constraint
         pcons->process(graph_, work, priority);
       }
-    }
 
-    // Also, now that they've updated their info, lets update pointsto sets
-    auto &edges = pnd->succs();
-    std::set<ObjectMap::ObjID> seen_edges;
-    // for (auto succ_pr : pnd->succs())
-    for (size_t idx = 0; idx < edges.size();) {
-      auto &succ_pr = edges.getEdge(idx);
-      auto succ_id = succ_pr.first;
-      auto succ_offs = succ_pr.second;
+      /*
+      if (old_cons_size != cons_list.size()) {
+        llvm::dbgs() << "Reduced cons_list size from: " << old_cons_size <<
+          " to " << cons_list.size() << "\n";
+      }
+      */
 
-      auto &succ_node = graph_.getNode(succ_id);
+      // This is only safe to put inside of the updated() conditional because
+      // GEP edges cannot be added by constraints in my current implementation
+      auto &edges = pnd->gepSuccs();
+      std::set<std::pair<ObjectMap::ObjID, int32_t>> seen_edges;
+      // for (auto succ_pr : pnd->succs())
+      for (size_t idx = 0; idx < edges.size();) {
+        auto &succ_pr = edges[idx];
+        auto succ_id = succ_pr.first;
+        auto succ_offs = succ_pr.second;
 
-      if (succ_offs == 0) {
-        if (seen_edges.find(succ_node.id()) != std::end(seen_edges)) {
-          edges.removeEdge(idx);
+        auto &succ_node = graph_.getNode(succ_id);
+
+        if (seen_edges.find(succ_pr) != std::end(seen_edges)) {
+          edges[idx] = edges.back();
+          edges.pop_back();
           continue;
         } else {
-          seen_edges.insert(succ_node.id());
+          seen_edges.insert(succ_pr);
+        }
+        idx++;
+
+
+        adout("  succ: " << succ_node.id() << "\n");
+
+        /*
+        llvm::dbgs() << "Unioning succ: " << succ_node.id() << " and " <<
+          pnd->id() << "\n";
+        */
+        auto &succ_pts = succ_node.ptsto();
+
+        adout("  f: " << succ_offs << "\n");
+        adout("  i: " << pnd->ptsto() << "\n");
+        adout("  o: " << succ_id << ": " << succ_pts << "\n");
+
+        bool ch = succ_pts.orOffs(pnd->ptsto(), succ_offs,
+            graph_.getStructInfo());
+
+        adout("  ch: " << ch << "\n");
+        adout("  O: " << succ_id << ": " << succ_pts << "\n");
+
+
+
+        auto edge = std::make_pair(pnd->id(), succ_node.id());
+        // If we haven't run LCD on this edge before, the points-to sets are not
+        //   empty, and the two points-to sets are equal
+        if (lcd_edges.find(edge) == std::end(lcd_edges) &&
+            !pnd->ptsto().empty() &&
+            pnd->ptsto() == succ_pts) {
+          lcd_check_count++;
+          lcd_nodes.insert(pnd);
+          lcd_edges.insert(edge);
+        }
+
+        if (ch) {
+          work.push(&succ_node, priority[succ_node.id().val()]);
         }
       }
-      idx++;
+    }
 
+    auto &copy_edges = pnd->copySuccs();
+    Bitmap new_copy_edges;
+    for (auto succ_val : copy_edges) {
+      auto succ_id = ObjectMap::ObjID(succ_val);
+
+      auto &succ_node = graph_.getNode(succ_id);
+      new_copy_edges.set(succ_node.id().val());
 
       adout("  succ: " << succ_node.id() << "\n");
 
@@ -892,17 +1141,14 @@ bool SpecAnders::solve() {
       */
       auto &succ_pts = succ_node.ptsto();
 
-      adout("  f: " << succ_offs << "\n");
+      adout("  f: 0\n");
       adout("  i: " << pnd->ptsto() << "\n");
       adout("  o: " << succ_id << ": " << succ_pts << "\n");
 
-      bool ch = succ_pts.orOffs(pnd->ptsto(), succ_offs,
-          graph_.getStructInfo());
+      bool ch = succ_pts |= pnd->ptsto();
 
       adout("  ch: " << ch << "\n");
       adout("  O: " << succ_id << ": " << succ_pts << "\n");
-
-
 
       auto edge = std::make_pair(pnd->id(), succ_node.id());
       // If we haven't run LCD on this edge before, the points-to sets are not
@@ -910,6 +1156,7 @@ bool SpecAnders::solve() {
       if (lcd_edges.find(edge) == std::end(lcd_edges) &&
           !pnd->ptsto().empty() &&
           pnd->ptsto() == succ_pts) {
+        lcd_check_count++;
         lcd_nodes.insert(pnd);
         lcd_edges.insert(edge);
       }
@@ -918,6 +1165,7 @@ bool SpecAnders::solve() {
         work.push(&succ_node, priority[succ_node.id().val()]);
       }
     }
+    pnd->setCopySuccs(std::move(new_copy_edges));
 
 
     // llvm::dbgs() << "lcd_nodes.size(): " << lcd_nodes.size() << "\n";
@@ -931,6 +1179,10 @@ bool SpecAnders::solve() {
       lcd_last_time = vtime;
     }
   }
+
+  llvm::dbgs() << "Final lcd_merge_count: " << lcd_merge_count << "\n";
+  llvm::dbgs() << "Final lcd_check_count: " << lcd_check_count << "\n";
+  llvm::dbgs() << "Final lcd_merge_count: " << lcd_merge_count << "\n";
 
   return false;
 }
@@ -946,8 +1198,10 @@ void AndersStoreCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
   auto &src_node = graph.getNode(src());
   for (auto pts_id : dest_pts) {
     // Don't add ptr to yourself
-    if (graph.getNode(pts_id).id() != src_node.id()) {
-      ch |= src_node.succs().insert(pts_id);
+    auto &pts_node = graph.getNode(pts_id);
+    if (pts_node.id() != src_node.id()) {
+      // ch |= (src_node.copySuccs().test_and_set(pts_node.id().val()));
+      ch |= src_node.addCopyEdge(pts_node.id());
     }
   }
 
@@ -968,7 +1222,8 @@ void AndersLoadCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
     auto &pt_node = graph.getNode(pts_id);
     // Don't add ptr to yourself
     if (pt_node.id() != src_node.id()) {
-      bool ch = pt_node.succs().insert(dest());
+      auto &dest_node = graph.getNode(dest());
+      bool ch = pt_node.addCopyEdge(dest_node.id());
 
       if (ch) {
         adout("  LoadCons: added: " << pt_node.id() << " to WL\n");
@@ -992,6 +1247,11 @@ void AndersIndirCallCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
   adout("Update indir call to: " << callee() << ": " <<
     callee_node.ptsto() << "\n");
 
+  /*
+  llvm::dbgs() << "Update indir call to: " << callee() << ": " <<
+    callee_node.ptsto() << "\n";
+  */
+
   // For each function in the points-to set of the callee pointer:
   for (auto obj_id : callee_node.ptsto()) {
     adout("  obj_id: " << obj_id << "\n");
@@ -1014,16 +1274,38 @@ void AndersIndirCallCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
           // okay, got the dest args... add edges
           adout("  src_arg_id: " << src_arg_id << "\n");
           adout("  dest_arg_id: " << dest_arg_id << "\n");
+
           auto &src_arg_node = graph.getNode(src_arg_id);
-          bool ch = src_arg_node.succs().insert(dest_arg_id);
+          auto &dest_arg_node = graph.getNode(dest_arg_id);
+
+          /*
+          if (dest_arg_node.id() == ObjID(100827) &&
+              src_arg_node.id() == ObjID(112778)) {
+            llvm::dbgs() << "Update indir call to: " << callee() << ": " <<
+              callee_node.ptsto() << "\n";
+            llvm::dbgs() << "  src_arg_id: " << src_arg_id << "\n";
+            llvm::dbgs() << "  src_arg_id_rep: " << src_arg_node.id() << "\n";
+            llvm::dbgs() << "  dest_arg_id: " << dest_arg_id << "\n";
+            llvm::dbgs() << "  dest_arg_id_rep: " << dest_arg_node.id() << "\n";
+          }
+          */
+          /*
+          llvm::dbgs() << "  src_arg_id: " << src_arg_id << "\n";
+          llvm::dbgs() << "  src_arg_id_rep: " << src_arg_node.id() << "\n";
+          llvm::dbgs() << "  dest_arg_id: " << dest_arg_id << "\n";
+          llvm::dbgs() << "  dest_arg_id_rep: " << dest_arg_node.id() << "\n";
+          */
+          bool ch = src_arg_node.addCopyEdge(dest_arg_node.id());
 
           // Also add all of those nodes to our worklist
           if (ch) {
             wl.push(&src_arg_node, priority[src_arg_id.val()]);
           }
-
-          idx++;
+        } else {
+          break;
         }
+
+        idx++;
       }
 
       // Get the rets for these functions (from the graph)
@@ -1031,17 +1313,14 @@ void AndersIndirCallCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
         // Create an edge from their ret to our ret (if we have a ret)
         // ... and push that node to our worklist
         auto &ret_node = graph.getNode(dest_ret);
-        bool ch = ret_node.succs().insert(ret_id);
+        bool ch = ret_node.addCopyEdge(ret_id);
         if (ch) {
           wl.push(&ret_node, priority[dest_ret.val()]);
         }
       }
     } else {
       adout("Couldn't find fcn for: " << obj_id << "\n");
-      /*
-      llvm::dbgs() << "Couldn't find fcn for: " << obj_id << ": " <<
-        ValPrint(obj_id) << "\n";
-        */
+      // llvm::dbgs() << "Couldn't find fcn for: " << obj_id << "\n";
     }
   }
 }

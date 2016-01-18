@@ -46,6 +46,36 @@ class Constraint {
     Constraint(ConstraintType type, ObjID src, ObjID dest, ObjID rep,
         int32_t offs) :
         src_(src), dest_(dest), rep_(rep), type_(type), offs_(offs) {
+
+      static size_t gep_count = 0;
+
+      if (type == ConstraintType::Copy && offs != 0) {
+        gep_count++;
+        if (gep_count % 1000000 == 0) {
+          assert(0);
+        }
+      }
+
+      if (dest == ObjectMap::IntValue) {
+        llvm::dbgs() << "Have dest of intval in cons: " << *this << "\n";
+      }
+
+      if (dest == ObjectMap::UniversalValue) {
+        llvm::dbgs() << "Have dest of UniveralVal in cons: " << *this << "\n";
+      }
+
+      if (src == ObjectMap::IntValue) {
+        llvm::dbgs() << "Have src of intval in cons: " << *this << "\n";
+      }
+
+      if (src == ObjectMap::UniversalValue) {
+        /*
+        static size_t cnt = 0;
+        cnt++;
+        */
+        llvm::dbgs() << "Have src of UniveralVal in cons: " << *this << "\n";
+        // assert(cnt != 2);
+      }
       /*
       // DEBUG
       assert(!(src == ObjectMap::ObjID(2) &&
@@ -295,7 +325,20 @@ class ConstraintGraph {
          return callee_;
        }
 
+       size_t args_size() const {
+         return args_.size();
+       }
+
        typedef std::vector<ObjID>::const_iterator const_iterator;
+       typedef std::vector<ObjID>::iterator iterator;
+
+       iterator begin() {
+         return std::begin(args_);
+       }
+
+       iterator end() {
+         return std::end(args_);
+       }
 
        const_iterator begin() const {
          return std::begin(args_);
@@ -308,7 +351,7 @@ class ConstraintGraph {
      private:
       const bool isPointer_;
       ObjID callee_;
-      const std::vector<ObjID> args_;
+      std::vector<ObjID> args_;
       //}}}
     };
 
@@ -382,6 +425,18 @@ class ConstraintGraph {
 
     const Constraint  &getConstraint(ConsID id) const {
       return *constraints_.at(id.val());
+    }
+
+    size_t getNumConstraints() const {
+      size_t num_cons = 0;
+
+      for (auto &pcons : constraints_) {
+        if (pcons != nullptr) {
+          num_cons++;
+        }
+      }
+
+      return num_cons;
     }
 
     size_t constraintSize() const {

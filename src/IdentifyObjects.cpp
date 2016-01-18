@@ -57,8 +57,12 @@ ObjectMap::ObjID getConstValue(ConstraintGraph &cg, ObjectMap &omap,
           return ObjectMap::getOffsID(obj_id, offs);
         }
       case llvm::Instruction::IntToPtr:
-        return ObjectMap::UniversalValue;
+        // assert(0);
+        // llvm::dbgs() << "getConstValue returns IntValue\n";
+        return ObjectMap::IntValue;
       case llvm::Instruction::PtrToInt:
+        llvm::dbgs() << __LINE__ << ": getConstValue returns IntValue\n";
+        assert(0);
         return ObjectMap::IntValue;
       case llvm::Instruction::BitCast:
         {
@@ -66,6 +70,7 @@ ObjectMap::ObjID getConstValue(ConstraintGraph &cg, ObjectMap &omap,
           // Now, if we cast from a struct to a non-struct, we need to merge
           //   nodes...
 
+          /* FIXME: THis is unsound????
           auto base_type = ce->getOperand(0)->getType();
           assert(llvm::isa<llvm::PointerType>(base_type));
           auto base_nptr_type = base_type->getContainedType(0);
@@ -79,10 +84,8 @@ ObjectMap::ObjID getConstValue(ConstraintGraph &cg, ObjectMap &omap,
             // First, get the structure type
             auto &si = omap.getStructInfo(st);
 
-            /* FIXME: Print a count of this somewhere?
-            llvm::dbgs() << "Adding grouping constraints for struct cast: " <<
-                *c << "\n";
-            */
+            // llvm::dbgs() << "Adding grouping constraints for struct cast: "
+            //     << *c << "\n";
 
             // Then, for each field in the struct type
             for (size_t i = 0; i < si.numSizes(); i++) {
@@ -93,6 +96,7 @@ ObjectMap::ObjID getConstValue(ConstraintGraph &cg, ObjectMap &omap,
             // Now, return the structure type
             return ret_id;
           }
+          */
 
           return base_id;
         }
@@ -101,6 +105,8 @@ ObjectMap::ObjID getConstValue(ConstraintGraph &cg, ObjectMap &omap,
         llvm_unreachable(0);
     }
   } else if (llvm::isa<llvm::ConstantInt>(c)) {
+    // llvm::dbgs() << __LINE__ << ": getConstValue returns IntValue\n";
+    // assert(0);
     return ObjectMap::IntValue;
   } else {
     llvm::errs() << "Const Expr not yet handled: " << *c << "\n";
@@ -121,6 +127,178 @@ ObjectMap::ObjID getValue(ConstraintGraph &cg, ObjectMap &omap,
   // graph.associateNode(id, id);
 
   return id;
+}
+
+// Returns true if unknown, false if known
+bool traceInt(const llvm::Value *val, std::set<const llvm::Value *> &src,
+    std::map<const llvm::Value *, bool> &seen) {
+  auto it = seen.find(val);
+
+  if (it != std::end(seen)) {
+    return it->second;
+  }
+
+  seen[val] = false;
+
+  // llvm::dbgs() << "  Tracing: " << *val << "\n";
+
+  int32_t opcode = 0;
+
+  std::vector<const llvm::Value *> ops;
+
+  if (llvm::isa<llvm::Argument>(val) || llvm::isa<llvm::ConstantInt>(val)) {
+    seen[val] = true;
+    return true;
+  } else if (auto ce = dyn_cast<llvm::ConstantExpr>(val)) {
+    opcode = ce->getOpcode();
+    for (size_t i = 0; i < ce->getNumOperands(); i++) {
+      ops.push_back(ce->getOperand(i));
+    }
+  } else if (auto ins = dyn_cast<llvm::Instruction>(val)) {
+    opcode = ins->getOpcode();
+    for (size_t i = 0; i < ins->getNumOperands(); i++) {
+      ops.push_back(ins->getOperand(i));
+    }
+  } else {
+    llvm_unreachable("Unknown Integeral type");
+  }
+
+  bool ret;
+
+  switch (opcode) {
+    case llvm::Instruction::Invoke:
+    case llvm::Instruction::FPToUI:
+    case llvm::Instruction::FPToSI:
+    case llvm::Instruction::ICmp:
+    case llvm::Instruction::FCmp:
+    case llvm::Instruction::Call:
+    case llvm::Instruction::VAArg:
+    case llvm::Instruction::ExtractElement:
+    case llvm::Instruction::ExtractValue:
+      ret = true;
+      break;
+
+    case llvm::Instruction::PtrToInt:
+      src.insert(ops[0]);
+      ret = false;
+      break;
+
+    // For loads, do what we can...
+    case llvm::Instruction::Load:
+      {
+        // If its a load from a global
+        if (auto gv = dyn_cast<llvm::GlobalVariable>(ops[0])) {
+          auto gi = gv->getInitializer();
+
+          ret = traceInt(gi, src, seen);
+        } else {
+          auto li = cast<llvm::LoadInst>(val);
+
+          auto addr = ops[0];
+          const llvm::Value *source = nullptr;
+
+          auto bb = li->getParent();
+          for (auto &ins : *bb) {
+            if (auto si = dyn_cast<llvm::StoreInst>(&ins)) {
+              if (si->getPointerOperand() == addr) {
+                source = si->getOperand(0);
+              }
+            } else if (auto ld = dyn_cast<llvm::LoadInst>(&ins)) {
+              if (ld == li) {
+                break;
+              }
+            }
+          }
+
+          if (source != nullptr) {
+            ret = traceInt(source, src, seen);
+          } else {
+            ret = true;
+          }
+        }
+        break;
+      }
+    // 1 input arith operations, trace the addr
+    case llvm::Instruction::Shl:
+    case llvm::Instruction::LShr:
+    case llvm::Instruction::AShr:
+    case llvm::Instruction::Trunc:
+    case llvm::Instruction::ZExt:
+    case llvm::Instruction::SExt:
+    case llvm::Instruction::BitCast:
+      {
+        auto op_type = ops[0]->getType();
+
+        if (llvm::isa<llvm::IntegerType>(op_type)) {
+          ret = traceInt(ops[0], src, seen);
+        } else {
+          assert(opcode == llvm::Instruction::BitCast);
+          ret = true;
+        }
+
+        break;
+      }
+    // Binary arithmetic
+    case llvm::Instruction::Add:
+    case llvm::Instruction::Sub:
+    case llvm::Instruction::Mul:
+    case llvm::Instruction::UDiv:
+    case llvm::Instruction::SDiv:
+    case llvm::Instruction::URem:
+    case llvm::Instruction::SRem:
+    case llvm::Instruction::And:
+    case llvm::Instruction::Or:
+    case llvm::Instruction::Xor:
+      ret = traceInt(ops[0], src, seen) &&
+                 traceInt(ops[1], src, seen);
+      break;
+
+    case llvm::Instruction::PHI:
+      ret = false;
+      for (auto op : ops) {
+        auto op_type = op->getType();
+        if (llvm::isa<llvm::IntegerType>(op_type)) {
+          ret |= traceInt(op, src, seen);
+        } else if (llvm::isa<llvm::PointerType>(op_type)) {
+          src.insert(op);
+        } else {
+          ret = true;
+        }
+      }
+      break;
+
+    // Select...
+    case llvm::Instruction::Select:
+      ret = traceInt(ops[0], src, seen) &&
+                 traceInt(ops[1], src, seen);
+      break;
+
+    default:
+      ret = true;
+      llvm_unreachable("Unsupported trace_int operand");
+  }
+
+  seen[val] = ret;
+  return ret;
+}
+
+ObjectMap::ObjID getGlobalInitializer(ConstraintGraph &, CFG &,
+    ObjectMap &, const llvm::GlobalValue &glbl) {
+  ObjectMap::ObjID ret = ObjectMap::UniversalValue;
+
+  auto name = glbl.getName();
+
+  if (name == "stdout") {
+    ret = ObjectMap::StdIOValue;
+  } else if (name == "stderr") {
+    ret = ObjectMap::StdIOValue;
+  } else if (name == "stdin") {
+    ret = ObjectMap::StdIOValue;
+  } else if (name == "environ") {
+    ret = ObjectMap::ArgvValue;
+  }
+
+  return ret;
 }
 
 void identifyAUXFcnCallRetInfo(CFG &cfg,
@@ -732,6 +910,19 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
     }
   }
 
+  // FIXME: There must be a better way to do this?
+  if (F->getName() == "ioctl") {
+    auto va = CS.getArgument(2);
+
+    auto st_id = omap.createPhonyID();
+    auto dest_val = getValue(cg, omap, va);
+    cg.add(ConstraintType::Store, st_id,
+        ObjectMap::IoctlValue,
+        dest_val);
+    addCFGStore(cfg, next_id, st_id);
+    return true;
+  }
+
   llvm::Instruction *I = CS.getInstruction();
   if (I) {
     if (llvm::IntrinsicInst *II = dyn_cast<llvm::IntrinsicInst>(I)) {
@@ -915,10 +1106,10 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
   return offset;
 }
 
+[[ gnu::unused ]]
 static void addConstraintForConstPtr(ConstraintGraph &cg,
     ObjectMap &omap, const llvm::GlobalValue &glbl) {
   bool inserted = false;
-  // NOTE: We don't use a std::for_each here b/c we need to break
   for (auto I = glbl.use_begin(), E = glbl.use_end(); I != E; ++I) {
     auto use = *I;
 
@@ -927,6 +1118,8 @@ static void addConstraintForConstPtr(ConstraintGraph &cg,
       // If its a ptr to int, add an "intvalue"
       if (CE->getOpcode() == llvm::Instruction::PtrToInt) {
         if (!inserted) {
+          llvm::dbgs() << __LINE__ <<
+            ": addConstForConstPtr returns IntValue\n";
           cg.add(ConstraintType::Copy, ObjectMap::IntValue,
             omap.getValue(&glbl));
 
@@ -1034,9 +1227,16 @@ static void addConstraintsForIndirectCall(ConstraintGraph &cg, ObjectMap &omap,
     llvm::isa<llvm::PointerType>(CS.getInstruction()->getType());
   std::vector<ObjectMap::ObjID> args;
   std::for_each(CS.arg_begin(), CS.arg_end(),
-      [&cg, &omap, &args] (const llvm::Use &arg) {
+      [&CS, &cg, &omap, &args] (const llvm::Use &arg) {
     // args.push_back(omap.createPhonyID(arg.get()));
-    args.push_back(getValue(cg, omap, arg.get()));
+    auto val_id = getValue(cg, omap, arg.get());
+    /*
+    if (val_id == ObjectMap::IntValue) {
+      llvm::dbgs() << "Got int value for arg: " << arg.get() << " in call: " <<
+          *CS.getInstruction() <<"\n";
+    }
+    */
+    args.push_back(val_id);
   });
   auto callee_id = omap.getValue(&called_val);
   cg.addIndirectCall(call_id, is_pointer, callee_id, std::move(args));
@@ -1102,9 +1302,17 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
       // And we get one!
       if (llvm::isa<llvm::PointerType>((*ArgI)->getType())) {
         // llvm::dbgs() << "Adding arg copy!\n";
+        // llvm::dbgs() << "Callinst: " << *CS.getInstruction() << "\n";
         auto node_id = omap.createPhonyID();
         auto dest_id = getValue(cg, omap, FargI);
         auto src_id = getValue(cg, omap, *ArgI);
+        /*
+        if (src_id == ObjectMap::UniversalValue ||
+            src_id == ObjectMap::IntValue) {
+          llvm::dbgs() << "  src is: " << ValPrint(src_id) << "for call: " <<
+            *CS.getInstruction() << "\n";
+        }
+        */
 
         cg.add(ConstraintType::Copy, node_id, src_id, dest_id);
       // But if its not a pointer type...
@@ -1120,6 +1328,8 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
         llvm::dbgs() << "FargI is: " << FargI->getName() << "\n";
         */
 
+        llvm::dbgs() << __LINE__ <<
+          ": addConstForDirectCall returns IntValue\n";
         cg.add(ConstraintType::Copy, node_id, ObjectMap::IntValue,
             dest_id);
       }
@@ -1380,6 +1590,7 @@ static void idLoadInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
       //   phony id
       auto ld_id = getValue(cg, omap, &ld);
 
+      llvm::dbgs() << __LINE__ << ": Load int into pointer\n";
       cg.add(ConstraintType::Load, ld_id,
           getValue(cg, omap, ld.getOperand(0)),
           ObjectMap::IntValue);
@@ -1412,6 +1623,8 @@ static void idStoreInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
   dout("store is: " << ValPrint(st_id) << "\n");
   dout("arg(0) is: " << *st.getOperand(0) << "\n");
   dout("arg(1) is: " << *st.getOperand(1) << "\n");
+
+  auto dest_type = dyn_cast<llvm::PointerType>(st.getOperand(1)->getType());
 
   if (llvm::isa<llvm::PointerType>(st.getOperand(0)->getType())) {
     // Store from ptr
@@ -1446,18 +1659,30 @@ static void idStoreInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
   // put int value into the int pool
   } else if (llvm::isa<llvm::IntegerType>(st.getOperand(0)->getType()) &&
       llvm::isa<llvm::PointerType>(st.getOperand(1)->getType())) {
-    // auto dest = omap.getObject(st.getOperand(1));
-    auto dest = getValue(cg, omap, st.getOperand(1));
-    if (dest == ObjectMap::NullValue) {
-      // If this is not an object, store to the value
-      dest = getValue(cg, omap, st.getOperand(1));
-      dout("No object for store dest: " << dest << " : " <<
-        ValPrint(dest) << "\n");
+    if (!llvm::isa<llvm::IntegerType>(dest_type->getContainedType(0))) {
+      // auto dest = omap.getObject(st.getOperand(1));
+      auto dest = getValue(cg, omap, st.getOperand(1));
+      if (dest == ObjectMap::NullValue) {
+        // If this is not an object, store to the value
+        dest = getValue(cg, omap, st.getOperand(1));
+        dout("No object for store dest: " << dest << " : " <<
+          ValPrint(dest) << "\n");
+      }
+
+      llvm::dbgs() << __LINE__ << ": Store int into pointer: " <<
+        st << "\n";
+      cg.add(ConstraintType::Store,
+          st_id,
+          ObjectMap::IntValue,
+          dest);
+    } else {
+      /*
+      llvm::dbgs() << "Skipping Universal Cons for store to int *: " << st <<
+        "\n";
+      */
+      // NOTE: We must return here, because we didn't acutlaly add a store!
+      return;
     }
-    cg.add(ConstraintType::Store,
-        st_id,
-        ObjectMap::IntValue,
-        dest);
   // Poop... structs
   } else if (llvm::isa<llvm::StructType>(st.getOperand(0)->getType())) {
     llvm::errs() << "FIXME: Ignoring struct store\n";
@@ -1493,12 +1718,22 @@ static void idGEPInst(ConstraintGraph &cg, ObjectMap &omap,
   dout("  src_offs: " << src_offs << "\n");
   dout("  src_id: " << src_id << "\n");
 
+  /*
+  static size_t gep_count = 0;
+  gep_count++;
+  if (gep_count % 100000 == 0) {
+    assert(0);
+  }
+  */
+
   cg.add(ConstraintType::Copy,
       gep_id,
       src_id,
       src_offs);
 }
 
+// FIXME: remove?
+[[ gnu::unused ]]
 static void idP2IInst(ConstraintGraph &cg, ObjectMap &omap,
     const llvm::Instruction &inst) {
   // ddevec - FIXME: Could trace through I2P here, by keeping a listing
@@ -1506,7 +1741,7 @@ static void idP2IInst(ConstraintGraph &cg, ObjectMap &omap,
   // sfs does this, Andersens doesn't.
 
   auto val = getValue(cg, omap, inst.getOperand(0));
-  cg.addP2ICast(&inst, val);
+  // cg.addP2ICast(&inst, val);
 
   // If this I instruction is only used by I2P instrs, don't make a constraint
   // for it...
@@ -1524,6 +1759,10 @@ static void idP2IInst(ConstraintGraph &cg, ObjectMap &omap,
   });
 
   if (non_i2p) {
+    /*
+    llvm::dbgs() << __LINE__ << ": p2i pointer into int for: " << inst << "\n";
+    */
+    llvm::dbgs() << __LINE__ << ": p2i pointer into int\n";
     cg.add(ConstraintType::Copy,
         ObjectMap::IntValue, val);
   }
@@ -1540,15 +1779,32 @@ static void idI2PInst(ConstraintGraph &cg, ObjectMap &omap,
   // int value
 
   auto dest_val = omap.getValue(&inst);
-  auto src_val = ObjectMap::IntValue;
 
+  /*
   auto it = cg.findP2ICast(inst.getOperand(0));
   if (it != cg.p2icast_end()) {
     src_val = it->second;
   }
+  */
 
-  cg.add(ConstraintType::Copy,
-      dest_val, src_val);
+  std::set<const llvm::Value *> src;
+  std::map<const llvm::Value *, bool> seen;
+
+  // llvm::dbgs() << "Start trace\n";
+  bool has_i2p = traceInt(inst.getOperand(0), src, seen);
+  // llvm::dbgs() << "Finish trace\n";
+  seen.clear();
+
+  for (auto val : src) {
+    cg.add(ConstraintType::Copy,
+        dest_val, getValue(cg, omap, val));
+  }
+
+  if (has_i2p) {
+    // llvm::dbgs() << __LINE__ << ": i2p int into pointer " << inst << "\n";
+    cg.add(ConstraintType::Copy,
+        dest_val, ObjectMap::IntValue);
+  }
 }
 
 static void idBitcastInst(ConstraintGraph &cg, ObjectMap &omap,
@@ -1617,6 +1873,7 @@ static void idExtractInst(ConstraintGraph &cg, ObjectMap &omap,
         omap.getValue(&extract_inst),
         ObjectMap::AggregateValue);
   } else if (llvm::isa<llvm::IntegerType>(extract_inst.getType())) {
+    llvm::dbgs() << __LINE__ << ": EXTRACT INT?\n";
     cg.add(ConstraintType::Copy,
         ObjectMap::IntValue,
         ObjectMap::AggregateValue);
@@ -1633,6 +1890,7 @@ static void idInsertInst(ConstraintGraph &cg, ObjectMap &omap,
         ObjectMap::AggregateValue,
         getValue(cg, omap, src_val));
   } else if (llvm::isa<llvm::IntegerType>(src_val->getType())) {
+    llvm::dbgs() << __LINE__ << ": INSERT INT?\n";
     cg.add(ConstraintType::Copy,
         ObjectMap::AggregateValue,
         ObjectMap::IntValue);
@@ -1737,7 +1995,10 @@ void processBlock(const UnusedFunctions &unused_fcns,
         break;
       case llvm::Instruction::PtrToInt:
         assert(!is_ptr);
+        // FIXME: Is this sound?...
+        /*
         idP2IInst(cg, omap, inst);
+        */
         break;
       case llvm::Instruction::IntToPtr:
         assert(is_ptr);
@@ -1958,13 +2219,15 @@ bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
     addCFGStore(cfg, &node_id, st_id);
 
     cfg.addPred(CFG::CFGArgvEnd, node_id);
+  }
 
-    // FIXME: Andersen's can get confused by some I2P operations which store
-    // argv into an intptr when it was expecting the universal value (this is
-    // because my constraints pass this information more precisely than
-    // andersens),  So I add an alias to clean that up, until I can teach
-    // andersens to handle it cleanly
-    omap.addObjAlias(ObjectMap::UniversalValue, ObjectMap::ArgvObjectObject);
+  // Constraints for stdio
+  {
+    // Create a fileio struct:
+    auto obj = omap.createPhonyObjectIDs(M.getTypeByName("struct._IO_FILE"));
+
+    cg.add(ConstraintType::AddressOf,
+        ObjectMap::StdIOValue, obj);
   }
 
   // Constraints for ctype values
@@ -2015,14 +2278,9 @@ bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
       //   value points to nothing...
     } else if (glbl.hasInitializer()) {
       dout("Adding glbl initializer for: " << glbl << "\n");
+      // llvm::dbgs() << "Adding glbl initializer for: " << glbl << "\n";
       addGlobalInitializerConstraints(cg, cfg, omap, val_id,
         glbl.getInitializer());
-
-      // If the global is a pointer constraint, it needs a const ptr
-      //   (as it has an initializer)
-      if (llvm::isa<llvm::PointerType>(glbl.getType())) {
-        addConstraintForConstPtr(cg, omap, glbl);
-      }
     // Doesn't have initializer
     } else {
       if (glbl.hasInitializer()) {
@@ -2031,11 +2289,19 @@ bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
         // Ugh, how do I handle this guy?
         // Well, we get the constant value out of it
       } else {
-        cg.add(ConstraintType::Copy, omap.getValue(&glbl),
-            ObjectMap::UniversalValue);
+        auto glbl_val = getGlobalInitializer(cg, cfg, omap, glbl);
 
-        // Also store the universal value into this
-        addGlobalInit(cg, cfg, omap, ObjectMap::UniversalValue,
+        if (glbl_val == ObjectMap::UniversalValue) {
+          llvm::dbgs() << "FIXME: Global Init -- universal value -- global: " <<
+            glbl.getName() << "\n";
+        }
+        /*
+        cg.add(ConstraintType::Copy, omap.getValue(&glbl),
+            glbl_val);
+        */
+
+        // Also store the value into this
+        addGlobalInit(cg, cfg, omap, glbl_val,
             omap.getValue(&glbl));
       }
     }
@@ -2054,7 +2320,7 @@ bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
           getValue(cg, omap, &fcn), obj_id);
 
       // Functions are constant pointers
-      addConstraintForConstPtr(cg, omap, fcn);
+      // addConstraintForConstPtr(cg, omap, fcn);
     }
   }
 
@@ -2277,14 +2543,7 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
           // Add objects for this call...
           // llvm::dbgs() << "adding indirect objects: " << inst << "\n";
 
-          std::vector<ObjectMap::ObjID> alias_ptsto;
-          auto &aux_ptsto = aux.getPointsTo(omap.getValue(ci));
-          // Convert aux_ptsto to our ptsto
-          for (auto aux_id : aux_ptsto) {
-            alias_ptsto.push_back(aux_id);
-          }
-
-          omap.addObjectsAlias(inferred_type, &inst, alias_ptsto);
+          omap.addObjects(inferred_type, &inst);
           auto src_obj_id = omap.getObject(&inst);
           /*
           llvm::dbgs() << "  got source object: " << src_obj_id << "\n";

@@ -22,7 +22,7 @@ class AndersCons {
  public:
   typedef ObjectMap::ObjID ObjID;
 
-  enum class Kind {
+  enum class Kind : int32_t {
     Store,
     Load,
     IndirCall,
@@ -56,7 +56,7 @@ class AndersCons {
   AndersCons(Kind kind, ObjID src, ObjID dest) :
     AndersCons(kind, src, dest, 0) { }
   AndersCons(Kind kind, ObjID src, ObjID dest, int32_t offs) :
-    kind_(kind), src_(src), dest_(dest), offs_(offs) { }
+      kind_(kind), src_(src), dest_(dest), offs_(offs) { }
 
   AndersCons(AndersCons &&) = default;
   AndersCons(const AndersCons &) = default;
@@ -119,6 +119,10 @@ class AndersIndirCallCons : public AndersCons {
     return src();
   }
 
+  static bool classof(const AndersCons *c) {
+    return c->getKind() == AndersCons::Kind::IndirCall;
+  }
+
   void process(AndersGraph &graph, Worklist<AndersNode> &wl,
       const std::vector<uint32_t> &priority) const override;
 
@@ -131,181 +135,6 @@ class AndersNode {
   //{{{
  public:
   typedef ObjectMap::ObjID ObjID;
-
-  // Internal types {{{
-  class EdgeSet {
-    //{{{
-   public:
-    EdgeSet() = default;
-
-    bool insert(ObjID id) {
-      return insert(id, 0);
-    }
-
-    bool insert(ObjID id, int32_t offs) {
-      edges_.emplace_back(id, offs);
-      return true;
-    }
-
-    bool insert(EdgeSet &rhs) {
-      edges_.insert(std::end(edges_),
-          std::begin(rhs), std::end(rhs));
-      return true;
-    }
-
-    void clear() {
-      edges_.clear();
-    }
-
-    bool empty() const {
-      return edges_.empty();
-    }
-
-    size_t size() const {
-      return edges_.size();
-    }
-
-    std::pair<ObjID, int32_t> &getEdge(size_t idx) {
-      return edges_[idx];
-    }
-
-    const std::pair<ObjID, int32_t> &getEdge(size_t idx) const {
-      return edges_[idx];
-    }
-
-    void removeEdge(size_t idx) {
-      edges_[idx] = edges_.back();
-      edges_.pop_back();
-    }
-
-    bool operator==(const EdgeSet &rhs) const {
-      return (edges_ == rhs.edges_);
-    }
-
-    bool operator|=(EdgeSet &rhs) {
-      bool ret = false;
-
-      ret = insert(rhs);
-      return ret;
-    }
-
-    typedef std::vector<std::pair<ObjID, int32_t>>::iterator iterator;
-    typedef std::vector<std::pair<ObjID, int32_t>>::const_iterator
-      const_iterator;
-    /*
-    // The iterator deduplicates the list as it iterates
-    class iterator :
-        public std::iterator<std::forward_iterator_tag,
-            std::pair<ObjID, int32_t>> {
-     public:
-      typedef std::iterator<std::forward_iterator_tag,
-                  std::pair<ObjID, int32_t>> iter_base;
-
-      iterator(std::vector<std::pair<ObjID, int32_t>> &v, bool end) :
-             v_(v), pos_(0), isEnd_(end) { }
-
-      explicit iterator(std::vector<std::pair<ObjID, int32_t>> &v) :
-             iterator(v, false) { }
-
-      iterator &operator++() {
-        ++pos_;
-        dedupCur();
-        return *this;
-      }
-
-      iterator &operator--() {
-        --pos_;
-        dedupCur();
-        return *this;
-      }
-
-      bool operator==(const iterator &rhs) const {
-        if (isEnd_ && rhs.isEnd_) {
-          return true;
-        } else if (isEnd_) {
-          return rhs.pos_ == rhs.v_.size();
-        } else if (rhs.isEnd_) {
-          return pos_ == v_.size();
-        } else {
-          return rhs.pos_ == pos_;
-        }
-      }
-
-      bool operator!=(const iterator &rhs) const {
-        if (isEnd_ && rhs.isEnd_) {
-          return false;
-        } else if (isEnd_) {
-          return rhs.pos_ != rhs.v_.size();
-        } else if (rhs.isEnd_) {
-          return pos_ != v_.size();
-        } else {
-          return rhs.pos_ != pos_;
-        }
-      }
-
-      iter_base::reference operator*() {
-        return v_[pos_];
-      }
-
-      iter_base::pointer operator->() {
-        return &v_[pos_];
-      }
-
-     private:
-      void dedupCur() {
-        bool check_failed;
-        do {
-          check_failed = false;
-          auto &pr = v_[pos_];
-          if (pr.second == 0) {
-            auto it = dedup_.find(pr.first);
-            if (it != std::end(dedup_)) {
-              v_[pos_] = v_.back();
-              v_.pop_back();
-              check_failed = true;
-            }
-          }
-        } while (check_failed);
-      }
-
-      std::set<ObjID> dedup_;
-      std::vector<std::pair<ObjID, int32_t>> &v_;
-      size_t pos_;
-      bool isEnd_;
-    };
-    */
-
-    iterator begin() {
-      return std::begin(edges_);
-    }
-
-    iterator end() {
-      return std::end(edges_);
-    }
-
-    /*
-    const_iterator begin() const {
-      return std::begin(edges_);
-    }
-
-    const_iterator end() const {
-      return std::end(edges_);
-    }
-
-    const_iterator cbegin() const {
-      return std::begin(edges_);
-    }
-
-    const_iterator cend() const {
-      return std::end(edges_);
-    }
-    */
-
-   private:
-    std::vector<std::pair<ObjID, int32_t>> edges_;
-    //}}}
-  };
-  //}}}
 
   // Constructors {{{
   explicit AndersNode(ObjID id) : id_(id), rep_(id) { }
@@ -334,8 +163,12 @@ class AndersNode {
     return ptsto_;
   }
 
-  EdgeSet &succs() {
-    return succs_;
+  const Bitmap &copySuccs() const {
+    return copySuccs_;
+  }
+
+  std::vector<std::pair<ObjID, int32_t>> &gepSuccs() {
+    return gepSuccs_;
   }
 
   bool updated() const {
@@ -352,12 +185,36 @@ class AndersNode {
   //}}}
 
   // Modifiers {{{
+  void setCopySuccs(Bitmap new_copy_succs) {
+    copySuccs_ = std::move(new_copy_succs);
+  }
+
+  bool addCopyEdge(ObjID dest_id) {
+    bool ret = false;
+    // Don't add edges to/from int value, or to yourself
+    if (id() != ObjectMap::IntValue &&
+        dest_id != ObjectMap::IntValue &&
+        dest_id != id()) {
+      ret = copySuccs_.test_and_set(dest_id.val());
+    }
+    return ret;
+  }
+
   void setRep(ObjID new_rep) {
     rep_ = new_rep;
   }
 
   void addCons(std::unique_ptr<AndersCons> cons) {
     constraints_.emplace_back(std::move(cons));
+  }
+
+  bool addSucc(ObjID obj, int32_t offs) {
+    if (offs == 0) {
+      return copySuccs_.test_and_set(obj.val());
+    } else {
+      gepSuccs_.emplace_back(obj, offs);
+      return true;
+    }
   }
   //}}}
 
@@ -369,10 +226,20 @@ class AndersNode {
         std::back_inserter(constraints_));
     rhs.constraints_.clear();
 
-    succs_ |= rhs.succs_;
+    copySuccs_ |= rhs.copySuccs_;
+    gepSuccs_.insert(std::end(gepSuccs_),
+        std::begin(rhs.gepSuccs_), std::end(rhs.gepSuccs_));
+
     strong_ &= rhs.strong_;
     ptsto_ |= rhs.ptsto_;
+
     oldPtsto_.clear();
+
+    // Free up some memory
+    rhs.ptsto_.clear();
+    rhs.oldPtsto_.clear();
+    rhs.copySuccs_.clear();
+    rhs.gepSuccs_.clear();
   }
 
   // And the visit function!
@@ -392,7 +259,8 @@ class AndersNode {
   bool strong_;
 
   // Edges:
-  EdgeSet succs_;
+  Bitmap copySuccs_;
+  std::vector<std::pair<ObjID, int32_t>> gepSuccs_;
 
   PtstoSet ptsto_;
   PtstoSet oldPtsto_;
@@ -458,6 +326,7 @@ class AndersGraph {
       std::for_each(fcn.arg_begin(), fcn.arg_end(),
           [&args, &omap, &max_id] (const llvm::Argument &arg) {
         auto arg_id = omap.getValueRep(&arg);
+        assert(arg_id == omap.getRep(arg_id));
 
         args.push_back(arg_id);
 
@@ -562,7 +431,7 @@ class AndersGraph {
         case ConstraintType::Copy:
           {
             auto &node = getNode(cons.src());
-            node.succs().insert(cons.dest(), cons.offs());
+            node.addSucc(cons.dest(), cons.offs());
             break;
           }
         default:
@@ -601,11 +470,11 @@ class AndersGraph {
     });
   }
 
-  void setStructInfo(const std::map<ObjID, int32_t> info) {
+  void setStructInfo(const ObjectMap::StructMap &info) {
     structInfo_ = info;
   }
 
-  const std::map<ObjID, int32_t> &getStructInfo() const {
+  const ObjectMap::StructMap &getStructInfo() const {
     return structInfo_;
   }
 
@@ -644,7 +513,7 @@ class AndersGraph {
   std::vector<AndersNode> nodes_;
 
   std::map<ObjID, std::pair<ObjID, std::vector<ObjID>>> fcns_;
-  std::map<ObjID, int32_t> structInfo_;
+  ObjectMap::StructMap structInfo_;
 };
 
 #endif  // INCLUDE_ANDERSHELPERS_H_

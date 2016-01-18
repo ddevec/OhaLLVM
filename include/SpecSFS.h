@@ -134,6 +134,7 @@ class SpecSFS : public llvm::ModulePass,
 
   AssumptionSet specAssumptions_;
 
+  /*
   ObjectMap::ObjID getObjIDRep(ObjectMap::ObjID id) {
     auto it = obj_to_rep_.find(id);
     if (it == std::end(obj_to_rep_)) {
@@ -147,6 +148,7 @@ class SpecSFS : public llvm::ModulePass,
   void setObjIDRep(ObjectMap::ObjID id, ObjectMap::ObjID rep) {
     obj_to_rep_[id] = rep;
   }
+  */
 
   std::map<ObjectMap::ObjID, ObjectMap::ObjID> obj_to_rep_;
   //}}}

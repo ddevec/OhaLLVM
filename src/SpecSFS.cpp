@@ -213,6 +213,16 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     graph.fillTopLevel(cg, omap);
   }
 
+
+  /*
+  llvm::dbgs() << "ID 100827 is: " << FullValPrint(ObjectMap::ObjID(100827)) <<
+    "\n";
+  llvm::dbgs() << "ID 101052 is: " << FullValPrint(ObjectMap::ObjID(101052)) <<
+    "\n";
+  llvm::dbgs() << "ID 112793 is: " << FullValPrint(ObjectMap::ObjID(112793)) <<
+    "\n";
+  */
+
   // Now that we've filled in the top level constraint graph, we add in dynamic
   //   info (If we're using speculative optimizations)
   std::map<ObjectMap::ObjID, Bitmap> dyn_pts;
@@ -415,7 +425,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     llvm::dbgs() << "Printing the rep mappings for top level variales:\n";
     for (auto &pr : obj_to_rep_) {
       auto obj_id = pr.first;
-      auto rep_id = getObjIDRep(obj_id);
+      auto rep_id = omap.getRep(obj_id);
 
       llvm::dbgs() << obj_id << "->" << rep_id << "\n";
     }
@@ -610,8 +620,8 @@ llvm::AliasAnalysis::AliasResult SpecSFS::alias(const Location &L1,
                                             const Location &L2) {
   auto obj_id1 = omap_.getValue(L1.Ptr);
   auto obj_id2 = omap_.getValue(L2.Ptr);
-  auto rep_id1 = getObjIDRep(obj_id1);
-  auto rep_id2 = getObjIDRep(obj_id2);
+  auto rep_id1 = omap_.getRep(obj_id1);
+  auto rep_id2 = omap_.getRep(obj_id2);
   auto pts1_it = pts_top_.find(rep_id1);
   auto pts2_it = pts_top_.find(rep_id2);
 

@@ -37,6 +37,8 @@ class ObjectMap {
     // NOTE: I use int32_t for size reasons
     struct omap_id { };
     typedef util::ID<omap_id, int32_t, -1> ObjID;
+
+    typedef std::unordered_map<ObjID, int32_t, ObjID::hasher> StructMap;
     //}}}
 
     // Exported Constant ObjIDs {{{
@@ -64,6 +66,8 @@ class ObjectMap {
       eTermInfoObject = 12,
       eArgvObject = 13,
       eArgvObjectObject = 14,
+      eStdIOValue = 15,
+      eIoctlValue = 16,
       eNumDefaultObjs
     } DefaultObjs;
 
@@ -83,6 +87,9 @@ class ObjectMap {
     static const ObjID TermInfoObject;
     static const ObjID ArgvObject;
     static const ObjID ArgvObjectObject;
+    static const ObjID StdIOObject;
+    static const ObjID StdIOValue;
+    static const ObjID IoctlValue;
     //}}}
 
     static constexpr ObjID getOffsID(ObjID id, int32_t offs) {
@@ -286,6 +293,35 @@ class ObjectMap {
       return ret;
     }
 
+    ObjID createPhonyObjectIDs(const llvm::Type *type) {
+      while (auto at = dyn_cast<llvm::ArrayType>(type)) {
+        type = at->getElementType();
+      }
+
+      if (auto st = dyn_cast<llvm::StructType>(type)) {
+        auto &struct_info = getStructInfo(st);
+
+        int num_sizes = struct_info.size();
+        assert(num_sizes > 0);
+
+        int cur_size = 0;
+
+        auto ret = createMapping(nullptr);
+        objIsStruct_.emplace(ret, num_sizes);
+
+        for (int i = 1; i < num_sizes; i++) {
+          auto id = createMapping(nullptr);
+
+          objIsStruct_.emplace(id, num_sizes - i);
+          cur_size++;
+        }
+
+        return ret;
+      } else {
+        return createMapping(nullptr);
+      }
+    }
+
     ObjID createPhonyObjectID(const llvm::Value *val) {
       auto ret = createMapping(val);
 
@@ -304,22 +340,7 @@ class ObjectMap {
     }
 
     void mergeObjRep(ObjID orig_id, ObjID new_id) {
-      // if (isValue(orig_id) && isValue(new_id)) {
-        reps_.merge(orig_id, new_id);
-      /*
-      } else {
-        llvm::dbgs() << "      Ignored merge: " << orig_id << ", " << new_id <<
-          "\n";
-      }
-      */
-      /*
-      auto val = valueAtID(orig_id);
-
-      // Only merge non-object and non-specials
-      if (isValue(orig_id)) {
-        valToID_[val] = new_id;
-      }
-      */
+      reps_.merge(orig_id, new_id);
     }
 
     void addValues(const llvm::Type *type, const llvm::Value *val) {
@@ -334,12 +355,14 @@ class ObjectMap {
       __do_add_struct(type, val, objToID_, idToObj_, nullptr);
     }
 
+/*
     void addObjectsAlias(const llvm::Type *type, const llvm::Value *val,
         const std::vector<ObjID> &alias) {
       llvm::dbgs() << __func__ <<
         " WARNING: This may not interact well w/ dyn-ptsto info\n";
       __do_add_struct(type, val, objToID_, idToObj_, &alias);
     }
+*/
 
     // Allocation site
     void addObject(const llvm::Value *val) {
@@ -358,7 +381,7 @@ class ObjectMap {
     //}}}
 
     // Value Retrieval {{{
-    const std::map<ObjID, int32_t> &getIsStructSet() const {
+    const StructMap &getIsStructSet() const {
       return objIsStruct_;
     }
 
@@ -384,6 +407,8 @@ class ObjectMap {
         o << "(Argv val object)";
       } else if (id == ArgvValue) {
         o << "(Argv)";
+      } else if (id == StdIOValue) {
+        o << "(stdio)";
       } else if (id == ArgvObject) {
         o << "(Argv object)";
       } else if (id == ArgvObjectObject) {
@@ -444,7 +469,7 @@ class ObjectMap {
           llvm::isa<llvm::GlobalValue>(val));
 
       auto id = __do_get(val, valToID_);
-      auto ret = reps_.find(id);
+      auto ret = getRep(id);
       return ret;
     }
 
@@ -476,7 +501,7 @@ class ObjectMap {
       auto id = __do_get(val, objToID_);
 
       // Objects should never be merged
-      assert(reps_.find(id) == id);
+      assert(getRep(id) == id);
 
       return id;
     }
@@ -502,13 +527,13 @@ class ObjectMap {
 
     ObjID getReturnRep(const llvm::Value *val) const {
       auto id = __do_get(val, retToID_);
-      auto ret = reps_.find(id);
+      auto ret = getRep(id);
       return ret;
     }
 
     ObjID getVarArgRep(const llvm::Value *val) const {
       auto id = __do_get(val, vargToID_);
-      auto ret = reps_.find(id);
+      auto ret = getRep(id);
       return ret;
     }
 
@@ -713,7 +738,7 @@ class ObjectMap {
     std::map<const llvm::StructType *, StructInfo> structInfo_;
     std::map<ObjID, std::vector<ObjID>> objToAliases_;
     std::map<ObjID, ObjID> aliasToObjs_;
-    std::map<ObjID, int32_t> objIsStruct_;
+    StructMap objIsStruct_;
     const StructInfo *maxStructInfo_ = nullptr;
     ///}}}
 
@@ -785,7 +810,7 @@ class ObjectMap {
           pm.emplace(id, val);
 
 
-          objIsStruct_.emplace(id, num_sizes-cur_size);
+          objIsStruct_.emplace(id, num_sizes - cur_size);
           cur_size++;
           // Denote which objects this structure field occupies
           if (alias == nullptr) {
@@ -1032,6 +1057,8 @@ class FullValPrint {
           o << fcn->getName();
         } else if (auto bb = dyn_cast<const llvm::BasicBlock>(val)) {
           o << bb->getParent()->getName() << ": " << bb->getName();
+        } else if (auto arg = dyn_cast<const llvm::Argument>(val)) {
+          o << arg->getParent()->getName() << ": " << *val;
         } else if (auto ins = dyn_cast<const llvm::Instruction>(val)) {
           o << ins->getParent()->getParent()->getName() << ": " << *val;
         } else {
