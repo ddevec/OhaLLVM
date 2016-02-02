@@ -52,9 +52,22 @@ ObjectMap::ObjID getConstValue(ConstraintGraph &cg, ObjectMap &omap,
         {
           // Need to calc offset here...
           // But this encounters obj vs value issues...
+
           auto offs = getGEPOffs(omap, *ce);
           auto obj_id = getConstValue(cg, omap, ce->getOperand(0));
+
+          // Now we need to get a gep to convert this value to the gep'd offset:
+          auto gep_id = omap.createPhonyID(nullptr);
+          cg.add(ConstraintType::Copy,
+              gep_id,
+              obj_id,
+              offs);
+
+          return gep_id;
+
+          /*
           return ObjectMap::getOffsID(obj_id, offs);
+          */
         }
       case llvm::Instruction::IntToPtr:
         // assert(0);
@@ -1495,14 +1508,22 @@ static void addConstraintForType(ConstraintType ctype,
   if (auto st = dyn_cast<llvm::StructType>(type)) {
     auto &si = omap.getStructInfo(st);
 
-    for (size_t i = 0; i < si.numSizes(); i++) {
-      // Add an addr of to this offset
-      dout("Adding AddressOf for struct.  Dest: " << dest << ", src "
-        << src_obj << " + " << i << "\n");
-      auto cons_id = cg.add(ctype, dest, src_obj, i);
+    // Only create one addressof object, per alloc
+    if (ctype == ConstraintType::AddressOf) {
+      auto cons_id = cg.add(ctype, dest, src_obj, 0);
       auto &cons = cg.getConstraint(cons_id);
       // Update strength as appropriate
-      cons.setStrong(strong && si.fieldStrong(i));
+      cons.setStrong(strong && si.fieldStrong(0));
+    } else {
+      for (size_t i = 0; i < si.numSizes(); i++) {
+        // Add an addr of to this offset
+        dout("Adding AddressOf for struct.  Dest: " << dest << ", src "
+          << src_obj << " + " << i << "\n");
+        auto cons_id = cg.add(ctype, dest, src_obj, i);
+        auto &cons = cg.getConstraint(cons_id);
+        // Update strength as appropriate
+        cons.setStrong(strong && si.fieldStrong(i));
+      }
     }
   } else {
     // No offs defaults to 0 in offs column, which is what we want for a
@@ -2095,16 +2116,12 @@ bool ConstraintPass::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
   // Id all globals
   std::for_each(M.global_begin(), M.global_end(),
       [&omap](const llvm::Value &glbl) {
-    // addValues (note valueS) takes into account structure fields.  We do this
-    // for values on global variables because they can be statically accessed by
-    // constant expressions.  ObjectS are also treated this way, and are treated
-    // for staic/heap allocations
     assert(llvm::isa<llvm::PointerType>(glbl.getType()));
     auto type = glbl.getType()->getContainedType(0);
 
     // llvm::dbgs() << "adding global: " << glbl << " to omap!\n";
 
-    omap.addValues(type, &glbl);
+    omap.addValue(&glbl);
     omap.addObjects(type, &glbl);
   });
 

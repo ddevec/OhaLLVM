@@ -169,89 +169,6 @@ class PerfTimerPrinter {
 };
 //}}}
 
-/*
-// Union-find data structure {{{
-template<typename v_type>
-class UnionFind {
- public:
-  // Typedefs {{{
-  typedef v_type value_type;
-  typedef v_type & reference;
-  typedef const v_type & const_reference;
-  typedef v_type * pointer;
-  typedef const v_type * const_pointer;
-  //}}}
-  
-  // Constructors {{{
-  UnionFind() = default;
-  UnionFind(const UnionFind &rhs) {
-    data_.reserve(data_.size());
-    for (auto &node : data) {
-      data_.emplace_back(node);
-    }
-  }
-
-  UnionFind(UnionFind &&rhs) = default;
-
-  UnionFind &operator=(const UnionFind &rhs) {
-    data_.reserve(data_.size());
-    for (auto &node : data) {
-      data_.emplace_back(node);
-    }
-  }
-
-  UnionFind &operator=UnionFind(UnionFind &&rhs) = default;
-  //}}}
-
-  // Modifiers {{{
-  iterator emplace_back
-  // }}}
-
- private:
-  class Node {
-    //{{{
-   public:
-    static size_t NODE_REP = std::numeric_limits<size_t>::max;
-
-    Node() = default;
-    Node(const value_type &data) : data_(new value_type(data)) { }
-    Node(value_type &&data) : data_(new value_type(data)) { }
-
-    template<typename... va_args>
-    Node(va_args&&... args) :
-      data_(new value_type(std::forward<va_args>(args)...)) { }
-
-    const_reference data() const {
-      return data_;
-    }
-
-    reference data() {
-      return data_;
-    }
-
-    bool isRep() const {
-      return rep_ == NODE_REP;
-    }
-
-    size_t rep() const {
-      return rep_;
-    }
-
-    void setRep(size_t rep) const {
-      rep_ = rep;
-    }
-
-   private:
-    std::unqiue_ptr<value_type> data_;
-    mutable size_t rep_ = NODE_REP;
-    //}}}
-  };
-
-  std::vector<Node> data_;
-};
-//}}}
-*/
-
 // map Key/Value iteration {{{
 // Value Iterators {{{
 template<class map_iterator>
@@ -749,6 +666,37 @@ class UnionFindNoRank {
   std::vector<id_type> ids_;
 };
 //}}}
+
+/*
+// Sparse BitMap {{{
+template <typename id_type, size_t bits_per_field = 128>
+class SparseBitmap {
+ private:
+   struct Node {
+     size_t index;
+     bitmap map;
+   };
+ public:
+  typedef typename std::bitset<bits_per_field> bitmap;
+  typedef typename std::forward_list<bitmap> bitmap_list;
+
+  SparseBitmap() = default;
+
+  bool test(id_type test_id) const {
+  }
+
+ private:
+  bitmap_list::iterator findIndex(id_type id) {
+    auto idx = static_cast<size_t>(id) / (bits__per_field);
+
+    if (last_elm
+  }
+
+  bitmap_list elms_;
+  bitmap_list::iterator lastElm_;
+};
+//}}}
+*/
 }  // namespace util
 
 #endif  // INCLUDE_UTIL_H_

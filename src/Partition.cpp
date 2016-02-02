@@ -158,34 +158,37 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
 
   // FIXME: Maybe I could get this from the object map?
   ObjectMap::ObjID max_id(0);
-  std::for_each(cfg.obj_to_cfg_begin(), cfg.obj_to_cfg_end(),
-      [&aux, &omap, &dug, &max_id]
-      (const std::pair<const ObjectMap::ObjID, CFG::CFGid> &pr) {
-    // Get info about this node
-    /*
-    auto rep_id = omap.getRep(pr.first);
-    llvm::dbgs() << "Getting node with rep: " << rep_id << " recorded id: " <<
-        pr.first << "\n";
-    */
-    // llvm::dbgs() << "Getting node: " << pr.first << "\n";
-    auto &node = dug.getNode(pr.first);
+  {
+    util::PerfTimerPrinter X(llvm::dbgs(), "Compute max-id");
+    std::for_each(cfg.obj_to_cfg_begin(), cfg.obj_to_cfg_end(),
+        [&aux, &omap, &dug, &max_id]
+        (const std::pair<const ObjectMap::ObjID, CFG::CFGid> &pr) {
+      // Get info about this node
+      /*
+      auto rep_id = omap.getRep(pr.first);
+      llvm::dbgs() << "Getting node with rep: " << rep_id << " recorded id: " <<
+          pr.first << "\n";
+      */
+      // llvm::dbgs() << "Getting node: " << pr.first << "\n";
+      auto &node = dug.getNode(pr.first);
 
-    ObjectMap::ObjID val_id;
-    if (llvm::isa<DUG::StoreNode>(node)) {
-      // val is dest for stores...
-      val_id = node.dest();
-    } else {
-      assert(llvm::isa<DUG::LoadNode>(node) ||
-          llvm::isa<DUG::ConstPartNode>(node));
+      ObjectMap::ObjID val_id;
+      if (llvm::isa<DUG::StoreNode>(node)) {
+        // val is dest for stores...
+        val_id = node.dest();
+      } else {
+        assert(llvm::isa<DUG::LoadNode>(node) ||
+            llvm::isa<DUG::ConstPartNode>(node));
 
-      // val is src for gv and loads
-      val_id = node.src();
-    }
+        // val is src for gv and loads
+        val_id = node.src();
+      }
 
-    if (val_id > max_id) {
-      max_id = val_id;
-    }
-  });
+      if (val_id > max_id) {
+        max_id = val_id;
+      }
+    });
+  }
 
   // Size the part_node array to be able to hold up to max_id ids
   std::vector<std::vector<DUG::DUGid>> part_nodes(max_id.val() + 1);
@@ -333,7 +336,7 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
 
       auto part_id = equiv_it->second;
 
-      auto field_pr = omap.findObjAliases(obj_id);
+      // auto field_pr = omap.findObjAliases(obj_id);
 
       /*
       if (obj_id == ObjectMap::ObjID(77377)) {
@@ -347,20 +350,18 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
       }
       */
 
-      auto rev_it = rev_part_map.find(part_id);
-      if (rev_it == std::end(rev_part_map)) {
-        auto rv = rev_part_map.emplace(part_id,
-            std::vector<ObjectMap::ObjID>());
-        assert(rv.second);
-        rev_it = rv.first;
-      }
+      auto rv = rev_part_map.emplace(part_id,
+          std::vector<ObjectMap::ObjID>());
+      auto rev_it = rv.first;
 
+      /*
       if (field_pr.first) {
         auto &field_vec = field_pr.second;
         for (auto &id : field_vec) {
           rev_it->second.emplace_back(id);
         }
       }
+      */
 
       // Set the object for this part into pr.first
       rev_it->second.emplace_back(obj_id);
