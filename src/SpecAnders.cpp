@@ -94,6 +94,11 @@ static llvm::cl::list<int32_t> //  NOLINT
       llvm::cl::desc("Specifies IDs to print the nodes of after andersens "
         "runs"));
 
+static llvm::cl::list<int32_t> //  NOLINT
+  id_print("anders-print-id",
+      llvm::cl::desc("Specifies IDs to print the nodes of before andersens "
+        "runs"));
+
 static llvm::cl::opt<bool>
   do_anders_print_result("anders-do-print-result", llvm::cl::init(false),
       llvm::cl::value_desc("bool"),
@@ -222,6 +227,14 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
     HRU(cg, omap, 100);
   }
 
+  for (auto &id_val : id_print) {
+    llvm::dbgs() << "Printing node for id: " << id_val << "\n";
+    ObjectMap::ObjID val_id(id_val);
+
+    llvm::dbgs() << "  " << val_id << ": " << FullValPrint(val_id) <<
+      "\n";
+  }
+
   llvm::dbgs() << "Constraints after HRU: " << cg.getNumConstraints()
     << "\n";
   {
@@ -300,6 +313,11 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
         FullValPrint(rep_id) << "\n";
     }
 
+    if (graph_.getNode(rep_id).id() != rep_id) {
+      llvm::dbgs() << " Graph-REP: " << graph_.getNode(rep_id).id() << ": "
+        << FullValPrint(graph_.getNode(rep_id).id()) << "\n";
+    }
+
     auto &ptsto = getPointsTo(rep_id);
 
     std::for_each(std14::cbegin(ptsto), std14::cend(ptsto),
@@ -334,8 +352,15 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
       "\n";
     auto rep_id = getRep(val_id);
     if (rep_id != val_id) {
-      llvm::dbgs() << " REP: " << rep_id << ": " << ValPrint(rep_id) << "\n";
+      llvm::dbgs() << " REP: " << rep_id << ": " <<
+        FullValPrint(rep_id) << "\n";
     }
+
+    if (graph_.getNode(rep_id).id() != rep_id) {
+      llvm::dbgs() << " Graph-REP: " << graph_.getNode(rep_id).id() << ": "
+        << FullValPrint(graph_.getNode(rep_id).id()) << "\n";
+    }
+
     auto &ptsto = getPointsTo(rep_id);
 
     std::for_each(std14::cbegin(ptsto), std14::cend(ptsto),
@@ -361,9 +386,15 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
 
         auto rep_id = getRep(arg_id);
         if (rep_id != arg_id) {
-          llvm::dbgs() << " REP: " << rep_id << ": " << ValPrint(rep_id)
-              << "\n";
+          llvm::dbgs() << " REP: " << rep_id << ": " <<
+              FullValPrint(rep_id) << "\n";
         }
+
+        if (graph_.getNode(rep_id).id() != rep_id) {
+          llvm::dbgs() << " Graph-REP: " << graph_.getNode(rep_id).id() << ": "
+            << FullValPrint(graph_.getNode(rep_id).id()) << "\n";
+        }
+
         auto &ptsto = getPointsTo(rep_id);
 
         std::for_each(std14::cbegin(ptsto), std14::cend(ptsto),
@@ -385,9 +416,15 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
 
         auto rep_id = getRep(val_id);
         if (rep_id != val_id) {
-          llvm::dbgs() << " REP: " << rep_id << ": " << ValPrint(rep_id)
+          llvm::dbgs() << " REP: " << rep_id << ": " << FullValPrint(rep_id)
               << "\n";
         }
+
+        if (graph_.getNode(rep_id).id() != rep_id) {
+          llvm::dbgs() << " Graph-REP: " << graph_.getNode(rep_id).id() << ": "
+            << FullValPrint(graph_.getNode(rep_id).id()) << "\n";
+        }
+
         auto &ptsto = getPointsTo(rep_id);
 
         std::for_each(std14::cbegin(ptsto), std14::cend(ptsto),

@@ -28,6 +28,13 @@
 #include "include/SpecAnders.h"
 #include "include/SpecSFS.h"
 
+static bool anders_do_debug = false;
+
+static llvm::cl::opt<int32_t> //  NOLINT
+  solve_debug_id("anders-solve-id", llvm::cl::init(-1),
+      llvm::cl::value_desc("int"),
+      llvm::cl::desc("Specifies IDs to trace in the anders-solve process"));
+
 // Number of edges/number of processed nodes before we allow LCD to run
 #define LCD_SIZE 600
 #define LCD_PERIOD std::numeric_limits<int32_t>::max()
@@ -810,7 +817,13 @@ class RunNuutila {
         // If we weren't already merged (HCD can cause this)
         if (rep_next != node.id()) {
           lcd_merge_count++;
-          node.merge(graph_.getNode(rep_next));
+          auto &nd = graph_.getNode(rep_next);
+          if (node.id() == ObjectMap::NullValue ||
+              nd.id() == ObjectMap::NullValue) {
+            llvm::dbgs() << "Nuutilia merge null: " << node.id() << " : " <<
+              nd.id() << "\n";
+          }
+          node.merge(nd);
         }
 
         ch = true;
@@ -889,12 +902,16 @@ bool SpecAnders::solve() {
       continue;
     }
 
+    if (!pnd->isRep()) {
+      continue;
+    }
+
     if (lcd_merge_last + 1000 <= lcd_merge_count) {
       llvm::dbgs() << "LCD Merge Count: " << lcd_merge_count << "\n";
       lcd_merge_last = lcd_merge_count;
     }
 
-    if (lcd_check_last + 1000 <= lcd_merge_last) {
+    if (lcd_check_last + 1000 <= lcd_check_count) {
       llvm::dbgs() << "LCD check count: " << lcd_check_count << "\n";
       lcd_check_last = lcd_check_count;
     }
@@ -907,28 +924,83 @@ bool SpecAnders::solve() {
     priority[pnd->id().val()] = vtime;
     vtime++;
 
+    // If we're near the point of infinite loop:
+    /*
+    if (lcd_check_count > 700000) {
+      anders_do_debug = true;
+    }
+    */
+
     // If this node is part of HCD:
     auto hcd_itr = hcdPairs_.find(pnd->id());
     if (hcd_itr != std::end(hcdPairs_)) {
       // For each ptsto in this node:
       auto &rep_node = graph_.getNode(hcd_itr->second);
+      bool did_merge = false;
       for (auto dest_id : pnd->ptsto()) {
         // Collapse (pointed-to-node, rep)
         // Add rep to worklist
         auto &dest_node = graph_.getNode(dest_id);
 
-        // Don't merge w/ self
-        if (dest_node.id() != rep_node.id()) {
+        // Don't merge w/ self, or with the int value or null value
+        if (dest_node.id() != rep_node.id() &&
+            dest_node.id() != ObjectMap::IntValue &&
+            rep_node.id() != ObjectMap::NullValue &&
+            dest_node.id() != ObjectMap::NullValue) {
           /*
           llvm::dbgs() << "HCD live merging: " << rep_node.id() << " and " <<
             dest_node.id() << "\n";
+          if (rep_node.id() == ObjectMap::NullValue ||
+              dest_node.id() == ObjectMap::NullValue) {
+            llvm::dbgs() << "HCD itr->second: " << hcd_itr->second << "\n";
+            llvm::dbgs() << "HCD Merge NULL: " << rep_node.id() << " : " <<
+              dest_node.id() << "\n";
+          }
+
+          if (solve_debug_id > 0 &&
+              dest_node.ptsto().test(ObjectMap::ObjID(solve_debug_id)) &&
+              !rep_node.ptsto().test(ObjectMap::ObjID(solve_debug_id))) {
+            llvm::dbgs() << "  Node: " << rep_node.id() << " MERGE  " <<
+              dest_node.id() << " gaining id: " <<
+              solve_debug_id << "\n";
+            llvm::dbgs() << "    MERGE caused by: " << pnd->id() << "\n";
+          }
+
+          if (dest_node.id().val() == 9820 ||
+              rep_node.id().val() == 9820) {
+            llvm::dbgs() << "  Node: " << rep_node.id() << " MERGE  " <<
+              dest_node.id() << " edge trace" << "\n";
+            llvm::dbgs() << "    MERGE caused by: " << pnd->id() << "\n";
+            llvm::dbgs() << "    hcd_itr: " << hcd_itr->second << "\n";
+          }
           */
+
+
+          if (anders_do_debug) {
+            llvm::dbgs() << "pnd: " << pnd->id() << ": Merging: " <<
+              rep_node.id() << " <- " << dest_node.id() << "\n";
+          }
+
           rep_node.merge(dest_node);
+          did_merge = true;
+
           hcd_merge_count++;
         }
       }
 
-      work.push(&rep_node, priority[rep_node.id().val()]);
+      if (did_merge) {
+        if (anders_do_debug) {
+          llvm::dbgs() << "pnd: " << pnd->id() << ": hcd push: " <<
+            rep_node.id() << "\n";
+        }
+        work.push(&rep_node, priority[rep_node.id().val()]);
+      }
+
+      // The merge may have caused us to no longer be a rep, in which case, we
+      //   shouldn't analyze this node any further
+      if (!pnd->isRep()) {
+        continue;
+      }
     }
 
     adout("Node: " << pnd->id() << "\n");
@@ -942,43 +1014,6 @@ bool SpecAnders::solve() {
 
       // This is only safe because I guarantee that once a cons goes into the
       // set I will never change its index
-      /*
-      auto ConsLT = [this, &cons_list] (size_t lhs_idx, size_t rhs_idx) {
-        auto &plhs = cons_list[lhs_idx];
-        auto &prhs = cons_list[rhs_idx];
-
-        auto lhs_src = graph_.getNode(plhs->src()).id();
-        auto rhs_src = graph_.getNode(prhs->src()).id();
-
-        auto lhs_dest = plhs->dest();
-        if (lhs_dest != AndersCons::ObjID::invalid()) {
-          lhs_dest = graph_.getNode(lhs_dest).id();
-        }
-
-        auto rhs_dest = prhs->dest();
-        if (rhs_dest != AndersCons::ObjID::invalid()) {
-          rhs_dest = graph_.getNode(rhs_dest).id();
-        }
-
-        auto lhs_offs = plhs->offs();
-        auto rhs_offs = prhs->offs();
-
-        if (plhs->getKind() != prhs->getKind()) {
-          return plhs->getKind() < prhs->getKind();
-        }
-
-        if (lhs_src != rhs_src) {
-          return lhs_src < rhs_src;
-        }
-
-        if (lhs_dest != rhs_dest) {
-          return lhs_dest < rhs_dest;
-        }
-
-        return lhs_offs < rhs_offs;
-      };
-      */
-
       auto cons_eq = [this, &cons_list] (size_t lhs_idx, size_t rhs_idx) {
         auto &plhs = cons_list[lhs_idx];
         auto &prhs = cons_list[rhs_idx];
@@ -1055,8 +1090,25 @@ bool SpecAnders::solve() {
         }
         ++idx;
 
+        /*
+        bool can_gain_edge = false;
+        ObjectMap::ObjID edge_to_test(26744);
+        if (pnd->id().val() == 52617 &&
+            !pnd->hasCopyEdge(edge_to_test)) {
+          can_gain_edge = true;
+        }
+        */
+
         // Process the constraint
         pcons->process(graph_, work, priority);
+
+        /*
+        if (can_gain_edge &&
+            pnd->hasCopyEdge(edge_to_test)) {
+          llvm::dbgs() << "  Node: " << pnd->id() << " Gained edge: "
+             << edge_to_test << " from cons: " << *pcons << "\n";
+        }
+        */
       }
 
       /*
@@ -1099,15 +1151,46 @@ bool SpecAnders::solve() {
         adout("  f: " << succ_offs << "\n");
         adout("  i: " << pnd->ptsto() << "\n");
         adout("  o: " << succ_id << ": " << succ_pts << "\n");
+        // Don't gep with intvalue:
+        bool intgep = pnd->ptsto().test(ObjectMap::IntValue);
+        bool nullgep = pnd->ptsto().test(ObjectMap::NullValue);
+
+        pnd->ptsto().reset(ObjectMap::IntValue);
+        pnd->ptsto().reset(ObjectMap::NullValue);
+
+        /*
+        bool maybe_oroffs = false;
+        if (solve_debug_id > 0 &&
+            pnd->ptsto().test(ObjectMap::ObjID(solve_debug_id - succ_offs)) &&
+            !succ_pts.test(ObjectMap::ObjID(solve_debug_id))) {
+          maybe_oroffs = true;
+        }
+        */
 
         bool ch = succ_pts.orOffs(pnd->ptsto(), succ_offs,
             graph_.getStructInfo());
+
+        /*
+        if (succ_pts.test(ObjectMap::ObjID(solve_debug_id)) && maybe_oroffs) {
+          llvm::dbgs() << "  Node: " << succ_node.id() << " orOffs " <<
+            pnd->id() << ", " << succ_offs << " gaining id: " <<
+            solve_debug_id << "\n";
+        }
+        */
+
+        if (nullgep) {
+          pnd->ptsto().set(ObjectMap::NullValue);
+        }
+        if (intgep) {
+          pnd->ptsto().set(ObjectMap::IntValue);
+        }
 
         adout("  ch: " << ch << "\n");
         adout("  O: " << succ_id << ": " << succ_pts << "\n");
 
 
 
+        /*
         auto edge = std::make_pair(pnd->id(), succ_node.id());
         // If we haven't run LCD on this edge before, the points-to sets are not
         //   empty, and the two points-to sets are equal
@@ -1118,8 +1201,13 @@ bool SpecAnders::solve() {
           lcd_nodes.insert(pnd);
           lcd_edges.insert(edge);
         }
+        */
 
         if (ch) {
+          if (anders_do_debug) {
+            llvm::dbgs() << "pnd: " << pnd->id() << ": gep push: " <<
+              succ_node.id() << "\n";
+          }
           work.push(&succ_node, priority[succ_node.id().val()]);
         }
       }
@@ -1129,8 +1217,26 @@ bool SpecAnders::solve() {
     Bitmap new_copy_edges;
     for (auto succ_val : copy_edges) {
       auto succ_id = ObjectMap::ObjID(succ_val);
+      // Nothing should write to null value ever ever ever
+      assert(succ_id != ObjectMap::NullValue);
 
       auto &succ_node = graph_.getNode(succ_id);
+      /*
+      ObjectMap::ObjID edge_to_test(26744);
+      if (pnd->id().val() == 52617 &&
+          !pnd->hasCopyEdge(edge_to_test) &&
+          !new_copy_edges.test(edge_to_test.val()) &&
+          succ_node.id() == edge_to_test) {
+        llvm::dbgs() << "  Node: " << pnd->id() << " Gained edge: "
+           << edge_to_test << " from merge of edge: " << succ_val << "\n";
+      }
+      */
+
+      // If we've already analyzed this node...
+      if (new_copy_edges.test(succ_node.id().val())) {
+        continue;
+      }
+
       new_copy_edges.set(succ_node.id().val());
 
       adout("  succ: " << succ_node.id() << "\n");
@@ -1144,6 +1250,15 @@ bool SpecAnders::solve() {
       adout("  f: 0\n");
       adout("  i: " << pnd->ptsto() << "\n");
       adout("  o: " << succ_id << ": " << succ_pts << "\n");
+
+      /*
+      if (solve_debug_id > 0 &&
+          pnd->ptsto().test(ObjectMap::ObjID(solve_debug_id)) &&
+          !succ_pts.test(ObjectMap::ObjID(solve_debug_id))) {
+        llvm::dbgs() << "  Node: " << succ_node.id() << " |= " << pnd->id() <<
+          " gaining id: " << solve_debug_id << "\n";
+      }
+      */
 
       bool ch = succ_pts |= pnd->ptsto();
 
@@ -1162,6 +1277,10 @@ bool SpecAnders::solve() {
       }
 
       if (ch) {
+        if (anders_do_debug) {
+          llvm::dbgs() << "pnd: " << pnd->id() << ": copy push: " <<
+            succ_node.id() << "\n";
+        }
         work.push(&succ_node, priority[succ_node.id().val()]);
       }
     }
@@ -1180,7 +1299,7 @@ bool SpecAnders::solve() {
     }
   }
 
-  llvm::dbgs() << "Final lcd_merge_count: " << lcd_merge_count << "\n";
+  llvm::dbgs() << "Final hcd_merge_count: " << hcd_merge_count << "\n";
   llvm::dbgs() << "Final lcd_check_count: " << lcd_check_count << "\n";
   llvm::dbgs() << "Final lcd_merge_count: " << lcd_merge_count << "\n";
 
@@ -1197,17 +1316,31 @@ void AndersStoreCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
   auto &dest_pts = dest_node.ptsto();
   auto &src_node = graph.getNode(src());
   for (auto pts_id : dest_pts) {
-    // Don't add ptr to yourself
     auto &pts_node = graph.getNode(pts_id);
-    if (pts_node.id() != src_node.id()) {
-      // ch |= (src_node.copySuccs().test_and_set(pts_node.id().val()));
-      ch |= src_node.addCopyEdge(pts_node.id());
+    // Don't add edge to yourself, or null ... or int value?
+    if (pts_node.id() != src_node.id() &&
+        pts_node.id() != ObjectMap::IntValue &&
+        src_node.id() != ObjectMap::IntValue &&
+        pts_node.id() != ObjectMap::NullValue &&
+        src_node.id() != ObjectMap::NullValue) {
+      bool local_ch = src_node.addCopyEdge(pts_node.id());
+
+      ch |= local_ch;
+      /*
+      // if (src_node.id().val() == 52563 && pts_node.id().val() == 191197)
+      if (local_ch && pts_node.id().val() == 2822) {
+        llvm::dbgs() << "  !!pts_id is: " << pts_id << "\n";
+        llvm::dbgs() << "  Store edge from: " << src_node.id()
+          << "(" << src() << ")" << " to: " <<
+          pts_node.id() << " added by store to: " << dest_node.id() << "\n";
+      }
+      */
     }
   }
 
   if (ch) {
-    adout("  LoadCons: added: " << src_node.id() << " to WL\n");
-    wl.push(&src_node, priority[src().val()]);
+    adout("  StoreCons: added: " << src_node.id() << " to WL\n");
+    wl.push(&src_node, priority[src_node.id().val()]);
   }
 }
 
@@ -1218,16 +1351,31 @@ void AndersLoadCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
   // For each points-to in src
   auto &src_node = graph.getNode(src());
   auto &src_pts = src_node.ptsto();
+  auto &dest_node = graph.getNode(dest());
+
   for (auto pts_id : src_pts) {
     auto &pt_node = graph.getNode(pts_id);
-    // Don't add ptr to yourself
-    if (pt_node.id() != src_node.id()) {
-      auto &dest_node = graph.getNode(dest());
+    // Don't add ptr to yourself, or null
+    if (pt_node.id() != dest_node.id() &&
+        pt_node.id() != ObjectMap::IntValue &&
+        dest_node.id() != ObjectMap::IntValue &&
+        pt_node.id() != ObjectMap::NullValue &&
+        dest_node.id() != ObjectMap::NullValue) {
       bool ch = pt_node.addCopyEdge(dest_node.id());
+
+      /*
+      // if (pt_node.id().val() == 52563 && dest_node.id().val() == 191197)
+      if (ch && dest_node.id().val() == 26744) {
+        llvm::dbgs() << "  Load edge from: " << pt_node.id() <<
+          "(" << pts_id << ")" << " to: " << dest_node.id() <<
+          "(" << dest() << ")" << " added by load to: " << src_node.id()
+          << "\n";
+      }
+      */
 
       if (ch) {
         adout("  LoadCons: added: " << pt_node.id() << " to WL\n");
-        wl.push(&pt_node, priority[pts_id.val()]);
+        wl.push(&pt_node, priority[pt_node.id().val()]);
       }
     }
   }
@@ -1295,11 +1443,19 @@ void AndersIndirCallCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
           llvm::dbgs() << "  dest_arg_id: " << dest_arg_id << "\n";
           llvm::dbgs() << "  dest_arg_id_rep: " << dest_arg_node.id() << "\n";
           */
-          bool ch = src_arg_node.addCopyEdge(dest_arg_node.id());
+
+          bool ch;
+          if (src_arg_node.id() == ObjectMap::NullValue) {
+            ch = dest_arg_node.ptsto().set(ObjectMap::NullValue);
+          } else if (src_arg_node.id() == ObjectMap::IntValue) {
+            ch = dest_arg_node.ptsto().set(ObjectMap::IntValue);
+          } else {
+            ch = src_arg_node.addCopyEdge(dest_arg_node.id());
+          }
 
           // Also add all of those nodes to our worklist
           if (ch) {
-            wl.push(&src_arg_node, priority[src_arg_id.val()]);
+            wl.push(&src_arg_node, priority[src_arg_node.id().val()]);
           }
         } else {
           break;
@@ -1312,10 +1468,17 @@ void AndersIndirCallCons::process(AndersGraph &graph, Worklist<AndersNode> &wl,
       if (ret_id != ObjectMap::ObjID::invalid()) {
         // Create an edge from their ret to our ret (if we have a ret)
         // ... and push that node to our worklist
+        auto &ret_id_node = graph.getNode(ret_id);
         auto &ret_node = graph.getNode(dest_ret);
-        bool ch = ret_node.addCopyEdge(ret_id);
-        if (ch) {
-          wl.push(&ret_node, priority[dest_ret.val()]);
+        assert(ret_id != ObjectMap::NullValue);
+        // Don't add edges to int or null..
+        if (ret_id_node.id() != ObjectMap::IntValue &&
+            ret_id_node.id() != ObjectMap::NullValue) {
+          bool ch = ret_node.addCopyEdge(ret_id_node.id());
+
+          if (ch) {
+            wl.push(&ret_node, priority[ret_node.id().val()]);
+          }
         }
       }
     } else {

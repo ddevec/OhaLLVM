@@ -100,6 +100,70 @@ class RunTarjans {
           break;
         }
 
+        /*
+        if (node.id().val() == 21438 ||
+            merge_node.id().val() == 21438) {
+          llvm::dbgs() << "Tarjan Merge: " << node.id() << " <- "
+            << merge_node.id() << "\n";
+          if (merge_node.id().val() < 200000) {
+            llvm::dbgs() << "  node is: " <<
+              FullValPrint(ObjectMap::ObjID(merge_node.id().val()))
+              << "\n";
+          }
+        }
+
+        if (node.id().val() == 10223 ||
+            merge_node.id().val() == 10223) {
+          llvm::dbgs() << "Tarjan Merge: " << node.id() << " <- "
+            << merge_node.id() << "\n";
+          if (merge_node.id().val() < 200000) {
+            llvm::dbgs() << "  node is: " <<
+              FullValPrint(ObjectMap::ObjID(merge_node.id().val()))
+              << "\n";
+          }
+        }
+        */
+        /*
+        if (node.id().val() == 13089 ||
+            merge_node.id().val() == 13089) {
+          llvm::dbgs() << "Tarjan Merge: " << node.id() << " <- "
+            << merge_node.id() << "\n";
+          if (merge_node.id().val() < 200000) {
+            llvm::dbgs() << "  node is: " <<
+              FullValPrint(ObjectMap::ObjID(merge_node.id().val()))
+              << "\n";
+          }
+        }
+        if (node.id().val() == 210537 ||
+            merge_node.id().val() == 210537) {
+          llvm::dbgs() << "Tarjan Merge: " << node.id() << " <- "
+            << merge_node.id() << "\n";
+          if (merge_node.id().val() < 200000) {
+            llvm::dbgs() << "  node is: " <<
+              FullValPrint(ObjectMap::ObjID(merge_node.id().val()))
+              << "\n";
+          }
+        }
+        */
+        /*
+        if (node.id().val() == 13089 ||
+            merge_node.id().val() == 13089) {
+          llvm::dbgs() << "Tarjan Merge: " << node.id() << " <- "
+            << merge_node.id() << "\n";
+          if (merge_node.id().val() < 200000) {
+            llvm::dbgs() << "  node is: " <<
+              FullValPrint(ObjectMap::ObjID(merge_node.id().val()))
+              << "\n";
+          }
+        }
+
+        if (node.id().val() == 205810 ||
+            merge_node.id().val() == 205810) {
+          llvm::dbgs() << "Tarjan Merge: " << node.id() << " <- "
+            << merge_node.id() << "\n";
+        }
+        */
+
         node.unite(seg_, merge_node);
       }
 

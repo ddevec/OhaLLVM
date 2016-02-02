@@ -605,19 +605,43 @@ struct HCDNode;
 static int32_t updateAndersConstraints(ConstraintGraph &cg, ObjectMap &omap,
     SEG &graph, ObjectMap::ObjID max_src_dest_id) {
   // First, update the omap
+  std::unordered_map<SEG::NodeID, SEG::NodeID, SEG::NodeID::hasher>
+    rep_remapping;
   for (int32_t i = 0; i < max_src_dest_id.val(); i++) {
     SEG::NodeID node_id(i);
     auto &node = graph.getNode(node_id);
 
     auto rep_id = node.id();
 
+    if (nodeToObj(node_id) == ObjectMap::IntValue ||
+        nodeToObj(rep_id) == ObjectMap::IntValue  ||
+        nodeToObj(node_id) == ObjectMap::NullValue ||
+        nodeToObj(rep_id) == ObjectMap::NullValue) {
+      continue;
+    }
+
     if (rep_id != node_id) {
+      /*
       if (nodeToObj(rep_id) == ObjectMap::ObjID(112778) ||
           nodeToObj(node_id) == ObjectMap::ObjID(112778)) {
         llvm::dbgs() << "Updating omap rep from: " << rep_id << " to: " <<
           node_id << "\n";
       }
-      omap.mergeObjRep(nodeToObj(node_id), nodeToObj(rep_id));
+      */
+      if (nodeToObj(rep_id) > max_src_dest_id) {
+        auto it = rep_remapping.find(rep_id);
+        // NOTE: We don't merge if the rep is outside of our mapping, and we
+        // don't have another rep
+        if (it == std::end(rep_remapping)) {
+          rep_remapping.emplace(rep_id, node_id);
+        // Otherwise we merge based off of our previously recorded rep
+        } else {
+          omap.mergeObjRep(nodeToObj(node_id), nodeToObj(it->second));
+        }
+      // If the rep is valid, we just use that
+      } else {
+        omap.mergeObjRep(nodeToObj(node_id), nodeToObj(rep_id));
+      }
     }
   }
 
@@ -634,15 +658,43 @@ static int32_t updateAndersConstraints(ConstraintGraph &cg, ObjectMap &omap,
 
     auto &cons = *pcons;
 
+    // Don't optimize null/int values, they are special
+    if (cons.src() == ObjectMap::IntValue ||
+        cons.dest() == ObjectMap::IntValue ||
+        cons.src() == ObjectMap::NullValue ||
+        cons.dest() == ObjectMap::NullValue) {
+      continue;
+    }
+
     auto rep_obj_id = cons.rep();
     auto src_obj_id = cons.src();
     auto dest_obj_id = cons.dest();
     auto &src_rep_node = graph.getNode<OptNode>(objToNode(src_obj_id));
-    auto &rep_rep_node = graph.getNode<OptNode>(objToNode(rep_obj_id));
     auto &dest_rep_node = graph.getNode<OptNode>(objToNode(dest_obj_id));
-    auto src_rep_id = omap.getRep(nodeToObj(src_rep_node.id()));
-    auto dest_rep_id = omap.getRep(nodeToObj(dest_rep_node.id()));
-    auto rep_rep_id = omap.getRep(nodeToObj(rep_rep_node.id()));
+    /*
+    auto &rep_rep_node = graph.getNode<OptNode>(objToNode(rep_obj_id));
+    ObjectMap::ObjID src_rep_id;
+    ObjectMap::ObjID dest_rep_id;
+    ObjectMap::ObjID rep_rep_id;
+    if (nodeToObj(src_rep_node.id()) > max_src_dest_id) {
+      src_rep_id = nodeToObj(rep_remapping.at(src_rep_node.id()));
+    } else {
+      src_rep_id = omap.getRep(nodeToObj(src_obj_id));
+    }
+    if (nodeToObj(dest_rep_node.id()) > max_src_dest_id) {
+      dest_rep_id = nodeToObj(rep_remapping.at(dest_rep_node.id()));
+    } else {
+      dest_rep_id = omap.getRep(nodeToObj(dest_obj_id));
+    }
+    if (nodeToObj(rep_rep_node.id()) > max_src_dest_id) {
+      rep_rep_id = nodeToObj(rep_remapping.at(rep_rep_node.id()));
+    } else {
+      rep_rep_id = omap.getRep(nodeToObj(rep_obj_id));
+    }
+    */
+    auto src_rep_id = omap.getRep(src_obj_id);
+    auto dest_rep_id = omap.getRep(dest_obj_id);
+    auto rep_rep_id = omap.getRep(rep_obj_id);
 
     /*
     // if (llvm::isa<HCDNode>(src_rep_node)) {
@@ -723,6 +775,28 @@ static int32_t updateAndersConstraints(ConstraintGraph &cg, ObjectMap &omap,
     auto it = dedup.find(cons);
     if (it == std::end(dedup)) {
       dedup.insert(cons);
+
+      /*
+      if (src_obj_id.val() == 138977) {
+        llvm::dbgs() << "  from src: " << src_obj_id << ", dest: "
+          << dest_obj_id << "\n";
+        llvm::dbgs() << "  Cons updated: " << cons << "\n";
+      }
+
+      if (cons.dest().val() == 12991) {
+        llvm::dbgs() << "  from src: " << src_obj_id << ", dest: "
+          << dest_obj_id << "\n";
+        llvm::dbgs() << "  Cons updated: " << cons << "\n";
+      }
+      */
+
+      /*
+      if (cons.src().val() == 9820) {
+        llvm::dbgs() << "  from src: " << src_obj_id << ", dest: "
+          << dest_obj_id << "\n";
+        llvm::dbgs() << "  Cons updated: " << cons << "\n";
+      }
+      */
     } else {
       /*
       // if (llvm::isa<HCDNode>(src_rep_node)) {
@@ -797,6 +871,14 @@ class HVNNode : public OptNode {
     indirect_ = true;
   }
 
+  void setRef() {
+    ref_ = true;
+  }
+
+  bool ref() const {
+    return ref_;
+  }
+
   bool isNonPtr() override {
     auto ret = ptsto().test(PENonPtr);
     assert(!ret || ptsto().count() == 1);
@@ -808,10 +890,20 @@ class HVNNode : public OptNode {
 
     indirect_ |= node.indirect();
     ptsto() |= node.ptsto();
+    implEdges_ |= node.implEdges_;
 
     node.ptsto().clear();
 
     SEG::Node::unite(seg, n);
+  }
+
+  bool isImplicitPred(NodeID pred_id) {
+    return implEdges_.test(pred_id.val());
+  }
+
+  void addImplicitPred(SEG &graph, NodeID pred_id) {
+    implEdges_.set(pred_id.val());
+    OptNode::addPred(graph, pred_id);
   }
 
   // For LLVM RTTI {{{
@@ -833,6 +925,8 @@ class HVNNode : public OptNode {
 
  private:
   bool indirect_ = false;
+  bool ref_ = false;
+  Bitmap implEdges_;
   Bitmap ptsto_;
   //}}}
 };
@@ -840,6 +934,8 @@ class HVNNode : public OptNode {
 class HVNData {
   //{{{
  public:
+  explicit HVNData(SEG &hvn_graph) : hvnGraph_(hvn_graph) { }
+
   int32_t getNextPE() {
     return nextPE_++;
   }
@@ -880,6 +976,24 @@ class HVNData {
     return it->second;
   }
 
+  HVNNode &getRefNode(SEG::NodeID id) {
+    auto ref_it = nodeToRef_.find(id);
+
+    if (ref_it == std::end(nodeToRef_)) {
+      auto new_node_id = hvnGraph_.addNode<HVNNode>();
+      auto &hvn_node = hvnGraph_.getNode<HVNNode>(new_node_id);
+      hvn_node.setRef();
+
+      auto rc = nodeToRef_.emplace(id, new_node_id);
+      assert(rc.second);
+      ref_it = rc.first;
+    }
+
+    auto &ret = hvnGraph_.getNode<HVNNode>(ref_it->second);
+    assert(ret.ref());
+    return ret;
+  }
+
  private:
   // 0 is non-ptr
   int32_t nextPE_ = 1;
@@ -889,6 +1003,9 @@ class HVNData {
   std::unordered_map<Bitmap, int32_t, BitmapHash> hashValueMap_;
 
   std::unordered_map<SEG::NodeID, int32_t, SEG::NodeID::hasher> idToPE_;
+
+  SEG &hvnGraph_;
+  std::map<SEG::NodeID, SEG::NodeID> nodeToRef_;
   //}}}
 };
 
@@ -901,7 +1018,7 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
   // First calculate the number of nodes needed:
 
   SEG hvn_graph;
-  HVNData data;
+  HVNData data(hvn_graph);
 
   // retruns the largest id in the constraint graph
   auto max_src_dest_id = cg.getMaxID();
@@ -910,12 +1027,12 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
     auto node_id = hvn_graph.addNode<HVNNode>();
     assert(node_id.val() == i);
 
-    // Force objects and indirect calls to be indirect
+    // Force objects and indirect calls to be indirect (AND SPECIAL VALUES)
     //  -- This isn't always managed properly in the next step, due to the
     //     arithmetic associated with object locations.  This handles it
     auto obj_id = nodeToObj(node_id);
     // if (!omap.isValue(obj_id) || hvn_graph.isIndirCall(obj_id))
-    if (!omap.isValue(obj_id)) {
+    if (!omap.isValue(obj_id) || ObjectMap::isSpecial(obj_id)) {
       auto &node = hvn_graph.getNode<HVNNode>(node_id);
       node.setIndirect();
     }
@@ -948,6 +1065,15 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
     if (pcons == nullptr) {
       continue;
     }
+
+    // Don't optimize null/int values, they are special
+    if (pcons->src() == ObjectMap::IntValue ||
+        pcons->dest() == ObjectMap::IntValue ||
+        pcons->src() == ObjectMap::NullValue ||
+        pcons->dest() == ObjectMap::NullValue) {
+      continue;
+    }
+
     auto dest_node_id = objToNode(pcons->dest());
     auto &dest_node = hvn_graph.getNode<HVNNode>(dest_node_id);
     auto src_node_id = objToNode(pcons->src());
@@ -977,6 +1103,13 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
 
     if (rep_node.id() == SEG::NodeID(354)) {
       llvm::dbgs() << "Have node with rep 354: " << *pcons << "\n";
+    }
+    */
+
+    /*
+    if (src_node.id().val() == 21446 ||
+        dest_node.id().val() == 21446) {
+      llvm::dbgs() << "Have cons on 21446: " << *pcons << "\n";
     }
     */
 
@@ -1056,10 +1189,10 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
       if (!pred_node.ptsto().test(HVNNode::PENonPtr)) {
         node.ptsto().set(data.getHashValue(pred_node));
       }
+    }
 
-      if (node.ptsto().empty()) {
-        node.addPtsTo(HVNNode::PENonPtr);
-      }
+    if (node.ptsto().empty()) {
+      node.addPtsTo(HVNNode::PENonPtr);
     }
   };
 
@@ -1125,6 +1258,8 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
   auto num_removed = updateAndersConstraints(cg, omap, hvn_graph,
       max_src_dest_id);
 
+  assert(omap.getRep(ObjectMap::IntValue) == ObjectMap::IntValue);
+
   return num_removed;
 }
 //}}}
@@ -1138,7 +1273,7 @@ int32_t HU(ConstraintGraph &cg, ObjectMap &omap) {
   // First calculate the number of nodes needed:
 
   SEG hu_graph;
-  AndersHUData data;
+  AndersHUData data(hu_graph);
 
   // retruns the largest id in the constraint graph
   auto max_src_dest_id = cg.getMaxID();
@@ -1152,7 +1287,7 @@ int32_t HU(ConstraintGraph &cg, ObjectMap &omap) {
     //     arithmetic associated with object locations.  This handles it
     auto obj_id = nodeToObj(node_id);
     // if (!omap.isValue(obj_id) || hu_graph.isIndirCall(obj_id))
-    if (!omap.isValue(obj_id)) {
+    if (!omap.isValue(obj_id) || ObjectMap::isSpecial(obj_id)) {
       auto &node = hu_graph.getNode<AndersHUNode>(node_id);
       node.setIndirect();
       node.addPtsTo(data.getNextPE());
@@ -1190,6 +1325,15 @@ int32_t HU(ConstraintGraph &cg, ObjectMap &omap) {
     if (pcons == nullptr) {
       continue;
     }
+
+    // Don't optimize null/int values, they are special
+    if (pcons->src() == ObjectMap::IntValue ||
+        pcons->dest() == ObjectMap::IntValue ||
+        pcons->src() == ObjectMap::NullValue ||
+        pcons->dest() == ObjectMap::NullValue) {
+      continue;
+    }
+
     auto dest_node_id = objToNode(pcons->dest());
     auto &dest_node = hu_graph.getNode<AndersHUNode>(dest_node_id);
     auto src_node_id = objToNode(pcons->src());
@@ -1222,36 +1366,99 @@ int32_t HU(ConstraintGraph &cg, ObjectMap &omap) {
     }
     */
 
+    /*
+    if (src_node.id().val() == 21446 ||
+        dest_node.id().val() == 21446) {
+      llvm::dbgs() << "Have cons on 21446: " << *pcons << "\n";
+    }
+    */
+
     touched.insert(dest_node_id);
     touched.insert(src_node_id);
 
     // Handle the edge addition appropriately
     switch (pcons->type()) {
       case ConstraintType::Load:
-        // Load cons cause the dest to be indirect, but add no edges
-        dest_node.setIndirect();
-        // Nodes are equivalent if their source input set is (only for
-        //   andersens, as flow information may change this for sfs)
-        dest_node.addPtsTo(data.getPEForID(src_node.id()));
-        // dest_node.addPtsTo(data.getNextPE());
+        {
+          // Load cons cause the dest to be indirect, but add no edges
+          dest_node.setIndirect();
+          // Nodes are equivalent if their source input set is (only for
+          //   andersens, as flow information may change this for sfs)
+          // dest_node.addPtsTo(data.getPEForID(src_node.id()));
+          // dest_node.addPtsTo(data.getNextPE());
+          // INDIRECT:
+          //   Create edge from dest to REF(source)
+          auto &src_ref = data.getRefNode(src_node.id());
+          /*
+          if (src_ref.id().val() == 210537) {
+            llvm::dbgs() << "  have edge: REF(" << src_node.id() << ") -> "
+              << dest_node.id() << "\n";
+          }
+          */
+          dest_node.addPred(hu_graph, src_ref.id());
+        }
         break;
       case ConstraintType::Store:
-        // Store cons are ignored
-        // However, we need to ensure that the constraint is not optimized
-        //   out, so we set the node to be indirect
-        hu_graph.getNode<AndersHUNode>(objToNode(pcons->rep())).setIndirect();
+        {
+          // Store cons are ignored
+          // However, we need to ensure that the constraint is not optimized
+          //   out, so we set the node to be indirect
+          hu_graph.getNode<AndersHUNode>(objToNode(pcons->rep())).setIndirect();
+          // INDIRECT:
+          //   Create edge from REF(dest) to source
+          auto &dest_ref = data.getRefNode(dest_node.id());
+          /*
+          if (dest_ref.id().val() == 210537) {
+            llvm::dbgs() << "  have edge: " << src_node.id() << " -> REF("
+              << dest_node.id() << ")\n";
+            if (src_node.id().val() == 13089) {
+              llvm::dbgs() << "    Cons is: " << *pcons << "\n";
+            }
+          }
+          */
+
+          dest_ref.addPred(hu_graph, src_node.id());
+        }
         break;
       case ConstraintType::AddressOf:
-        // Alloc cons cause the dest to be indirect, no need to put objects in
-        //   the graph (NOTE: They are set to indirect above)
-        dest_node.setIndirect();
-        dest_node.addPtsTo(data.getNextPE());
+        {
+          // Alloc cons cause the dest to be indirect, no need to put objects in
+          //   the graph (NOTE: They are set to indirect above)
+          // INDIRECT:
+          //   Create IMPLICIT edge from REF(dest) to source
+          dest_node.setIndirect();
+          dest_node.addPtsTo(data.getNextPE());
+          auto &dest_ref = data.getRefNode(dest_node.id());
+
+          dest_ref.addImplicitPred(hu_graph, src_node.id());
+
+          /*
+          if (dest_ref.id().val() == 210537) {
+            llvm::dbgs() << "  have impl edge: " << src_node.id() << " -> REF("
+              << dest_node.id() << ")\n";
+          }
+          */
+        }
         break;
       case ConstraintType::Copy:
         // Copy cons:
         // Without offsets are edges
         if (pcons->offs() == 0) {
           dest_node.addPred(hu_graph, src_node.id());
+          // INDIRECT:
+          //   Create IMPLICIT edge from REF(dest) to REF(source)
+          auto &src_ref = data.getRefNode(src_node.id());
+          auto &dest_ref = data.getRefNode(dest_node.id());
+
+          dest_ref.addImplicitPred(hu_graph, src_ref.id());
+
+          /*
+          if (dest_ref.id().val() == 210537 ||
+              src_ref.id().val() == 210537) {
+            llvm::dbgs() << "  have impl edge: REF(" << src_node.id() <<
+              ") -> REF(" << dest_node.id() << ")\n";
+          }
+          */
         // With offsets create a new PE, labeled by the src, offs combo
         } else {
           dest_node.addPtsTo(data.getGEPPE(src_node.id(), pcons->offs()));
@@ -1283,15 +1490,16 @@ int32_t HU(ConstraintGraph &cg, ObjectMap &omap) {
   //   Here we calculate the appropriate PE set for the node, given its preds
   auto traverse_pe = [&data, &hu_graph] (const SEG::Node &nd) {
     auto &node = cast<AndersHUNode>(nd);
-
-    // llvm::dbgs() << "visit: " << node.id() << "\n";
-
-
     // Now, unite any pred ids:
     for (auto pred_id : node.preds()) {
+      // Don't calc pred sets for implicit edges
+      if (node.isImplicitPred(pred_id)) {
+        continue;
+      }
+
       auto &pred_node = hu_graph.getNode<AndersHUNode>(pred_id);
 
-      // skip pointers to self
+      // Skip pointers to self
       if (pred_node.id() == node.id()) {
         continue;
       }
@@ -1300,10 +1508,10 @@ int32_t HU(ConstraintGraph &cg, ObjectMap &omap) {
       if (!pred_node.ptsto().test(AndersHUNode::PENonPtr)) {
         node.ptsto() |= pred_node.ptsto();
       }
+    }
 
-      if (node.ptsto().empty()) {
-        node.addPtsTo(AndersHUNode::PENonPtr);
-      }
+    if (node.ptsto().empty()) {
+      node.addPtsTo(AndersHUNode::PENonPtr);
     }
   };
 
@@ -1326,6 +1534,7 @@ int32_t HU(ConstraintGraph &cg, ObjectMap &omap) {
     if (ptsto.empty() || ptsto.test(AndersHUNode::PENonPtr)) {
       ptsto.clear();
       ptsto.set(AndersHUNode::PENonPtr);
+      continue;
     }
 
     auto it = pts_to_pe.find(ptsto);
@@ -1354,11 +1563,100 @@ int32_t HU(ConstraintGraph &cg, ObjectMap &omap) {
           rep_node.id() << "\n";
       }
       */
-      if (rep_node.id() == SEG::NodeID(6509) ||
-          node.id() == SEG::NodeID(6509)) {
-        llvm::dbgs() << "  merge " << node.id() << " with " <<
-          rep_node.id() << "\n";
+
+      // Select the minimum rep node...
+      /*
+      if (rep_node.id() == SEG::NodeID(50785)) {
+        llvm::dbgs() << "  merge " << rep_node.id() << " <- " <<
+          node.id() << "\n";
+        if (!node.ref()) {
+          llvm::dbgs() << "  node is: " << FullValPrint(nodeToObj(node.id()))
+            << "\n";
+        }
       }
+
+      if (node.id() == SEG::NodeID(50785)) {
+        llvm::dbgs() << "  merge " << rep_node.id() << " <- " <<
+          node.id() << "\n";
+        if (!rep_node.ref()) {
+          llvm::dbgs() << "  rep_node is: " <<
+            FullValPrint(nodeToObj(rep_node.id())) << "\n";
+        }
+      }
+      */
+
+      /*
+      if (rep_node.id() == SEG::NodeID(21438)) {
+        llvm::dbgs() << "  merge " << rep_node.id() << " <- " <<
+          node.id() << "\n";
+        if (!node.ref()) {
+          llvm::dbgs() << "  node is: " << FullValPrint(nodeToObj(node.id()))
+            << "\n";
+        }
+      }
+
+      if (node.id() == SEG::NodeID(21438)) {
+        llvm::dbgs() << "  merge " << rep_node.id() << " <- " <<
+          node.id() << "\n";
+        if (!rep_node.ref()) {
+          llvm::dbgs() << "  rep_node is: " <<
+            FullValPrint(nodeToObj(rep_node.id())) << "\n";
+        }
+      }
+
+      if (rep_node.id() == SEG::NodeID(10223)) {
+        llvm::dbgs() << "  merge " << rep_node.id() << " <- " <<
+          node.id() << "\n";
+        if (!node.ref()) {
+          llvm::dbgs() << "  node is: " << FullValPrint(nodeToObj(node.id()))
+            << "\n";
+        }
+      }
+
+      if (node.id() == SEG::NodeID(10223)) {
+        llvm::dbgs() << "  merge " << rep_node.id() << " <- " <<
+          node.id() << "\n";
+        if (!rep_node.ref()) {
+          llvm::dbgs() << "  rep_node is: " <<
+            FullValPrint(nodeToObj(rep_node.id())) << "\n";
+        }
+      }
+      */
+
+      /*
+      if (rep_node.id() == SEG::NodeID(13089)) {
+        llvm::dbgs() << "  merge " << rep_node.id() << " <- " <<
+          node.id() << "\n";
+        if (!node.ref()) {
+          llvm::dbgs() << "  node is: " << FullValPrint(nodeToObj(node.id()))
+            << "\n";
+        }
+      }
+
+      if (node.id() == SEG::NodeID(13089)) {
+        llvm::dbgs() << "  merge " << rep_node.id() << " <- " <<
+          node.id() << "\n";
+        if (!rep_node.ref()) {
+          llvm::dbgs() << "  rep_node is: " <<
+            FullValPrint(nodeToObj(rep_node.id())) << "\n";
+        }
+      }
+      */
+
+      /*
+      if (rep_node.id() == SEG::NodeID(9820) ||
+          node.id() == SEG::NodeID(9822) ||
+          rep_node.id() == SEG::NodeID(9822) ||
+          node.id() == SEG::NodeID(9809) ||
+          rep_node.id() == SEG::NodeID(9809) ||
+          node.id() == SEG::NodeID(191751) ||
+          rep_node.id() == SEG::NodeID(191751) ||
+          rep_node.id() == SEG::NodeID(50785) ||
+          node.id() == SEG::NodeID(50785)) {
+        llvm::dbgs() << "  merge " << rep_node.id() << " <- " <<
+          node.id() << "\n";
+      }
+      */
       rep_node.unite(hu_graph, node);
     }
   }
@@ -1368,6 +1666,8 @@ int32_t HU(ConstraintGraph &cg, ObjectMap &omap) {
 
   auto num_removed = updateAndersConstraints(cg, omap, hu_graph,
       max_src_dest_id);
+
+  assert(omap.getRep(ObjectMap::IntValue) == ObjectMap::IntValue);
 
   return num_removed;
 }
@@ -1531,6 +1831,13 @@ void SpecAnders::HCD(ConstraintGraph &graph, ObjectMap &omap) {
     if (pcons == nullptr) {
       continue;
     }
+
+    // Don't merge speical nodes in HCD
+    if (ObjectMap::isSpecial(pcons->src()) ||
+        ObjectMap::isSpecial(pcons->dest())) {
+      continue;
+    }
+
     auto dest_node_id = objToNode(pcons->dest());
     auto &dest_node = hcd_graph.getNode<HCDNode>(dest_node_id);
     auto src_node_id = objToNode(pcons->src());
@@ -1543,6 +1850,11 @@ void SpecAnders::HCD(ConstraintGraph &graph, ObjectMap &omap) {
           // Get the ref of this source:
           auto &src_ref = data.getRefNode(src_node.id());
 
+          if (dest_node.id().val() == 9820) {
+            llvm::dbgs() << "  REF(" << src_node.id() << ") -> " <<
+              dest_node.id() << "\n";
+          }
+
           // Now, add some edges
           dest_node.addPred(hcd_graph, src_ref.id());
         }
@@ -1552,6 +1864,10 @@ void SpecAnders::HCD(ConstraintGraph &graph, ObjectMap &omap) {
         {
           auto &dest_ref = data.getRefNode(dest_node.id());
 
+          if (src_node.id().val() == 9820) {
+            llvm::dbgs() << "  " << src_node.id() << " -> REF(" <<
+              dest_node.id() << ")\n";
+          }
           dest_ref.addPred(hcd_graph, src_node.id());
         }
         break;
@@ -1560,6 +1876,11 @@ void SpecAnders::HCD(ConstraintGraph &graph, ObjectMap &omap) {
         //     GEP (copy w/ offset) -- Ignore
         if (pcons->offs() == 0) {
           dest_node.addPred(hcd_graph, src_node.id());
+
+          if (src_node.id().val() == 9820) {
+            llvm::dbgs() << "  " << src_node.id() << " -> " <<
+              dest_node.id() << "\n";
+          }
         }
         break;
       case ConstraintType::AddressOf:
@@ -1570,6 +1891,8 @@ void SpecAnders::HCD(ConstraintGraph &graph, ObjectMap &omap) {
         break;
     }
   }
+
+  // hcd_graph.printDotFile("HCDStart.dot", *g_omap);
 
   // Use Tarjans to detect SCCs
   RunTarjans<decltype(should_visit_default), decltype(scc_visit_default)>
@@ -1596,6 +1919,14 @@ void SpecAnders::HCD(ConstraintGraph &graph, ObjectMap &omap) {
     for (auto &ref_id : ref_nodes) {
       // Convert from ref_id to node_id
       auto deref_id = data.getNodeDeref(ref_id).id();
+      /*
+      llvm::dbgs() << "  Hcd_pair: { " << deref_id << ", " << pnode->id() <<
+        " }\n";
+      */
+      if (pnode->id().val() == 9820 || ref_id.val() == 9820) {
+        llvm::dbgs() << "  Hcd_pair: { " << deref_id << ", " << pnode->id() <<
+          " }\n";
+      }
       hcdPairs_.emplace(nodeToObj(deref_id),
          nodeToObj(pnode->id()));
     }

@@ -51,6 +51,35 @@ class AndersCons {
   virtual void process(AndersGraph &graph, Worklist<AndersNode> &wl,
       const std::vector<uint32_t> &priority) const;
 
+  friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
+      const AndersCons &cons) {
+    o << "{ ";
+    switch (cons.kind_) {
+      case Kind::Store:
+        o << "Store";
+        break;
+      case Kind::Load:
+        o << "Load";
+        break;
+      case Kind::IndirCall:
+        o << "IndirCall";
+        break;
+      case Kind::Copy:
+        o << "Copy";
+        break;
+      case Kind::Alloc:
+        o << "Alloc";
+        break;
+      default:
+        llvm_unreachable("Unknown cons type");
+    }
+
+    o << " s: " << cons.src_ << ", d: " << cons.dest_ << ", o: " << cons.offs_
+      << " }";
+
+    return o;
+  }
+
  protected:
   // Constructor {{{
   AndersCons(Kind kind, ObjID src, ObjID dest) :
@@ -189,11 +218,17 @@ class AndersNode {
     copySuccs_ = std::move(new_copy_succs);
   }
 
+  bool hasCopyEdge(ObjID dest_id) {
+    return copySuccs_.test(dest_id.val());
+  }
+
   bool addCopyEdge(ObjID dest_id) {
     bool ret = false;
-    // Don't add edges to/from int value, or to yourself
+    // Don't add edges to/from int/null value, or to yourself
     if (id() != ObjectMap::IntValue &&
         dest_id != ObjectMap::IntValue &&
+        id() != ObjectMap::NullValue &&
+        dest_id != ObjectMap::NullValue &&
         dest_id != id()) {
       ret = copySuccs_.test_and_set(dest_id.val());
     }
@@ -230,7 +265,6 @@ class AndersNode {
     gepSuccs_.insert(std::end(gepSuccs_),
         std::begin(rhs.gepSuccs_), std::end(rhs.gepSuccs_));
 
-    strong_ &= rhs.strong_;
     ptsto_ |= rhs.ptsto_;
 
     oldPtsto_.clear();
@@ -240,6 +274,14 @@ class AndersNode {
     rhs.oldPtsto_.clear();
     rhs.copySuccs_.clear();
     rhs.gepSuccs_.clear();
+  }
+
+  // Remove any unneeded info, now that anders has finished
+  void cleanup() {
+    constraints_.clear();
+    copySuccs_.clear();
+    gepSuccs_.clear();
+    oldPtsto_.clear();
   }
 
   // And the visit function!
@@ -255,8 +297,6 @@ class AndersNode {
   ObjID rep_;
 
   std::vector<std::unique_ptr<AndersCons>> constraints_;
-
-  bool strong_;
 
   // Edges:
   Bitmap copySuccs_;
@@ -403,6 +443,20 @@ class AndersGraph {
         continue;
       }
       auto &cons = *pcons;
+
+      // Ignore nullvalue alloc/load/store constraints
+      if (cons.type() != ConstraintType::Copy &&
+           (cons.src() == ObjectMap::NullValue ||
+            cons.dest() == ObjectMap::NullValue)) {
+        continue;
+      }
+
+      // Ignore copy to nullvalue
+      if (cons.type() == ConstraintType::Copy &&
+          cons.dest() == ObjectMap::NullValue) {
+        continue;
+      }
+
       switch (cons.type()) {
         case ConstraintType::Load:
           {
@@ -423,6 +477,11 @@ class AndersGraph {
         // Alloc constraints are added as initial points-to data
         case ConstraintType::AddressOf:
           {
+            if (cons.src().val() == 8418 ||
+                cons.src().val() == 8400) {
+              llvm::dbgs() << "Node: " << cons.dest() << " has initial pts: " <<
+                cons.src() << "\n";
+            }
             auto &node = getNode(cons.dest());
             node.ptsto().set(cons.src());
             break;
@@ -468,6 +527,35 @@ class AndersGraph {
           std14::make_unique<AndersIndirCallCons>(callee, ret_id,
             arg_begin, arg_end));
     });
+
+    auto &nd = getNode(ObjID(138391));
+    llvm::dbgs() << "Node " << nd.id() << " has constriants:\n";
+    for (auto &pcons : nd.constraints()) {
+      llvm::dbgs() << "  " << *pcons << "\n";
+    }
+
+    llvm::dbgs() << "  ptsto: " << nd.ptsto() << "\n";
+
+    llvm::dbgs() << "copySuccs: {";
+    auto &succs = nd.copySuccs();
+    for (auto succ_id : succs) {
+      llvm::dbgs() << " " << succ_id;
+    }
+    llvm::dbgs() << " }\n";
+
+    llvm::dbgs() << "gepSuccs: {";
+    auto &gep_succs = nd.gepSuccs();
+    for (auto &succ_pr : gep_succs) {
+      llvm::dbgs() << " (" << succ_pr.first << " + " << succ_pr.second << ")";
+    }
+    llvm::dbgs() << " }\n";
+  }
+
+  // Removes any unneeded information after solve completes
+  void cleanup() {
+    for (auto &node : *this) {
+      node.cleanup();
+    }
   }
 
   void setStructInfo(const ObjectMap::StructMap &info) {

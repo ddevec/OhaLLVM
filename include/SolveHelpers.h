@@ -199,6 +199,10 @@ class PtstoSet {
       return ptsto_.test_and_set(id.val());
     }
 
+    void reset(ObjectMap::ObjID id) {
+      ptsto_.reset(id.val());
+    }
+
     size_t getSizeNoStruct(ObjectMap &omap) const {
       std::set<const llvm::Value *> pts_set;
 
@@ -242,7 +246,12 @@ class PtstoSet {
       bool ch = ptsto_ |= rhs.ptsto_;
 
       if (ch) {
-        clearDynPtsto();
+        bool rc = clearDynPtsto();
+        if (!rc) {
+          return true;
+        }
+      } else {
+        return false;
       }
 
       return (init != ptsto_);
@@ -269,8 +278,8 @@ class PtstoSet {
         int32_t or_offs = offs;
 
         // If this isn't a structure, don't treat it with an offset
-        // FIXME: Return later, jus ttesting performance
         auto it = struct_set.find(ObjectMap::ObjID(val));
+        /*
         if (it == std::end(struct_set)) {
           or_offs = 0;
         } else {
@@ -278,12 +287,26 @@ class PtstoSet {
             or_offs = 0;
           }
         }
+        */
+        // FIXME: We ignore invalid field reads...
+        if (it == std::end(struct_set)) {
+          continue;
+        } else {
+          if (it->second <= or_offs) {
+            continue;
+          }
+        }
 
         ret |= ptsto_.test_and_set(val + or_offs);
       }
 
       if (ret) {
-        clearDynPtsto();
+        bool ch = clearDynPtsto();
+        if (!ch) {
+          return true;
+        }
+      } else {
+        return false;
       }
 
       return (init != ptsto_);
@@ -473,6 +496,7 @@ class PtstoSet {
     bool clearDynPtsto() {
       bool ret = false;
       if (dynPtsto_ != nullptr) {
+        llvm::dbgs() << "!!!!!CLEAR DYN PTSTO????\n";
         ret = (ptsto_ &= *dynPtsto_);
       }
 

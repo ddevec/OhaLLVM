@@ -861,6 +861,8 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
     return true;
   }
 
+  // FIXME: Instead treat it as an alloc, unclear if this is best
+  /*
   // getenv -- This is currently linked to argv...
   if (F->getName() == "getenv") {
     cg.add(ConstraintType::AddressOf,
@@ -868,6 +870,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
       ObjectMap::ArgvValueObject);
     return true;
   }
+  */
 
   // CType Functions
   if (F->getName() == "__ctype_b_loc") {
@@ -1314,6 +1317,13 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
         }
         */
 
+        if (node_id.val() == 191679) {
+          llvm::dbgs() << "Adding to arg: " << FargI->getParent()->getName() <<
+            ": " << FargI->getName() << "\n";
+          llvm::dbgs() << "dest: " << dest_id << "\n";
+          llvm::dbgs() << "src_id is: " << src_id << ": " << *ArgI->get() <<
+            "\n";
+        }
         cg.add(ConstraintType::Copy, node_id, src_id, dest_id);
       // But if its not a pointer type...
       } else {

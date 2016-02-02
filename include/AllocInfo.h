@@ -32,6 +32,9 @@ class AllocInfo {
         callee->getName() != "fdopen" &&
         callee->getName() != "fopen64" &&
         callee->getName() != "opendir" &&
+        callee->getName() != "getenv" &&
+        callee->getName() != "Perl_safesysmalloc" &&
+        callee->getName() != "Perl_safesysrealloc" &&
         callee->getName() != "_Znwj" &&  // operator new(unsigned int)
         callee->getName() != "_Znwm" &&  // operator new(unsigned long)
         callee->getName() != "_Znaj" &&  // operator new[](unsigned int)
@@ -40,6 +43,16 @@ class AllocInfo {
     }
 
     return true;
+  }
+
+  static bool mallocNotStruct(const llvm::Function *callee) {
+    // Allocates strings, not structures
+    if (callee->getName() == "getenv" ||
+        callee->getName() == "strdup") {
+      return true;
+    }
+
+    return false;
   }
 
   // Returns the size of the malloc
@@ -53,6 +66,7 @@ class AllocInfo {
     llvm::Instruction *before = nullptr;
     // Arg pos 0
     if (callee->getName() == "malloc" ||
+        callee->getName() == "Perl_safesysmalloc" ||
         callee->getName() == "valloc") {
       ret = ci->getArgOperand(0);
       before = ci;
@@ -61,6 +75,7 @@ class AllocInfo {
 
     // Arg pos 1
     if (callee->getName() == "memalign" ||
+        callee->getName() == "Perl_safesysrealloc" ||
         callee->getName() == "realloc") {
       ret = ci->getArgOperand(1);
       before = ci;
@@ -79,9 +94,8 @@ class AllocInfo {
     }
 
     // Freaking strdup...
-    if (callee->getName() == "strdup") {
-      auto str_val = ci->getArgOperand(0);
-
+    if (callee->getName() == "strdup" ||
+        callee->getName() == "getenv") {
       // Now call strlen...
       auto strlen_fcn = m.getFunction("strlen");
       // I may have to create an external linkage for this in some instances...
@@ -89,7 +103,7 @@ class AllocInfo {
       assert(strlen_fcn != nullptr);
 
       std::vector<llvm::Value *> args;
-      args.push_back(str_val);
+      args.push_back(ci);
 
       auto strlen_ret = llvm::CallInst::Create(strlen_fcn, args, "", ci);
 
@@ -128,7 +142,6 @@ class AllocInfo {
           "", before);
     }
 
-    // FIXME: strdup... needs to call strlen?
     if (ret == nullptr) {
       llvm::dbgs() << "getMallocSizeArg() has nullptr ret for: " <<
         callee->getName() << "\n";
@@ -141,6 +154,7 @@ class AllocInfo {
     if (callee->getName() != "free" &&
         callee->getName() != "fclose" &&
         callee->getName() != "realloc" &&
+        callee->getName() != "Perl_safesysrealloc" &&
         callee->getName() != "closedir" &&
         callee->getName() != "pclose") {
       return false;
@@ -154,7 +168,8 @@ class AllocInfo {
       bool allow_cast = true) {
     // Arg pos 0
     if (callee->getName() == "free" ||
-        callee->getName() == "realloc") {
+        callee->getName() == "realloc" ||
+        callee->getName() == "Perl_safesysrealloc") {
       return ci->getArgOperand(0);
     }
 

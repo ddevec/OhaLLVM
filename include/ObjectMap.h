@@ -281,7 +281,9 @@ class ObjectMap {
     // Used to create phony identifers for nodes that don't have llvm::Values
     //    (actual program values) associated with them
     ObjID createPhonyID() {
-      return createMapping(nullptr);
+      auto ret = createMapping(nullptr);
+      // assert(ret.val() != 191197);
+      return ret;
     }
 
     ObjID createPhonyID(const llvm::Value *val) {
