@@ -304,6 +304,7 @@ class ObjectMap {
         auto &struct_info = getStructInfo(st);
 
         int num_sizes = struct_info.size();
+        numObjs_ += num_sizes;
         assert(num_sizes > 0);
 
         int cur_size = 0;
@@ -327,6 +328,7 @@ class ObjectMap {
     ObjID createPhonyObjectID(const llvm::Value *val) {
       auto ret = createMapping(val);
 
+      numObjs_++;
       assert(phonyMap_.find(ret) == std::end(phonyMap_));
       idToObj_.emplace(ret, val);
 
@@ -354,6 +356,13 @@ class ObjectMap {
     }
 
     void addObjects(const llvm::Type *type, const llvm::Value *val) {
+      if (auto st = dyn_cast<llvm::StructType>(type)) {
+        auto &struct_info = getStructInfo(st);
+
+        int num_sizes = struct_info.size();
+        numObjs_ += num_sizes;
+      }
+
       __do_add_struct(type, val, objToID_, idToObj_, nullptr);
     }
 
@@ -368,6 +377,7 @@ class ObjectMap {
 
     // Allocation site
     void addObject(const llvm::Value *val) {
+      numObjs_++;
       __do_add(val, objToID_, idToObj_);
     }
 
@@ -555,6 +565,10 @@ class ObjectMap {
     //}}}
 
     // Misc helpers {{{
+    int64_t getNumObjs() const {
+      return numObjs_;
+    }
+
     size_t size() const {
       return mapping_.size();
     }
@@ -735,6 +749,8 @@ class ObjectMap {
 
     // Rep useage (for optimization merging)
     mutable util::UnionFind<ObjID> reps_;
+
+    int64_t numObjs_ = 0;
 
     // Struct info
     std::map<const llvm::StructType *, StructInfo> structInfo_;

@@ -13,6 +13,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <stack>
 #include <utility>
 #include <vector>
 
@@ -37,6 +38,9 @@
 #include "llvm/Support/GetElementPtrTypeIterator.h"
 #include "llvm/Support/InstIterator.h"
 #include "llvm/Support/raw_ostream.h"
+
+// FIXME: Shouldn't be here...
+std::stack<void *> __g_st;
 
 // Using AUX with CFG helpers {{{
 ObjectMap::ObjID getConstValue(ConstraintGraph &cg, ObjectMap &omap,

@@ -8,11 +8,14 @@
 #include <cassert>
 
 #include <atomic>
+#include <bitset>
 #include <chrono>
 #include <iterator>
 #include <limits>
+#include <list>
 #include <memory>
 #include <set>
+#include <stack>
 #include <string>
 #include <vector>
 
@@ -667,36 +670,555 @@ class UnionFindNoRank {
 };
 //}}}
 
-/*
-// Sparse BitMap {{{
-template <typename id_type, size_t bits_per_field = 128>
-class SparseBitmap {
- private:
-   struct Node {
-     size_t index;
-     bitmap map;
-   };
+// Stack Alloc {{{
+template <typename T>
+class StackAlloc : public std::allocator<T> {
  public:
-  typedef typename std::bitset<bits_per_field> bitmap;
-  typedef typename std::forward_list<bitmap> bitmap_list;
+  typedef size_t size_type;
+  typedef T* pointer;
+  typedef const T* const_pointer;
+
+  template <typename nT>
+  struct rebind {
+    typedef StackAlloc<nT> other;
+  };
+
+  pointer allocate(size_type n, const void *hint = 0) {
+    pointer ret = nullptr;
+    if (st_.empty()) {
+      ret = std::allocator<T>::allocate(n, hint);
+    } else {
+      ret = st_.top();
+      st_.pop();
+    }
+    return ret;
+  }
+
+  void deallocate(pointer p, size_type) {
+    st_.push(p);
+    // std::allocator<T>::deallocate(p, n);
+  }
+
+  StackAlloc() : std::allocator<T>() { }  // NOLINT
+
+  template <typename nT>
+  StackAlloc(const StackAlloc<nT> &nt) : std::allocator<T>(nt) { }
+
+ private:
+  static std::stack<pointer> st_;
+};
+
+template <typename T>
+std::stack<T *> StackAlloc<T>::st_;
+//}}}
+
+// Sparse BitMap {{{
+template <size_t bits_per_field = 128>
+struct BitmapNode {
+  typedef typename std::bitset<bits_per_field> bmap;
+
+  explicit BitmapNode(size_t idx) : index(idx) { }
+
+  bool operator==(const BitmapNode &rhs) const {
+    return index == rhs.index && bitmap == rhs.bitmap;
+  }
+
+  bool operator!=(const BitmapNode &rhs) const {
+    return !(*this == rhs);
+  }
+
+  size_t index;
+  bmap bitmap;
+};
+
+template <typename id_type = int32_t, size_t bits_per_field = 128,
+         typename alloc = StackAlloc<BitmapNode<bits_per_field>>>
+class SparseBitmap {
+ public:
+  typedef BitmapNode<bits_per_field> node;
+  typedef typename std::list<node, alloc> bitmap_list;
 
   SparseBitmap() = default;
 
-  bool test(id_type test_id) const {
+  // Misc {{{
+  bool empty() const {
+    return elms_.empty();
   }
+
+  void clear() {
+    elms_.clear();
+  }
+  //}}}
+
+  // Accessors {{{
+  bool test(id_type id) const {
+    auto idx = getIdx(id);
+    auto it = findClosest(idx);
+
+    if (it == std::end(elms_)) {
+      return false;
+    }
+
+    if (it->index != idx) {
+      return false;
+    }
+
+    return it->bitmap.test(getOffs(id));
+  }
+
+  bool intersects(SparseBitmap &rhs) const {
+    if (elms_.empty() && rhs.elms_.empty()) {
+      return false;
+    }
+
+    auto it1 = std::begin(elms_);
+    auto it2 = std::begin(rhs.elms_);
+
+    while (it2 != std::end(rhs.elms_)) {
+      if (it1 == std::end(elms_)) {
+        return false;
+      }
+
+      if (it1->index > it2->index) {
+        ++it2;
+      } else if (it2->index > it1->index) {
+        ++it1;
+      // index1 == index2
+      } else {
+        if (!(it1->bitmap & it2->bitmap).none()) {
+          return true;
+        }
+        ++it1;
+        ++it2;
+      }
+    }
+    return false;
+  }
+
+  size_t count() const {
+    size_t ret = 0;
+    for (auto &elm : elms_) {
+      ret += elm.bitmap.count();
+    }
+    return ret;
+  }
+  // }}}
+
+  // Modifiers {{{
+  void reset(id_type id) {
+    auto idx = getIdx(id);
+
+    auto it = findClosest(idx);
+
+    if (it == std::end(elms_) ||
+        it->index != idx) {
+      return;
+    }
+
+    it->bitmap.reset(getOffs(id));
+
+    // If no bits are set, erase the bitset
+    if (it->bitmap.none()) {
+      // Advance curElm because we're about to erase this one
+      ++curElm_;
+      elms_.erase(it);
+    }
+  }
+
+  void set(id_type id) {
+    auto idx = getIdx(id);
+    auto it = findClosest(idx);
+
+    // Need to insert at rear?
+    if (it == std::end(elms_)) {
+      it = elms_.insert(it, node(idx));
+    } else if (it->index != idx) {
+      if (it->index > idx) {
+        it = elms_.insert(++it, node(idx));
+      } else {
+        it = elms_.insert(it, node(idx));
+      }
+    }
+
+    assert(it->index == idx);
+    curElm_ = it;
+
+    it->bitmap.set(getOffs(id));
+  }
+
+  bool test_and_set(id_type id) {
+    auto idx = getIdx(id);
+    auto it = findClosest(idx);
+    // std::cout << "id: " << id << ", idx: " << idx << std::endl;
+
+    // Need to insert at rear?
+    if (it == std::end(elms_)) {
+      it = elms_.insert(it, node(idx));
+    } else if (it->index != idx) {
+      // std::cout << "it->idx: " << it->index << std::endl;
+      if (it->index < idx) {
+        // std::cout << "InsAfter" << std::endl;
+        it = elms_.insert(++it, node(idx));
+      } else {
+        // std::cout << "InsBefore" << std::endl;
+        it = elms_.insert(it, node(idx));
+      }
+    }
+
+    curElm_ = it;
+
+    auto offs = getOffs(id);
+    bool ret = !(it->bitmap.test(offs));
+    it->bitmap.set(offs);
+    return ret;
+  }
+  //}}}
+
+  // Operators {{{
+  bool operator==(const SparseBitmap &rhs) const {
+    auto it1 = std::begin(elms_);
+    auto it2 = std::begin(rhs.elms_);
+
+    for (; it1 != std::end(elms_) && it1 != std::end(rhs.elms_); ++it1, ++it2) {
+      if (*it1 != *it2) {
+        return false;
+      }
+    }
+
+    return it1 == std::end(elms_) && it2 == std::end(rhs.elms_);
+  }
+
+  bool operator!=(const SparseBitmap &rhs) const {
+    return !(*this == rhs);
+  }
+
+  // Ugh, harder
+  bool operator|=(const SparseBitmap &rhs) {
+    // If they are empty nothing changes...
+    if (rhs.empty()) {
+      return false;
+    }
+
+    bool ch = false;
+    auto it1 = std::begin(elms_);
+    auto it2 = std::begin(rhs.elms_);
+
+    while (it2 != std::end(rhs.elms_)) {
+      if (it1 == std::end(elms_) || it1->index > it2->index) {
+        elms_.insert(it1, *it2);
+        ++it2;
+        ch = true;
+      } else if (it1->index == it2->index) {
+        // Don't do copy if we've already changed
+        if (!ch) {
+          auto old = it1->bitmap;
+          it1->bitmap |= it2->bitmap;
+          ch = old != it1->bitmap;
+        } else {
+          it1->bitmap |= it2->bitmap;
+        }
+        ++it1;
+        ++it2;
+      } else {
+        ++it1;
+      }
+    }
+
+    curElm_ = std::begin(elms_);
+
+    return ch;
+  }
+
+  bool operator&=(const SparseBitmap &rhs) {
+    if (elms_.empty() && rhs.elms_.empty()) {
+      return false;
+    }
+
+    bool ch = false;
+    auto it1 = std::begin(elms_);
+    auto it2 = std::begin(rhs.elms_);
+
+    while (it2 != std::end(rhs.elms_)) {
+      if (it1 == std::end(elms_)) {
+        curElm_ = std::begin(elms_);
+        return ch;
+      }
+
+      if (it1->index > it2->index) {
+        ++it2;
+      } else if (it1->index == it2->index) {
+        // Don't do copy if we've already changed
+        if (!ch) {
+          auto old = it1->bitmap;
+          it1->bitmap &= it2->bitmap;
+          ch = old != it1->bitmap;
+        } else {
+          it1->bitmap &= it2->bitmap;
+        }
+
+        if (it1->bitmap.none()) {
+          auto tmp = it1;
+          ++it1;
+          elms_.erase(tmp);
+        } else {
+          ++it1;
+        }
+        ++it2;
+      } else {
+        auto tmp = it1;
+        ++it1;
+        elms_.erase(tmp);
+      }
+    }
+
+    ch |= (it1 == std::end(elms_));
+    elms_.erase(it1, std::end(elms_));
+    curElm_ = std::begin(elms_);
+    return ch;
+  }
+  //}}}
+
+  // Hash {{{
+  class hasher {
+   public:
+    size_t operator()(const SparseBitmap &map) const {
+      size_t ret = 0;
+
+      for (auto &elm : map.elms_) {
+        ret ^= elm.index;
+        ret ^= std::hash<std::bitset<bits_per_field>>()(elm.bitmap);
+      }
+
+      return ret;
+    }
+  };
+  //}}}
+
+  // Iteration {{{
+  class iterator :
+      public std::iterator<std::forward_iterator_tag, id_type> {
+   public:
+    int32_t BitsPerShift = 64;
+
+    explicit iterator(const bitmap_list &bl, bool end) :
+        bl_(bl), it_(std::begin(bl)), end_(end) {
+      getFirstBit();
+    }
+
+    explicit iterator(const bitmap_list &bl) : bl_(bl), it_(std::begin(bl)) {
+      getFirstBit();
+    }
+
+    iterator operator++(int) {
+      auto tmp = *this;
+      advanceBit();
+      return tmp;
+    }
+
+    iterator &operator++() {
+      advanceBit();
+      return *this;
+    }
+
+    id_type operator*() const {
+      // -1 b/c the bsPos_ is 1 indexed
+      auto ret = id_type(bsPos_-1 + bsShift_ + it_->index * bits_per_field);
+
+      // std::cout << "Returning: " << ret << std::endl;
+
+      return ret;
+    }
+
+    bool operator==(const iterator &it) const {
+      return end_ == it.end_ ||
+        (it_ == it.it_ &&
+        bsPos_ == it.bsPos_ &&
+        bsShift_ == it.bsShift_);
+    }
+
+    bool operator!=(const iterator &it) const {
+      return !(*this == it);
+    }
+
+   private:
+    constexpr std::bitset<bits_per_field> mask() {
+      return std::bitset<bits_per_field>(
+          std::numeric_limits<uint64_t>::max());
+    }
+
+    void getBsVal() {
+      bsVal_ = ((it_->bitmap >> bsShift_) & mask()).to_ullong();
+      // std::cout << "getBsVal: " << bsVal_ << std::endl;
+    }
+
+    void advanceBs() {
+      bsShift_ += BitsPerShift;
+    }
+
+    void nextBsVal() {
+      advanceBs();
+      getBsVal();
+    }
+
+    void nextBsPos() {
+      int val = __builtin_ffsll(bsVal_);
+      assert(val != 0);
+      if (val == 64) {
+        bsVal_ = 0;
+      } else {
+        bsVal_ >>= val;
+      }
+      // std::cout << "~new bsVal_: " << bsVal_ << std::endl;
+      bsPos_ += val;
+    }
+
+    void getFirstBit() {
+      if (end_) {
+        return;
+      }
+
+      if (bl_.empty()) {
+        end_ = true;
+        return;
+      }
+
+      it_ = std::begin(bl_);
+      // std::cout << "init it->idx: " << it_->index  << std::endl;
+
+      // Initialize bsVal_;
+      getBsVal();
+
+      // std::cout << "init bsVal_: " << bsVal_ << std::endl;
+
+      // Go until we get a non-0 bs
+      while (bsVal_ == 0) {
+        nextBsVal();
+      }
+
+      // std::cout << "post-inc bsVal_: " << bsVal_ << std::endl;
+
+      // Okay, now find the first bit
+      bsPos_ = 0;
+      nextBsPos();
+      // std::cout << "init bsPos_: " << bsPos_ << std::endl;
+    }
+
+    void advanceBit() {
+      if (end_) {
+        return;
+      }
+
+      // std::cout << "have bsVal_: " << bsVal_ << std::endl;
+      while (bsVal_ == 0) {
+        bsPos_ = 0;
+        // std::cout << "have bsShift_: " << bsShift_ << std::endl;
+        if (bsShift_ == bits_per_field) {
+          ++it_;
+          // std::cout << "IT advance" << std::endl;
+          if (it_ == std::end(bl_)) {
+            // std::cout << "END" << std::endl;
+            end_ = true;
+            return;
+          }
+          bsShift_ = 0;
+          getBsVal();
+          // std::cout << "BS reset to: " << bsVal_ << std::endl;
+        } else {
+          nextBsVal();
+        }
+      }
+
+      // std::cout << "old bsPos_ : " << bsPos_ << std::endl;
+      nextBsPos();
+      // std::cout << "new bsPos_ : " << bsPos_ << std::endl;
+    }
+
+    const bitmap_list &bl_;
+    typename bitmap_list::const_iterator it_;
+
+    bool end_ = false;
+    uint32_t bsPos_ = 0;
+    uint64_t bsVal_;
+    uint32_t bsShift_ = 0;
+  };
+
+  typedef iterator const_iterator;
+
+  iterator begin() {
+    return iterator(elms_);
+  }
+
+  iterator end() {
+    return iterator(elms_, true);
+  }
+
+  const_iterator begin() const {
+    return const_iterator(elms_);
+  }
+
+  const_iterator end() const {
+    return const_iterator(elms_, true);
+  }
+  //}}}
+
+  // Print debug {{{
+  friend std::ostream &operator<<(std::ostream &os, const SparseBitmap &map) {
+    os << "{";
+    for (auto val : map) {
+      os << " " << val;
+    }
+    os << " }";
+    return os;
+  }
+  //}}}
 
  private:
-  bitmap_list::iterator findIndex(id_type id) {
-    auto idx = static_cast<size_t>(id) / (bits__per_field);
-
-    if (last_elm
+  static size_t getIdx(id_type id) {
+    return static_cast<size_t>(id) / (bits_per_field);
   }
 
-  bitmap_list elms_;
-  bitmap_list::iterator lastElm_;
+  static size_t getOffs(id_type id) {
+    return static_cast<size_t>(id) % (bits_per_field);
+  }
+
+  // Returns the node that contains this id, or the node before it if it isn't
+  //   found, or std::end(list) if the element belongs at the front of the list
+  typename bitmap_list::iterator findClosest(size_t idx) const {
+    if (elms_.empty()) {
+      return std::end(elms_);
+    }
+
+    if (curElm_ == std::end(elms_)) {
+      --curElm_;
+    }
+
+    auto elm = curElm_;
+    if (elm->index == idx) {
+      return elm;
+    } else if (elm->index > idx) {
+      while (elm != std::begin(elms_) &&
+          elm->index > idx) {
+        --elm;
+      }
+    } else {
+      while (elm != std::end(elms_) &&
+          elm->index < idx) {
+        ++elm;
+      }
+    }
+
+    curElm_ = elm;
+    return elm;
+  }
+
+  mutable bitmap_list elms_;
+
+  // We make lastElm_ mutable as it does not modify the interface to the class,
+  // so we can change it in const accessors while they still appear const to the
+  // outside world
+  mutable typename bitmap_list::iterator curElm_;
 };
 //}}}
-*/
 }  // namespace util
 
 #endif  // INCLUDE_UTIL_H_

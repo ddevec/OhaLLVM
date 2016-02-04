@@ -1130,12 +1130,14 @@ bool SpecAnders::solve() {
 
         auto &succ_node = graph_.getNode(succ_id);
 
-        if (seen_edges.find(succ_pr) != std::end(seen_edges)) {
+        // Dedup the edges
+        auto new_pr = std::make_pair(succ_node.id(), succ_offs);
+        if (seen_edges.find(new_pr) != std::end(seen_edges)) {
           edges[idx] = edges.back();
           edges.pop_back();
           continue;
         } else {
-          seen_edges.insert(succ_pr);
+          seen_edges.insert(new_pr);
         }
         idx++;
 
@@ -1150,7 +1152,7 @@ bool SpecAnders::solve() {
 
         adout("  f: " << succ_offs << "\n");
         adout("  i: " << pnd->ptsto() << "\n");
-        adout("  o: " << succ_id << ": " << succ_pts << "\n");
+        adout("  o: " << succ_node.id() << ": " << succ_pts << "\n");
         // Don't gep with intvalue:
         bool intgep = pnd->ptsto().test(ObjectMap::IntValue);
         bool nullgep = pnd->ptsto().test(ObjectMap::NullValue);
@@ -1186,7 +1188,7 @@ bool SpecAnders::solve() {
         }
 
         adout("  ch: " << ch << "\n");
-        adout("  O: " << succ_id << ": " << succ_pts << "\n");
+        adout("  O: " << succ_node.id() << ": " << succ_pts << "\n");
 
 
 
@@ -1249,7 +1251,7 @@ bool SpecAnders::solve() {
 
       adout("  f: 0\n");
       adout("  i: " << pnd->ptsto() << "\n");
-      adout("  o: " << succ_id << ": " << succ_pts << "\n");
+      adout("  o: " << succ_node.id() << ": " << succ_pts << "\n");
 
       /*
       if (solve_debug_id > 0 &&
@@ -1263,7 +1265,7 @@ bool SpecAnders::solve() {
       bool ch = succ_pts |= pnd->ptsto();
 
       adout("  ch: " << ch << "\n");
-      adout("  O: " << succ_id << ": " << succ_pts << "\n");
+      adout("  O: " << succ_node.id() << ": " << succ_pts << "\n");
 
       auto edge = std::make_pair(pnd->id(), succ_node.id());
       // If we haven't run LCD on this edge before, the points-to sets are not

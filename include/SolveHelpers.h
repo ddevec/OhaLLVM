@@ -20,7 +20,8 @@
 
 
 // Bitmap used in many places (and by Andersen's) to represent ptsto
-typedef llvm::SparseBitVector<> Bitmap;
+// typedef llvm::SparseBitVector<> Bitmap;
+typedef util::SparseBitmap<> Bitmap;
 
 // Required for using a Bitmap as a std::map key (used for ID gathering) {{{
 struct BitmapLT {
@@ -53,11 +54,7 @@ struct BitmapLT {
 
 struct BitmapHash {
   size_t operator() (const Bitmap &b1) const {
-    size_t hash = 0x7E7E7E7E7E7E7E7ELLU;
-    for (auto idx : b1) {
-      hash ^= std::hash<int32_t>()(idx);
-    }
-    return hash;
+    return Bitmap::hasher()(b1);
   }
 };
 //}}}

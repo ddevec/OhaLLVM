@@ -208,6 +208,7 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
       }
     }
 
+    llvm::dbgs() << "  num_objs: " << omap.getNumObjs() << "\n";
     llvm::dbgs() << "  num_alloc: " << num_alloc << "\n";
     llvm::dbgs() << "  num_gep: " << num_gep << "\n";
     llvm::dbgs() << "  num_copy: " << num_copy << "\n";
@@ -268,11 +269,31 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
       }
     }
 
+    llvm::dbgs() << "  num_objs: " << omap.getNumObjs() << "\n";
     llvm::dbgs() << "  num_alloc: " << num_alloc << "\n";
     llvm::dbgs() << "  num_gep: " << num_gep << "\n";
     llvm::dbgs() << "  num_copy: " << num_copy << "\n";
     llvm::dbgs() << "  num_load: " << num_load << "\n";
     llvm::dbgs() << "  num_store: " << num_store << "\n";
+
+    Bitmap nodes;
+    for (auto &pcons : cg) {
+      if (pcons == nullptr) {
+        continue;
+      }
+
+      // Ignore address of destinations?
+      if (pcons->type() == ConstraintType::AddressOf) {
+        // Add dest only for addressof
+        nodes.set(pcons->dest().val());
+        continue;
+      }
+
+      nodes.set(pcons->dest().val());
+      nodes.set(pcons->src().val());
+    }
+
+    llvm::dbgs() << "  num_nodes: " << nodes.count() << "\n";
   }
 
   // Then, HCD
@@ -639,6 +660,73 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
     }
     //}}}
   }
+
+#ifndef NDEBUG
+  // Verify I don't have any crazy stuff in the graph
+  uint32_t num_nodes = 0;
+  uint32_t num_node_pts = 0;
+  uint32_t num_reps = 0;
+  uint64_t num_copy_edges = 0;
+  uint64_t num_gep_edges = 0;
+  uint64_t total_pts_size = 0;
+  for (auto &node : graph_) {
+    // Gather num nodes
+    num_nodes++;
+    if (!node.isRep()) {
+      // Assert non-reps don't have succs or ptstos
+      assert(node.ptsto().empty());
+      assert(node.copySuccs().empty());
+      assert(node.gepSuccs().empty());
+    } else {
+      // Gather num reps
+      num_reps++;
+
+
+      if (!node.ptsto().empty()) {
+        num_node_pts++;
+      }
+
+      total_pts_size += node.ptsto().size();
+      num_copy_edges += node.copySuccs().count();
+      num_gep_edges += node.gepSuccs().size();
+      /*
+      for (auto id : node.ptsto()) {
+        total_pts_size++;
+        // Should point to a rep
+        // Not guaranteed, ever
+        // assert(graph_.getNode(id).id() == id);
+      }
+
+      // Count avg number of outgoing edges
+      for (auto id_val : node.copySuccs()) {
+        // Should point to a rep
+        // Not guaranteed, if a succ is merged after the last visit to this node
+        // assert(graph_.getNode(id).id() == id);
+        num_copy_edges++;
+      }
+
+      for (auto &pr : node.gepSuccs()) {
+        auto id = pr.first;
+        // Should point to a rep
+        // Not guaranteed, if a succ is merged after the last visit to this node
+        // assert(graph_.getNode(id).id() == id);
+        num_gep_edges++;
+      }
+      */
+    }
+  }
+
+  llvm::dbgs() << "num_nodes: " << num_nodes << "\n";
+  llvm::dbgs() << "num_nonempty_nodes: " << num_node_pts << "\n";
+  llvm::dbgs() << "num_reps: " << num_reps << "\n";
+  llvm::dbgs() << "num_copy_edges: " << num_copy_edges << "\n";
+  llvm::dbgs() << "num_gep_edges: " << num_gep_edges << "\n";
+  llvm::dbgs() << "total_pts_size: " << total_pts_size << "\n";
+
+#endif
+
+  // Free any memory no longer needed by the graph (now that solve is done)
+  graph_.cleanup();
 
   // We do not modify code, ever!
   return false;
