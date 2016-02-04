@@ -605,6 +605,12 @@ class CFG {
     //}}}
     //}}}
 
+    // Update {{{
+    void updateObjIDs(const std::vector<ObjectMap::ObjID> &) {
+      llvm_unreachable("TODO");
+    }
+    //}}}
+
  private:
     // Control Flow Graph data {{{
     ControlFlowGraph CFG_;

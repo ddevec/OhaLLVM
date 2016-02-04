@@ -17,7 +17,6 @@
 #include "include/util.h"
 
 // Don't use llvm includes in unit tests
-#ifndef SPECSFS_IS_TEST
 #include "llvm/Constants.h"
 #include "llvm/DerivedTypes.h"
 #include "llvm/Function.h"
@@ -28,871 +27,891 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/GetElementPtrTypeIterator.h"
-#endif
 
 class ObjectMap {
   //{{{
  public:
-    // Internal types {{{
-    // NOTE: I use int32_t for size reasons
-    struct omap_id { };
-    typedef util::ID<omap_id, int32_t, -1> ObjID;
+  // Internal types {{{
+  // NOTE: I use int32_t for size reasons
+  struct omap_id { };
+  typedef util::ID<omap_id, int32_t, -1> ObjID;
 
-    typedef std::unordered_map<ObjID, int32_t, ObjID::hasher> StructMap;
-    //}}}
+  typedef std::unordered_map<ObjID, int32_t, ObjID::hasher> StructMap;
+  //}}}
 
-    // Exported Constant ObjIDs {{{
-    enum class Type {
-      Special,
-      Value,
-      Object,
-      Return,
-      VarArg
-    };
+  // Exported Constant ObjIDs {{{
+  enum class Type {
+    Special,
+    Value,
+    Object,
+    Return,
+    VarArg
+  };
 
-    enum class ObjEnum : int32_t {
-      eNullValue = 0,
-      eNullObjectValue = 1,
-      eIntValue = 2,
-      eUniversalValue = 3,
-      eAggregateValue = 4,
-      ePthreadSpecificValue = 5,
-      eArgvValue = 6,
-      eArgvValueObject = 7,
-      eLocaleObject = 8,
-      eCTypeObject = 9,
-      eErrnoObject = 10,
-      eCLibObject = 11,
-      eTermInfoObject = 12,
-      eArgvObject = 13,
-      eArgvObjectObject = 14,
-      eStdIOValue = 15,
-      eIoctlValue = 16,
-      eNumDefaultObjs
-    } DefaultObjs;
+  enum class ObjEnum : int32_t {
+    eNullValue = 0,
+    eNullObjectValue = 1,
+    eIntValue = 2,
+    eUniversalValue = 3,
+    eAggregateValue = 4,
+    ePthreadSpecificValue = 5,
+    eArgvValue = 6,
+    eArgvValueObject = 7,
+    eLocaleObject = 8,
+    eCTypeObject = 9,
+    eErrnoObject = 10,
+    eCLibObject = 11,
+    eTermInfoObject = 12,
+    eArgvObject = 13,
+    eArgvObjectObject = 14,
+    eStdIOValue = 15,
+    eIoctlValue = 16,
+    eNumDefaultObjs
+  } DefaultObjs;
 
-    // I hate static consts I should find a better fix
-    static const ObjID NullValue;
-    static const ObjID NullObjectValue;
-    static const ObjID IntValue;
-    static const ObjID AggregateValue;
-    static const ObjID UniversalValue;
-    static const ObjID PthreadSpecificValue;
-    static const ObjID ArgvValue;
-    static const ObjID ArgvValueObject;
-    static const ObjID LocaleObject;
-    static const ObjID CTypeObject;
-    static const ObjID ErrnoObject;
-    static const ObjID CLibObject;
-    static const ObjID TermInfoObject;
-    static const ObjID ArgvObject;
-    static const ObjID ArgvObjectObject;
-    static const ObjID StdIOObject;
-    static const ObjID StdIOValue;
-    static const ObjID IoctlValue;
-    //}}}
+  // I hate static consts I should find a better fix
+  static const ObjID NullValue;
+  static const ObjID NullObjectValue;
+  static const ObjID IntValue;
+  static const ObjID AggregateValue;
+  static const ObjID UniversalValue;
+  static const ObjID PthreadSpecificValue;
+  static const ObjID ArgvValue;
+  static const ObjID ArgvValueObject;
+  static const ObjID LocaleObject;
+  static const ObjID CTypeObject;
+  static const ObjID ErrnoObject;
+  static const ObjID CLibObject;
+  static const ObjID TermInfoObject;
+  static const ObjID ArgvObject;
+  static const ObjID ArgvObjectObject;
+  static const ObjID StdIOObject;
+  static const ObjID StdIOValue;
+  static const ObjID IoctlValue;
+  //}}}
 
-    static constexpr ObjID getOffsID(ObjID id, int32_t offs) {
-      return ObjID(id.val() + offs);
+  static constexpr ObjID getOffsID(ObjID id, int32_t offs) {
+    return ObjID(id.val() + offs);
+  }
+
+  static void replaceDbgOmap(ObjectMap &omap);
+
+  // Internal classes {{{
+  class StructInfo {
+    //{{{
+   public:
+    StructInfo(ObjectMap &omap, const llvm::StructType *type) :
+        type_(type) {
+      int32_t field_count = 0;
+      std::for_each(type->element_begin(), type->element_end(),
+          [this, &omap, &field_count]
+          (const llvm::Type *element_type) {
+        // We start by assuming structure fields are strong
+        bool strong = true;
+
+        // If this is an array, strip away the outer typing
+        while (auto at = dyn_cast<llvm::ArrayType>(element_type)) {
+          strong = false;
+          element_type = at->getContainedType(0);
+        }
+
+        offsets_.emplace_back(field_count);
+
+        if (auto struct_type =
+            dyn_cast<llvm::StructType>(element_type)) {
+          auto &struct_info = omap.getStructInfo(struct_type);
+          sizes_.insert(std::end(sizes_), struct_info.sizes_begin(),
+            struct_info.sizes_end());
+
+          // This field is strong if the substruct field was strong, and
+          //   we're currently strong
+          std::for_each(struct_info.strong_begin(),
+              struct_info.strong_end(),
+              [this, &strong] (bool sub_strong) {
+            // If we're strong, and their strong the field is strong
+            fieldStrong_.push_back(strong & sub_strong);
+          });
+
+          field_count += struct_info.numFields();
+        } else {
+          sizes_.emplace_back(1);
+          fieldStrong_.push_back(strong);
+          field_count++;
+        }
+      });
     }
 
-#ifdef SPECSFS_IS_TEST
-};
-#else
-    static void replaceDbgOmap(ObjectMap &omap);
+    StructInfo(StructInfo &&) = default;
+    StructInfo &operator=(StructInfo &&) = default;
 
-    // Internal classes {{{
-    class StructInfo {
-      //{{{
-     public:
-        StructInfo(ObjectMap &omap, const llvm::StructType *type) :
-            type_(type) {
-          int32_t field_count = 0;
-          std::for_each(type->element_begin(), type->element_end(),
-              [this, &omap, &field_count]
-              (const llvm::Type *element_type) {
-            // We start by assuming structure fields are strong
-            bool strong = true;
+    StructInfo(const StructInfo &) = default;
+    StructInfo &operator=(const StructInfo &) = delete;
 
-            // If this is an array, strip away the outer typing
-            while (auto at = dyn_cast<llvm::ArrayType>(element_type)) {
-              strong = false;
-              element_type = at->getContainedType(0);
-            }
+    // The number of elements in the structure
+    int32_t size() const {
+      return sizes_.size();
+    }
 
-            offsets_.emplace_back(field_count);
+    size_t numSizes() const {
+      return sizes_.size();
+    }
 
-            if (auto struct_type =
-                dyn_cast<llvm::StructType>(element_type)) {
-              auto &struct_info = omap.getStructInfo(struct_type);
-              sizes_.insert(std::end(sizes_), struct_info.sizes_begin(),
-                struct_info.sizes_end());
+    size_t numFields() const {
+      return offsets_.size();
+    }
 
-              // This field is strong if the substruct field was strong, and
-              //   we're currently strong
-              std::for_each(struct_info.strong_begin(),
-                  struct_info.strong_end(),
-                  [this, &strong] (bool sub_strong) {
-                // If we're strong, and their strong the field is strong
-                fieldStrong_.push_back(strong & sub_strong);
-              });
+    int32_t getFieldOffset(int32_t idx) const {
+      return offsets_.at(idx);
+    }
 
-              field_count += struct_info.numFields();
-            } else {
-              sizes_.emplace_back(1);
-              fieldStrong_.push_back(strong);
-              field_count++;
-            }
-          });
-        }
+    int32_t getFieldSize(int32_t idx) const {
+      return sizes_.at(idx);
+    }
 
-        StructInfo(StructInfo &&) = default;
-        StructInfo &operator=(StructInfo &&) = default;
+    const llvm::StructType *type() const {
+      return type_;
+    }
 
-        StructInfo(const StructInfo &) = default;
-        StructInfo &operator=(const StructInfo &) = delete;
+    // ddevec - TODO: Should keep track of if field is within array...
+    bool fieldStrong(int32_t idx) const {
+      return fieldStrong_.at(idx);
+    }
 
-        // The number of elements in the structure
-        int32_t size() const {
-          return sizes_.size();
-        }
+    // Iteration {{{
+    typedef std::vector<int32_t>::iterator size_iterator;
+    typedef std::vector<int32_t>::const_iterator const_size_iterator;
 
-        size_t numSizes() const {
-          return sizes_.size();
-        }
+    size_iterator sizes_begin() {
+      return std::begin(sizes_);
+    }
 
-        size_t numFields() const {
-          return offsets_.size();
-        }
+    size_iterator sizes_end() {
+      return std::end(sizes_);
+    }
 
-        int32_t getFieldOffset(int32_t idx) const {
-          return offsets_.at(idx);
-        }
+    const_size_iterator sizes_begin() const {
+      return std::begin(sizes_);
+    }
 
-        int32_t getFieldSize(int32_t idx) const {
-          return sizes_.at(idx);
-        }
+    const_size_iterator sizes_end() const {
+      return std::end(sizes_);
+    }
 
-        const llvm::StructType *type() const {
-          return type_;
-        }
+    const_size_iterator sizes_cbegin() const {
+      return std::begin(sizes_);
+    }
 
-        // ddevec - TODO: Should keep track of if field is within array...
-        bool fieldStrong(int32_t idx) const {
-          return fieldStrong_.at(idx);
-        }
+    const_size_iterator sizes_cend() const {
+      return std::end(sizes_);
+    }
 
-        // Iteration {{{
-        typedef std::vector<int32_t>::iterator size_iterator;
-        typedef std::vector<int32_t>::const_iterator const_size_iterator;
+    typedef std::vector<int8_t>::iterator strong_iterator;
+    typedef std::vector<int8_t>::const_iterator const_strong_iterator;
 
-        size_iterator sizes_begin() {
-          return std::begin(sizes_);
-        }
+    strong_iterator strong_begin() {
+      return std::begin(fieldStrong_);
+    }
 
-        size_iterator sizes_end() {
-          return std::end(sizes_);
-        }
+    strong_iterator strong_end() {
+      return std::end(fieldStrong_);
+    }
 
-        const_size_iterator sizes_begin() const {
-          return std::begin(sizes_);
-        }
+    const_strong_iterator strong_begin() const {
+      return std::begin(fieldStrong_);
+    }
 
-        const_size_iterator sizes_end() const {
-          return std::end(sizes_);
-        }
+    const_strong_iterator strong_end() const {
+      return std::end(fieldStrong_);
+    }
 
-        const_size_iterator sizes_cbegin() const {
-          return std::begin(sizes_);
-        }
+    const_strong_iterator strong_cbegin() const {
+      return std::begin(fieldStrong_);
+    }
 
-        const_size_iterator sizes_cend() const {
-          return std::end(sizes_);
-        }
+    const_strong_iterator strong_cend() const {
+      return std::end(fieldStrong_);
+    }
 
-        typedef std::vector<int8_t>::iterator strong_iterator;
-        typedef std::vector<int8_t>::const_iterator const_strong_iterator;
-
-        strong_iterator strong_begin() {
-          return std::begin(fieldStrong_);
-        }
-
-        strong_iterator strong_end() {
-          return std::end(fieldStrong_);
-        }
-
-        const_strong_iterator strong_begin() const {
-          return std::begin(fieldStrong_);
-        }
-
-        const_strong_iterator strong_end() const {
-          return std::end(fieldStrong_);
-        }
-
-        const_strong_iterator strong_cbegin() const {
-          return std::begin(fieldStrong_);
-        }
-
-        const_strong_iterator strong_cend() const {
-          return std::end(fieldStrong_);
-        }
-
-        //}}}
-
-        // Wohoo printing {{{
-        friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
-            const StructInfo &si) {
-          // FIXME(ddevec): Cannot do getName on "literal" structs
-          // os << "StructInfo( " << si.type()->getName() << ", [";
-          os << "StructInfo( [";
-          std::for_each(si.sizes_begin(), si.sizes_end(),
-              [&os] (int32_t size) {
-            os << " " << size;
-          });
-          os << " ] )";
-          return os;
-        }
-        //}}}
-
-     private:
-        // Private Variables {{{
-        std::vector<int32_t> offsets_;
-        std::vector<int32_t> sizes_;
-        std::vector<int8_t> fieldStrong_;
-        const llvm::StructType *type_;
-        //}}}
-      //}}}
-    };
     //}}}
 
-    // Constructor/Copiers {{{
-    ObjectMap();
-    // FIXME: Not strictly safe, with the maxStructInfo pointer, but I don't
-    //   want to write a custom constructor which must be contained, for a
-    //   corner case that will likely never come back to bite me...
-    ObjectMap(const ObjectMap &) = default;
-    ObjectMap(ObjectMap &&) = delete;
-
-    ObjectMap &operator=(const ObjectMap &) = default;
-    ObjectMap &operator=(ObjectMap &&) = delete;
+    // Wohoo printing {{{
+    friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+        const StructInfo &si) {
+      // FIXME(ddevec): Cannot do getName on "literal" structs
+      // os << "StructInfo( " << si.type()->getName() << ", [";
+      os << "StructInfo( [";
+      std::for_each(si.sizes_begin(), si.sizes_end(),
+          [&os] (int32_t size) {
+        os << " " << size;
+      });
+      os << " ] )";
+      return os;
+    }
     //}}}
 
-    // Value insertion {{{
-    // Used to create phony identifers for nodes that don't have llvm::Values
-    //    (actual program values) associated with them
-    ObjID createPhonyID() {
+   private:
+    // Private Variables {{{
+    std::vector<int32_t> offsets_;
+    std::vector<int32_t> sizes_;
+    std::vector<int8_t> fieldStrong_;
+    const llvm::StructType *type_;
+    //}}}
+    //}}}
+  };
+  //}}}
+
+  // Constructor/Copiers {{{
+  ObjectMap();
+  // FIXME: Not strictly safe, with the maxStructInfo pointer, but I don't
+  //   want to write a custom constructor which must be contained, for a
+  //   corner case that will likely never come back to bite me...
+  ObjectMap(const ObjectMap &) = default;
+  ObjectMap(ObjectMap &&) = delete;
+
+  ObjectMap &operator=(const ObjectMap &) = default;
+  ObjectMap &operator=(ObjectMap &&) = delete;
+  //}}}
+
+  // Value insertion {{{
+  // Used to create phony identifers for nodes that don't have llvm::Values
+  //    (actual program values) associated with them
+  ObjID createPhonyID() {
+    auto ret = createMapping(nullptr);
+    // assert(ret.val() != 191197);
+    return ret;
+  }
+
+  ObjID createPhonyID(const llvm::Value *val) {
+    auto ret = createMapping(val);
+
+    assert(phonyMap_.find(ret) == std::end(phonyMap_));
+    phonyMap_.emplace(ret, val);
+
+    return ret;
+  }
+
+  ObjID createPhonyObjectIDs(const llvm::Type *type) {
+    while (auto at = dyn_cast<llvm::ArrayType>(type)) {
+      type = at->getElementType();
+    }
+
+    if (auto st = dyn_cast<llvm::StructType>(type)) {
+      auto &struct_info = getStructInfo(st);
+
+      int num_sizes = struct_info.size();
+      numObjs_ += num_sizes;
+      assert(num_sizes > 0);
+
+      int cur_size = 0;
+
       auto ret = createMapping(nullptr);
-      // assert(ret.val() != 191197);
-      return ret;
-    }
+      objIsStruct_.emplace(ret, num_sizes);
 
-    ObjID createPhonyID(const llvm::Value *val) {
-      auto ret = createMapping(val);
+      for (int i = 1; i < num_sizes; i++) {
+        auto id = createMapping(nullptr);
 
-      assert(phonyMap_.find(ret) == std::end(phonyMap_));
-      phonyMap_.emplace(ret, val);
-
-      return ret;
-    }
-
-    ObjID createPhonyObjectIDs(const llvm::Type *type) {
-      while (auto at = dyn_cast<llvm::ArrayType>(type)) {
-        type = at->getElementType();
+        objIsStruct_.emplace(id, num_sizes - i);
+        cur_size++;
       }
 
-      if (auto st = dyn_cast<llvm::StructType>(type)) {
-        auto &struct_info = getStructInfo(st);
-
-        int num_sizes = struct_info.size();
-        numObjs_ += num_sizes;
-        assert(num_sizes > 0);
-
-        int cur_size = 0;
-
-        auto ret = createMapping(nullptr);
-        objIsStruct_.emplace(ret, num_sizes);
-
-        for (int i = 1; i < num_sizes; i++) {
-          auto id = createMapping(nullptr);
-
-          objIsStruct_.emplace(id, num_sizes - i);
-          cur_size++;
-        }
-
-        return ret;
-      } else {
-        return createMapping(nullptr);
-      }
-    }
-
-    ObjID createPhonyObjectID(const llvm::Value *val) {
-      auto ret = createMapping(val);
-
-      numObjs_++;
-      assert(phonyMap_.find(ret) == std::end(phonyMap_));
-      idToObj_.emplace(ret, val);
-
       return ret;
+    } else {
+      return createMapping(nullptr);
+    }
+  }
+
+  ObjID createPhonyObjectID(const llvm::Value *val) {
+    auto ret = createMapping(val);
+
+    numObjs_++;
+    assert(phonyMap_.find(ret) == std::end(phonyMap_));
+    idToObj_.emplace(ret, val);
+
+    return ret;
+  }
+
+  // Top level variable/node
+  ObjID addValueFunction(const llvm::Value *val) {
+    auto id = __do_add(val, valToID_, idToVal_, nullptr);
+    functions_.push_back(std::make_pair(id, val));
+    functionSet_.insert(id);
+    return id;
+  }
+
+  void mergeObjRep(ObjID orig_id, ObjID new_id) {
+    reps_.merge(orig_id, new_id);
+  }
+
+  void addValue(const llvm::Value *val) {
+    __do_add(val, valToID_, idToVal_, nullptr);
+  }
+
+  void addObjects(const llvm::Type *type, const llvm::Value *val) {
+    if (auto st = dyn_cast<llvm::StructType>(type)) {
+      auto &struct_info = getStructInfo(st);
+
+      int num_sizes = struct_info.size();
+      numObjs_ += num_sizes;
     }
 
-    // Top level variable/node
-    ObjID addValueFunction(const llvm::Value *val) {
-      auto id = __do_add(val, valToID_, idToVal_);
-      functions_.push_back(std::make_pair(id, val));
-      functionSet_.insert(id);
-      return id;
+    __do_add_struct(type, val, objToID_, idToObj_, nullptr, &objSet_);
+  }
+
+  // Allocation site
+  void addObject(const llvm::Value *val) {
+    numObjs_++;
+    __do_add(val, objToID_, idToObj_, &objSet_);
+  }
+
+  // Function return
+  void addReturn(const llvm::Value *val) {
+    __do_add(val, retToID_, idToRet_, nullptr);
+  }
+
+  // Varadic Argument
+  void addVarArg(const llvm::Value *val) {
+    __do_add(val, vargToID_, idToVararg_, nullptr);
+  }
+  //}}}
+
+  // Value Retrieval {{{
+  const StructMap &getIsStructSet() const {
+    return objIsStruct_;
+  }
+
+  static bool isSpecial(ObjID id) {
+    assert(id.val() >= 0);
+    return id.val() < static_cast<int32_t>(ObjEnum::eNumDefaultObjs);
+  }
+
+  static void printSpecial(llvm::raw_ostream &o, ObjID id) {
+    if (id == NullValue) {
+      o << "(NullValue)";
+    } else if (id == NullObjectValue) {
+      o << "(NullObjectValue)";
+    } else if (id == IntValue) {
+      o << "(IntValue)";
+    } else if (id == AggregateValue) {
+      o << "(AggregateValue)";
+    } else if (id == UniversalValue) {
+      o << "(UniversalValue)";
+    } else if (id == PthreadSpecificValue) {
+      o << "(PthreadSpecificValue)";
+    } else if (id == ArgvValueObject) {
+      o << "(Argv val object)";
+    } else if (id == ArgvValue) {
+      o << "(Argv)";
+    } else if (id == StdIOValue) {
+      o << "(stdio)";
+    } else if (id == ArgvObject) {
+      o << "(Argv object)";
+    } else if (id == ArgvObjectObject) {
+      o << "(Argv obj object)";
+    } else if (id == LocaleObject) {
+      o << "(locale)";
+    } else if (id == CTypeObject) {
+      o << "(ctype)";
+    } else if (id == ErrnoObject) {
+      o << "(errno)";
+    } else if (id == CLibObject) {
+      o << "(clib)";
+    } else if (id == TermInfoObject) {
+      o << "(terminfo)";
+    } else if (id == ArgvObject) {
+      o << "(argv)";
+    } else if (id == ArgvObjectObject) {
+      o << "(argv obj)";
+    } else {
+      llvm_unreachable("not special");
     }
+  }
 
-    void mergeObjRep(ObjID orig_id, ObjID new_id) {
-      reps_.merge(orig_id, new_id);
-    }
+  ObjID getRep(ObjID id) const {
+    return reps_.find(id);
+  }
 
-    void addValues(const llvm::Type *type, const llvm::Value *val) {
-      __do_add_struct(type, val, valToID_, idToVal_, nullptr);
-    }
-
-    void addValue(const llvm::Value *val) {
-      __do_add(val, valToID_, idToVal_);
-    }
-
-    void addObjects(const llvm::Type *type, const llvm::Value *val) {
-      if (auto st = dyn_cast<llvm::StructType>(type)) {
-        auto &struct_info = getStructInfo(st);
-
-        int num_sizes = struct_info.size();
-        numObjs_ += num_sizes;
-      }
-
-      __do_add_struct(type, val, objToID_, idToObj_, nullptr);
-    }
-
-/*
-    void addObjectsAlias(const llvm::Type *type, const llvm::Value *val,
-        const std::vector<ObjID> &alias) {
-      llvm::dbgs() << __func__ <<
-        " WARNING: This may not interact well w/ dyn-ptsto info\n";
-      __do_add_struct(type, val, objToID_, idToObj_, &alias);
-    }
-*/
-
-    // Allocation site
-    void addObject(const llvm::Value *val) {
-      numObjs_++;
-      __do_add(val, objToID_, idToObj_);
-    }
-
-    // Function return
-    void addReturn(const llvm::Value *val) {
-      __do_add(val, retToID_, idToRet_);
-    }
-
-    // Varadic Argument
-    void addVarArg(const llvm::Value *val) {
-      __do_add(val, vargToID_, idToVararg_);
-    }
-    //}}}
-
-    // Value Retrieval {{{
-    const StructMap &getIsStructSet() const {
-      return objIsStruct_;
-    }
-
-    static bool isSpecial(ObjID id) {
-      assert(id.val() >= 0);
-      return id.val() < static_cast<int32_t>(ObjEnum::eNumDefaultObjs);
-    }
-
-    static void printSpecial(llvm::raw_ostream &o, ObjID id) {
-      if (id == NullValue) {
-        o << "(NullValue)";
-      } else if (id == NullObjectValue) {
-        o << "(NullObjectValue)";
-      } else if (id == IntValue) {
-        o << "(IntValue)";
-      } else if (id == AggregateValue) {
-        o << "(AggregateValue)";
-      } else if (id == UniversalValue) {
-        o << "(UniversalValue)";
-      } else if (id == PthreadSpecificValue) {
-        o << "(PthreadSpecificValue)";
-      } else if (id == ArgvValueObject) {
-        o << "(Argv val object)";
-      } else if (id == ArgvValue) {
-        o << "(Argv)";
-      } else if (id == StdIOValue) {
-        o << "(stdio)";
-      } else if (id == ArgvObject) {
-        o << "(Argv object)";
-      } else if (id == ArgvObjectObject) {
-        o << "(Argv obj object)";
-      } else if (id == LocaleObject) {
-        o << "(locale)";
-      } else if (id == CTypeObject) {
-        o << "(ctype)";
-      } else if (id == ErrnoObject) {
-        o << "(errno)";
-      } else if (id == CLibObject) {
-        o << "(clib)";
-      } else if (id == TermInfoObject) {
-        o << "(terminfo)";
-      } else if (id == ArgvObject) {
-        o << "(argv)";
-      } else if (id == ArgvObjectObject) {
-        o << "(argv obj)";
-      } else {
-        llvm_unreachable("not special");
-      }
-    }
-
-    ObjID getRep(ObjID id) const {
-      return reps_.find(id);
-    }
-
-    const llvm::Value *valueAtRep(ObjID id) const {
-      auto rep = reps_.find(id);
-      /*
-      if (isPhony(id)) {
-        auto phony_it = phonyMap_.find(id);
-        if (phony_it != std::end(phonyMap_)) {
-          return phony_it->second;
-        }
-        return nullptr;
-      }
-      */
-      return mapping_.at(rep.val());
-    }
-
-    const llvm::Value *valueAtID(ObjID id) const {
-      /*
-      if (isPhony(id)) {
-        auto phony_it = phonyMap_.find(id);
-        if (phony_it != std::end(phonyMap_)) {
-          return phony_it->second;
-        }
-        return nullptr;
-      }
-      */
-      return mapping_.at(id.val());
-    }
-
-    ObjID getValueRep(const llvm::Value *val) {
-      // This function doesn't support contstants -- except global values
-      assert(!llvm::isa<llvm::Constant>(val) ||
-          llvm::isa<llvm::GlobalValue>(val));
-
-      auto id = __do_get(val, valToID_);
-      auto ret = getRep(id);
-      return ret;
-    }
-
-    ObjID getValue(const llvm::Value *val) {
-      // This function doesn't support contstants -- except global values
-      assert(!llvm::isa<llvm::Constant>(val) ||
-          llvm::isa<llvm::GlobalValue>(val));
-
-      auto ret = __do_get(val, valToID_);
-      return ret;
-    }
-
-    // Return for a function
-    ObjID getValueReturn(const llvm::Value *val) const {
-      return __do_get(val, retToID_);
-    }
-
-
-    ObjID getFunction(const llvm::Function *fcn) const {
-      return valToID_.at(cast<const llvm::Value>(fcn));
-    }
-
-    const llvm::Function *getFunction(ObjID id) const {
-      return cast<const llvm::Function>(idToVal_.at(id));
-    }
-
-    // Allocated object id
-    ObjID getObject(const llvm::Value *val) {
-      auto id = __do_get(val, objToID_);
-
-      // Objects should never be merged
-      assert(getRep(id) == id);
-
-      return id;
-    }
-
-    bool isObject(const ObjID id) const {
-      return (isSpecial(id) ||
-          (idToObj_.find(id) != std::end(idToObj_)));
-    }
-
-    bool isValue(const ObjID id) const {
-      // Also, functions aren't values
-      return (idToVal_.find(id) != std::end(idToObj_) &&
-          functionSet_.find(id) == std::end(functionSet_));
-    }
-
-    ObjID getReturn(const llvm::Value *val) const {
-      return __do_get(val, retToID_);
-    }
-
-    ObjID getVarArg(const llvm::Value *val) const {
-      return __do_get(val, vargToID_);
-    }
-
-    ObjID getReturnRep(const llvm::Value *val) const {
-      auto id = __do_get(val, retToID_);
-      auto ret = getRep(id);
-      return ret;
-    }
-
-    ObjID getVarArgRep(const llvm::Value *val) const {
-      auto id = __do_get(val, vargToID_);
-      auto ret = getRep(id);
-      return ret;
-    }
-
-    // ddevec -- FIXME: Does this really belong here?
+  const llvm::Value *valueAtRep(ObjID id) const {
+    auto rep = reps_.find(id);
     /*
-    ObjID getConstValue(const llvm::Constant *C) {
-      return __const_node_helper(C, &ObjectMap::getValue, NullValue);
-    }
-
-    ObjID getConstValueTarget(const llvm::Constant *C) {
-      return __const_node_helper(C, &ObjectMap::getObject, NullObjectValue);
-    }
-    */
-
-    std::pair<Type, const llvm::Value *>
-    getValueInfo(ObjID id) const;
-    //}}}
-
-    // Misc helpers {{{
-    int64_t getNumObjs() const {
-      return numObjs_;
-    }
-
-    size_t size() const {
-      return mapping_.size();
-    }
-    //}}}
-
-    // Structure field tracking {{{
-    bool addStructInfo(const llvm::StructType *type) {
-      bool ret = true;
-      auto it = structInfo_.find(type);
-      // llvm::dbgs() << "Adding struct info for: " << type << "\n";
-
-      if (it == std::end(structInfo_)) {
-        auto emp_ret = structInfo_.emplace(type,
-            StructInfo(*this, type));
-        assert(emp_ret.second);
-
-        it = emp_ret.first;
-        ret = emp_ret.second;
-
-        auto &info = it->second;
-        if (maxStructInfo_ == nullptr ||
-            info.size() > maxStructInfo_->size()) {
-          maxStructInfo_ = &info;
-        }
+    if (isPhony(id)) {
+      auto phony_it = phonyMap_.find(id);
+      if (phony_it != std::end(phonyMap_)) {
+        return phony_it->second;
       }
-
-
-      return ret;
-    }
-
-    const StructInfo &getStructInfo(const llvm::StructType *type) {
-      auto st_type = cast<llvm::StructType>(type);
-
-      auto struct_info_it = structInfo_.find(st_type);
-
-      // Its not in our struct list, create a new one
-      if (struct_info_it == std::end(structInfo_)) {
-        addStructInfo(type);
-
-        struct_info_it = structInfo_.find(st_type);
-      }
-
-      return struct_info_it->second;
-    }
-
-    const StructInfo &getMaxStructInfo() const {
-      assert(maxStructInfo_ != nullptr);
-      return *maxStructInfo_;
-    }
-
-    void addObjAlias(ObjID obj_id, ObjID alias_id) {
-      auto it =  objToAliases_.find(obj_id);
-      if (it == std::end(objToAliases_)) {
-        auto em_ret = objToAliases_.emplace(
-            obj_id, std::vector<ObjID>());
-        assert(em_ret.second);
-
-        it = em_ret.first;
-        it->second.emplace_back(obj_id);
-      }
-
-      it->second.emplace_back(alias_id);
-      aliasToObjs_[alias_id] = obj_id;
-    }
-
-    std::pair<bool, const std::vector<ObjID> &>
-    findObjAliases(ObjID obj_id) const {
-      // To return on failure;
-      static std::vector<ObjID> empty_vector;
-      auto it =  objToAliases_.find(obj_id);
-      if (it == std::end(objToAliases_)) {
-        return std::make_pair(false, std::ref(empty_vector));
-      }
-      return std::make_pair(true, std::ref(it->second));
-    }
-
-    std::pair<bool, ObjID>
-    findObjBase(ObjID obj_id) {
-      auto it = aliasToObjs_.find(obj_id);
-      if (it == std::end(aliasToObjs_)) {
-        return std::make_pair(false, ObjID());
-      }
-
-      return std::make_pair(true, it->second);
-    }
-    //}}}
-
-    // Iterators {{{
-    typedef std::unordered_map<const llvm::Value *, ObjID>::iterator
-      to_id_iterator;
-    typedef std::unordered_map<const llvm::Value *, ObjID>::const_iterator
-      const_to_id_iterator;
-
-    typedef std::unordered_map<ObjID, const llvm::Value *, ObjID::hasher>
-      idToValMap;
-    typedef idToValMap::iterator to_val_iterator;
-    typedef idToValMap::const_iterator const_to_val_iterator;
-
-    typedef std::vector<std::pair<ObjID, const llvm::Value *>>::iterator
-      function_iterator;
-    typedef std::vector<std::pair<ObjID, const llvm::Value *>>::const_iterator
-      const_function_iterator;
-
-    function_iterator functions_begin() {
-      return std::begin(functions_);
-    }
-
-    function_iterator functions_end() {
-      return std::end(functions_);
-    }
-
-    const_function_iterator functions_begin() const {
-      return std::begin(functions_);
-    }
-
-    const_function_iterator functions_end() const {
-      return std::end(functions_);
-    }
-
-    const_function_iterator functions_cbegin() const {
-      return functions_.cbegin();
-    }
-
-    const_function_iterator functions_cend() const {
-      return functions_.cend();
-    }
-
-    to_val_iterator values_begin() {
-      return std::begin(idToVal_);
-    }
-
-    to_val_iterator values_end() {
-      return std::end(idToVal_);
-    }
-
-    const_to_val_iterator values_begin() const {
-      return std::begin(idToVal_);
-    }
-
-    const_to_val_iterator values_end() const {
-      return std::end(idToVal_);
-    }
-
-    const_to_val_iterator values_cbegin() const {
-      return idToVal_.cbegin();
-    }
-
-    const_to_val_iterator values_cend() const {
-      return idToVal_.cend();
-    }
-
-    /*
-    static bool isPhony(ObjID id) {
-      return id.val() >= phonyIdBase;
-    }
-    */
-    //}}}
-
- private:
-    // Private variables {{{
-    // Forward mapping
-    std::vector<const llvm::Value *> mapping_;
-    std::vector<std::pair<ObjID, const llvm::Value *>> functions_;
-    std::set<ObjID> functionSet_;
-
-    // Reverse mapping
-    std::unordered_map<const llvm::Value *, ObjID> valToID_;
-    std::unordered_map<const llvm::Value *, ObjID> objToID_;
-    std::unordered_map<const llvm::Value *, ObjID> retToID_;
-    std::unordered_map<const llvm::Value *, ObjID> vargToID_;
-
-    // Reverse mapping
-    idToValMap idToVal_;
-    idToValMap idToObj_;
-    idToValMap idToRet_;
-    idToValMap idToVararg_;
-    idToValMap phonyMap_;
-
-    // Rep useage (for optimization merging)
-    mutable util::UnionFind<ObjID> reps_;
-
-    int64_t numObjs_ = 0;
-
-    // Struct info
-    std::map<const llvm::StructType *, StructInfo> structInfo_;
-    std::map<ObjID, std::vector<ObjID>> objToAliases_;
-    std::map<ObjID, ObjID> aliasToObjs_;
-    StructMap objIsStruct_;
-    const StructInfo *maxStructInfo_ = nullptr;
-    ///}}}
-
-    // Internal helpers {{{
-
-    ObjID getNextID() const {
-      return ObjID(mapping_.size());
-    }
-
-    ObjID createMapping(const llvm::Value *val) {
-      ObjID ret = getNextID();
-      mapping_.emplace_back(val);
-      if_debug_enabled(auto rep_id =)
-        reps_.add();
-      assert(rep_id == ret);
-      // assert(ret.val() >= 0 && ret.val() < phonyIdBase);
-      assert(ret.val() >= 0);
-      return ret;
-    }
-
-    const llvm::Value *__find_helper(ObjID id, const idToValMap &map) const {
-      auto it = map.find(id);
-
-      if (it != std::end(map)) {
-        return it->second;
-      }
-
       return nullptr;
     }
+    */
+    return mapping_.at(rep.val());
+  }
 
-    ObjID __do_add_struct(const llvm::Type *type,
-        const llvm::Value *val,
-        std::unordered_map<const llvm::Value *, ObjID> &mp,
-        idToValMap &pm, const std::vector<ObjID> *alias) {
-      ObjID ret_id;
-
-      // Strip away array references:
-      while (auto at = dyn_cast<llvm::ArrayType>(type)) {
-        type = at->getElementType();
+  const llvm::Value *valueAtID(ObjID id) const {
+    /*
+    if (isPhony(id)) {
+      auto phony_it = phonyMap_.find(id);
+      if (phony_it != std::end(phonyMap_)) {
+        return phony_it->second;
       }
+      return nullptr;
+    }
+    */
+    return mapping_.at(id.val());
+  }
 
-      if (auto st = dyn_cast<llvm::StructType>(type)) {
-        // id is the first field of the struct
-        // Fill out the struct:
-        auto &struct_info = getStructInfo(st);
+  ObjID getValueRep(const llvm::Value *val) {
+    // This function doesn't support contstants -- except global values
+    assert(!llvm::isa<llvm::Constant>(val) ||
+        llvm::isa<llvm::GlobalValue>(val));
 
-        int num_sizes = struct_info.size();
-        int cur_size = 0;
-        // llvm::dbgs() << "Got StructInfo: " << struct_info << "\n";
-        bool first = true;
-        std::for_each(struct_info.sizes_begin(), struct_info.sizes_end(),
-            [this, &ret_id, &alias, &pm, &mp, &first, &val, &num_sizes,
-              &cur_size]
-            (int32_t) {
-          // This is logically reserving an ObjID for this index within the
-          //   struct
-          ObjID id = createMapping(val);
+    auto id = __do_get(val, valToID_);
+    auto ret = getRep(id);
+    return ret;
+  }
 
-          if (first) {
-            ret_id = id;
-            assert(mp.find(val) == std::end(mp));
-            mp.emplace(val, id);
-            first = false;
-          }
+  ObjID getValue(const llvm::Value *val) {
+    // This function doesn't support contstants -- except global values
+    assert(!llvm::isa<llvm::Constant>(val) ||
+        llvm::isa<llvm::GlobalValue>(val));
 
-          // llvm::dbgs() << "Allocating struct id: " << id << "\n";
+    auto ret = __do_get(val, valToID_);
+    return ret;
+  }
 
-          assert(pm.find(id) == std::end(pm));
-          pm.emplace(id, val);
+  // Return for a function
+  ObjID getValueReturn(const llvm::Value *val) const {
+    return __do_get(val, retToID_);
+  }
 
 
-          objIsStruct_.emplace(id, num_sizes - cur_size);
-          cur_size++;
-          // Denote which objects this structure field occupies
-          if (alias == nullptr) {
-            objToAliases_[ret_id].emplace_back(id);
-            aliasToObjs_[id] = ret_id;
-          } else {
-            for (auto &obj_id : *alias) {
-              objToAliases_[obj_id].emplace_back(id);
-              aliasToObjs_[id] = obj_id;
-            }
-          }
-        });
+  ObjID getFunction(const llvm::Function *fcn) const {
+    return valToID_.at(cast<const llvm::Value>(fcn));
+  }
 
-        assert(ret_id != ObjID::invalid());
-      // Not a struct
-      } else {
-        assert(mp.find(val) == std::end(mp));
-        ret_id = createMapping(val);
+  const llvm::Function *getFunction(ObjID id) const {
+    return cast<const llvm::Function>(idToVal_.at(id));
+  }
 
-        mp.emplace(val, ret_id);
-        assert(pm.find(ret_id) == std::end(pm));
-        pm.emplace(ret_id, val);
-        if (alias != nullptr) {
-          for (auto &obj_id : *alias) {
-            objToAliases_[obj_id].emplace_back(ret_id);
-            aliasToObjs_[ret_id] = obj_id;
-          }
-        }
+  // Allocated object id
+  ObjID getObject(const llvm::Value *val) {
+    auto id = __do_get(val, objToID_);
+
+    // Objects should never be merged
+    assert(getRep(id) == id);
+
+    return id;
+  }
+
+  bool isObject(const ObjID id) const {
+    return (isSpecial(id) ||
+        (idToObj_.find(id) != std::end(idToObj_)));
+  }
+
+  bool isValue(const ObjID id) const {
+    // Also, functions aren't values
+    return (idToVal_.find(id) != std::end(idToObj_) &&
+        functionSet_.find(id) == std::end(functionSet_));
+  }
+
+  ObjID getReturn(const llvm::Value *val) const {
+    return __do_get(val, retToID_);
+  }
+
+  ObjID getVarArg(const llvm::Value *val) const {
+    return __do_get(val, vargToID_);
+  }
+
+  ObjID getReturnRep(const llvm::Value *val) const {
+    auto id = __do_get(val, retToID_);
+    auto ret = getRep(id);
+    return ret;
+  }
+
+  ObjID getVarArgRep(const llvm::Value *val) const {
+    auto id = __do_get(val, vargToID_);
+    auto ret = getRep(id);
+    return ret;
+  }
+
+  // ddevec -- FIXME: Does this really belong here?
+  /*
+  ObjID getConstValue(const llvm::Constant *C) {
+    return __const_node_helper(C, &ObjectMap::getValue, NullValue);
+  }
+
+  ObjID getConstValueTarget(const llvm::Constant *C) {
+    return __const_node_helper(C, &ObjectMap::getObject, NullObjectValue);
+  }
+  */
+
+  std::pair<Type, const llvm::Value *>
+  getValueInfo(ObjID id) const;
+  //}}}
+
+  // Misc helpers {{{
+  int64_t getNumObjs() const {
+    return numObjs_;
+  }
+
+  size_t size() const {
+    return mapping_.size();
+  }
+  //}}}
+
+  // Structure field tracking {{{
+  bool addStructInfo(const llvm::StructType *type) {
+    bool ret = true;
+    auto it = structInfo_.find(type);
+    // llvm::dbgs() << "Adding struct info for: " << type << "\n";
+
+    if (it == std::end(structInfo_)) {
+      auto emp_ret = structInfo_.emplace(type,
+          StructInfo(*this, type));
+      assert(emp_ret.second);
+
+      it = emp_ret.first;
+      ret = emp_ret.second;
+
+      auto &info = it->second;
+      if (maxStructInfo_ == nullptr ||
+          info.size() > maxStructInfo_->size()) {
+        maxStructInfo_ = &info;
       }
-
-      return ret_id;
     }
 
-    ObjID __do_add(const llvm::Value *val,
-        std::unordered_map<const llvm::Value *, ObjID> &mp,
-        idToValMap &pm) {
-      ObjID id;
 
-      assert(mp.find(val) == std::end(mp));
+    return ret;
+  }
 
-      id = createMapping(val);
+  const StructInfo &getStructInfo(const llvm::StructType *type) {
+    auto st_type = cast<llvm::StructType>(type);
 
-      mp.emplace(val, id);
-      pm.emplace(id, val);
+    auto struct_info_it = structInfo_.find(st_type);
 
-      return id;
+    // Its not in our struct list, create a new one
+    if (struct_info_it == std::end(structInfo_)) {
+      addStructInfo(type);
+
+      struct_info_it = structInfo_.find(st_type);
     }
 
-    ObjID __do_get(const llvm::Value *val,
-        const std::unordered_map<const llvm::Value *, ObjID> &mp) const {
-      auto it = mp.find(val);
+    return struct_info_it->second;
+  }
 
-      if (it == std::end(mp)) {
-        return ObjectMap::NullValue;
-      }
+  const StructInfo &getMaxStructInfo() const {
+    assert(maxStructInfo_ != nullptr);
+    return *maxStructInfo_;
+  }
 
+  void addObjAlias(ObjID obj_id, ObjID alias_id) {
+    auto it =  objToAliases_.find(obj_id);
+    if (it == std::end(objToAliases_)) {
+      auto em_ret = objToAliases_.emplace(
+          obj_id, std::vector<ObjID>());
+      assert(em_ret.second);
+
+      it = em_ret.first;
+      it->second.emplace_back(obj_id);
+    }
+
+    it->second.emplace_back(alias_id);
+    aliasToObjs_[alias_id] = obj_id;
+  }
+
+  std::pair<bool, const std::vector<ObjID> &>
+  findObjAliases(ObjID obj_id) const {
+    // To return on failure;
+    static std::vector<ObjID> empty_vector;
+    auto it =  objToAliases_.find(obj_id);
+    if (it == std::end(objToAliases_)) {
+      return std::make_pair(false, std::ref(empty_vector));
+    }
+    return std::make_pair(true, std::ref(it->second));
+  }
+
+  std::pair<bool, ObjID>
+  findObjBase(ObjID obj_id) {
+    auto it = aliasToObjs_.find(obj_id);
+    if (it == std::end(aliasToObjs_)) {
+      return std::make_pair(false, ObjID());
+    }
+
+    return std::make_pair(true, it->second);
+  }
+  //}}}
+
+  // Iterators {{{
+  typedef std::unordered_map<const llvm::Value *, ObjID>::iterator
+    to_id_iterator;
+  typedef std::unordered_map<const llvm::Value *, ObjID>::const_iterator
+    const_to_id_iterator;
+
+  typedef std::unordered_map<ObjID, const llvm::Value *, ObjID::hasher>
+    idToValMap;
+  typedef idToValMap::iterator to_val_iterator;
+  typedef idToValMap::const_iterator const_to_val_iterator;
+
+  typedef std::vector<std::pair<ObjID, const llvm::Value *>>::iterator
+    function_iterator;
+  typedef std::vector<std::pair<ObjID, const llvm::Value *>>::const_iterator
+    const_function_iterator;
+
+  function_iterator functions_begin() {
+    return std::begin(functions_);
+  }
+
+  function_iterator functions_end() {
+    return std::end(functions_);
+  }
+
+  const_function_iterator functions_begin() const {
+    return std::begin(functions_);
+  }
+
+  const_function_iterator functions_end() const {
+    return std::end(functions_);
+  }
+
+  const_function_iterator functions_cbegin() const {
+    return functions_.cbegin();
+  }
+
+  const_function_iterator functions_cend() const {
+    return functions_.cend();
+  }
+
+  to_val_iterator values_begin() {
+    return std::begin(idToVal_);
+  }
+
+  to_val_iterator values_end() {
+    return std::end(idToVal_);
+  }
+
+  const_to_val_iterator values_begin() const {
+    return std::begin(idToVal_);
+  }
+
+  const_to_val_iterator values_end() const {
+    return std::end(idToVal_);
+  }
+
+  const_to_val_iterator values_cbegin() const {
+    return idToVal_.cbegin();
+  }
+
+  const_to_val_iterator values_cend() const {
+    return idToVal_.cend();
+  }
+
+  /*
+  static bool isPhony(ObjID id) {
+    return id.val() >= phonyIdBase;
+  }
+  */
+  //}}}
+
+  // Remapping optimizations {{{
+  // Lowers all objects to the lowest set of obj-ids to increase SparseBitmap
+  //   efficiency
+  std::vector<ObjID> lowerObjects() {
+    std::vector<ObjID> remap;
+    // Find all objects, and lower them...
+    ObjID cur_id(0);
+
+    for (; static_cast<int32_t>(cur_id) <
+        static_cast<int32_t>(ObjEnum::eNumDefaultObjs);
+        ++cur_id) {
+      remap.push_back(cur_id);
+    }
+
+    // Make a place for all of the objects in the remap
+    for (auto obj_id : objSet_) {
+      remap.push_back(obj_id);
+
+      ++cur_id;
+    }
+
+    // Assert that we haven't repeated any ids...
+
+    return remap;
+  }
+
+  // Lowers all used ids, to increase SparseBitmap efficiency
+  std::vector<ObjID> lowerUsed() {
+    std::vector<ObjID> remap;
+    return remap;
+  }
+  //}}}
+
+ private:
+  // Private variables {{{
+  // Forward mapping
+  std::vector<const llvm::Value *> mapping_;
+  std::vector<std::pair<ObjID, const llvm::Value *>> functions_;
+  std::set<ObjID> functionSet_;
+
+  // Reverse mapping
+  std::unordered_map<const llvm::Value *, ObjID> valToID_;
+  std::unordered_map<const llvm::Value *, ObjID> objToID_;
+  std::unordered_map<const llvm::Value *, ObjID> retToID_;
+  std::unordered_map<const llvm::Value *, ObjID> vargToID_;
+
+  util::SparseBitmap<ObjID> objSet_;
+
+  // Reverse mapping
+  idToValMap idToVal_;
+  idToValMap idToObj_;
+  idToValMap idToRet_;
+  idToValMap idToVararg_;
+  idToValMap phonyMap_;
+
+  // Rep useage (for optimization merging)
+  mutable util::UnionFind<ObjID> reps_;
+
+  int64_t numObjs_ = 0;
+
+  // Struct info
+  std::map<const llvm::StructType *, StructInfo> structInfo_;
+  std::map<ObjID, std::vector<ObjID>> objToAliases_;
+  std::map<ObjID, ObjID> aliasToObjs_;
+  StructMap objIsStruct_;
+  const StructInfo *maxStructInfo_ = nullptr;
+  ///}}}
+
+  // Internal helpers {{{
+
+  ObjID getNextID() const {
+    return ObjID(mapping_.size());
+  }
+
+  ObjID createMapping(const llvm::Value *val) {
+    ObjID ret = getNextID();
+    mapping_.emplace_back(val);
+    if_debug_enabled(auto rep_id =)
+      reps_.add();
+    assert(rep_id == ret);
+    // assert(ret.val() >= 0 && ret.val() < phonyIdBase);
+    assert(ret.val() >= 0);
+    return ret;
+  }
+
+  const llvm::Value *__find_helper(ObjID id, const idToValMap &map) const {
+    auto it = map.find(id);
+
+    if (it != std::end(map)) {
       return it->second;
     }
 
-    /*
-    ObjID __const_node_helper(const llvm::Constant *C,
-        ObjID (ObjectMap::*diff)(const llvm::Value *),
-        ObjID nullv);
-    */
+    return nullptr;
+  }
+
+  ObjID __do_add_struct(const llvm::Type *type,
+      const llvm::Value *val,
+      std::unordered_map<const llvm::Value *, ObjID> &mp,
+      idToValMap &pm, const std::vector<ObjID> *alias,
+      util::SparseBitmap<ObjID> *set) {
+    ObjID ret_id;
+
+    // Strip away array references:
+    while (auto at = dyn_cast<llvm::ArrayType>(type)) {
+      type = at->getElementType();
+    }
+
+    if (auto st = dyn_cast<llvm::StructType>(type)) {
+      // id is the first field of the struct
+      // Fill out the struct:
+      auto &struct_info = getStructInfo(st);
+
+      int num_sizes = struct_info.size();
+      int cur_size = 0;
+      // llvm::dbgs() << "Got StructInfo: " << struct_info << "\n";
+      bool first = true;
+      std::for_each(struct_info.sizes_begin(), struct_info.sizes_end(),
+          [this, &ret_id, &alias, &pm, &mp, &first, &val, &num_sizes,
+            &cur_size, &set]
+          (int32_t) {
+        // This is logically reserving an ObjID for this index within the
+        //   struct
+        ObjID id = createMapping(val);
+
+        if (first) {
+          ret_id = id;
+          assert(mp.find(val) == std::end(mp));
+          mp.emplace(val, id);
+          first = false;
+        }
+
+        // llvm::dbgs() << "Allocating struct id: " << id << "\n";
+
+        assert(pm.find(id) == std::end(pm));
+        pm.emplace(id, val);
+        if (set != nullptr) {
+          set->set(id);
+        }
+
+
+        objIsStruct_.emplace(id, num_sizes - cur_size);
+        cur_size++;
+        // Denote which objects this structure field occupies
+        if (alias == nullptr) {
+          objToAliases_[ret_id].emplace_back(id);
+          aliasToObjs_[id] = ret_id;
+        } else {
+          for (auto &obj_id : *alias) {
+            objToAliases_[obj_id].emplace_back(id);
+            aliasToObjs_[id] = obj_id;
+          }
+        }
+      });
+
+      assert(ret_id != ObjID::invalid());
+    // Not a struct
+    } else {
+      assert(mp.find(val) == std::end(mp));
+      ret_id = createMapping(val);
+
+      mp.emplace(val, ret_id);
+      assert(pm.find(ret_id) == std::end(pm));
+      pm.emplace(ret_id, val);
+      if (alias != nullptr) {
+        for (auto &obj_id : *alias) {
+          objToAliases_[obj_id].emplace_back(ret_id);
+          aliasToObjs_[ret_id] = obj_id;
+        }
+      }
+    }
+
+    return ret_id;
+  }
+
+  ObjID __do_add(const llvm::Value *val,
+      std::unordered_map<const llvm::Value *, ObjID> &mp,
+      idToValMap &pm, util::SparseBitmap<ObjID> *set) {
+    ObjID id;
+
+    assert(mp.find(val) == std::end(mp));
+
+    id = createMapping(val);
+
+    mp.emplace(val, id);
+    pm.emplace(id, val);
+    if (set != nullptr) {
+      set->set(id);
+    }
+
+    return id;
+  }
+
+  ObjID __do_get(const llvm::Value *val,
+      const std::unordered_map<const llvm::Value *, ObjID> &mp) const {
+    auto it = mp.find(val);
+
+    if (it == std::end(mp)) {
+      return ObjectMap::NullValue;
+    }
+
+    return it->second;
+  }
+
   //}}}
   //}}}
 };
@@ -1098,25 +1117,5 @@ class FullValPrint {
     const ObjectMap *omap_;
   //}}}
 };
-
-#endif  // SPECSFS_IS_TEST
-
-#ifdef SPECSFS_IS_TEST
-class ValPrint {
-  //{{{
- public:
-    explicit ValPrint(ObjectMap::ObjID id) : id_(id) { }
-
-    friend dbg_type &operator<<(dbg_type &o,
-        const ValPrint &pr) {
-      o << pr.id_;
-      return o;
-    }
-
- private:
-    ObjectMap::ObjID id_;
-  //}}}
-};
-#endif
 
 #endif  // INCLUDE_OBJECTMAP_H_

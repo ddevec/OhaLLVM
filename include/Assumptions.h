@@ -636,6 +636,10 @@ class AssumptionSet {
     assumptions_.emplace_back(std::move(a));
   }
 
+  void updateObjIDs(const std::vector<ObjectMap::ObjID> &) {
+    llvm_unreachable("TODO");
+  }
+
  private:
   std::vector<std::unique_ptr<Assumption>> assumptions_;
   //}}}

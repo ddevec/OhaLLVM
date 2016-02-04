@@ -362,6 +362,10 @@ class ConstraintGraph {
       // Reset the ptr to nullptr
       constraints_.at(id.val()).reset(nullptr);
     }
+
+    void updateObjIDs(const std::vector<ObjectMap::ObjID> &) {
+      llvm_unreachable("TODO");
+    }
     //}}}
 
     // Accessors {{{

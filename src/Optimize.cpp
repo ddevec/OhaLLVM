@@ -396,7 +396,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
   // hu_graph.printDotFile("HuOpt.dot", *g_omap);
 
   //  Used to map objs to the PE class
-  std::map<Bitmap, SEG::NodeID, BitmapLT> pts_to_pe;
+  std::unordered_map<Bitmap, SEG::NodeID, Bitmap::hasher> pts_to_pe;
 
   // Find equiv classes for each node in the hu_graph
   // Merge nodes into their equiv classes
@@ -1204,7 +1204,7 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
   // hvn_graph.printDotFile("HVNDone.dot", *g_omap);
 
   // Now, use PE set as index into PE mapping, assign equivalent PEs
-  std::map<Bitmap, SEG::NodeID, BitmapLT> pts_to_pe;
+  std::unordered_map<Bitmap, SEG::NodeID, Bitmap::hasher> pts_to_pe;
 
   // Find equiv classes for each node, unify the nodes in the class
   for (auto &pnode : hvn_graph) {

@@ -42,92 +42,90 @@ size_t __addnode10 = 0;
 
 class DUGAccessEquiv {
  public:
-    DUGAccessEquiv() = default;
+  DUGAccessEquiv() = default;
 
-    void addNode(DUG::DUGid dug_id,
-        std::pair<CFG::CFGid, DUG::PartID> loc_data) {
-      auto ae_id = getAEID(loc_data);
+  void addNode(DUG::DUGid dug_id,
+      std::pair<CFG::CFGid, DUG::PartID> loc_data) {
+    auto ae_id = getAEID(loc_data);
 
-      /*
-      llvm::dbgs() << "Adding AE edge: " << dug_id << ", (" << loc_data.first
-        << ", " << loc_data.second << ") -> " << ae_id << "\n";
-      */
-      AEMap_[dug_id].set(ae_id);
+    /*
+    llvm::dbgs() << "Adding AE edge: " << dug_id << ", (" << loc_data.first
+      << ", " << loc_data.second << ") -> " << ae_id << "\n";
+    */
+    AEMap_[dug_id].set(ae_id);
+  }
+
+  std::vector<std::vector<DUG::DUGid>> getAESets() const {
+    std::unordered_map<Bitmap, std::vector<DUG::DUGid>, Bitmap::hasher> ae;
+    // std::map<Bitmap, std::vector<DUG::DUGid>, BitmapLT> ae;
+
+    for (auto &pr : AEMap_) {
+      ae[pr.second].push_back(pr.first);
     }
 
-    std::vector<std::vector<DUG::DUGid>> getAESets() const {
-      std::map<Bitmap, std::vector<DUG::DUGid>, BitmapLT> ae;
-
-      for (auto &pr : AEMap_) {
-        ae[pr.second].push_back(pr.first);
+    std::vector<std::vector<DUG::DUGid>> ret(ae.size());
+    size_t idx = 0;
+    size_t count = 0;
+    for (auto &pr : ae) {
+      // llvm::dbgs() << "got ae set: " << idx << " -> {";
+      for (auto id : pr.second) {
+        ret[idx].push_back(id);
+        count++;
+        // llvm::dbgs() << " " << id;
       }
-
-      std::vector<std::vector<DUG::DUGid>> ret(ae.size());
-      size_t idx = 0;
-      size_t count = 0;
-      for (auto &pr : ae) {
-        // llvm::dbgs() << "got ae set: " << idx << " -> {";
-        for (auto id : pr.second) {
-          ret[idx].push_back(id);
-          count++;
-          // llvm::dbgs() << " " << id;
-        }
-        // llvm::dbgs() << " }\n";
-        idx++;
-      }
-
-      llvm::dbgs() << "Have " << idx << " ae sets for: " << count << " nodes\n";
-      llvm::dbgs() << "getAECount_ is: " << getAECount_ << "\n";
-
-      llvm::dbgs() << "  __addnode1: " << __addnode1 << "\n";
-      llvm::dbgs() << "  __addnode2: " << __addnode2 << "\n";
-      llvm::dbgs() << "  __addnode3: " << __addnode3 << "\n";
-      llvm::dbgs() << "  __addnode4: " << __addnode4 << "\n";
-      llvm::dbgs() << "  __addnode5: " << __addnode5 << "\n";
-      llvm::dbgs() << "  __addnode6: " << __addnode6 << "\n";
-      llvm::dbgs() << "  __addnode7: " << __addnode7 << "\n";
-      llvm::dbgs() << "  __addnode8: " << __addnode8 << "\n";
-      llvm::dbgs() << "  __addnode9: " << __addnode9 << "\n";
-      llvm::dbgs() << "  __addnode10: " << __addnode10 << "\n";
-
-      return std::move(ret);
+      // llvm::dbgs() << " }\n";
+      idx++;
     }
+
+    llvm::dbgs() << "Have " << idx << " ae sets for: " << count << " nodes\n";
+    llvm::dbgs() << "getAECount_ is: " << getAECount_ << "\n";
+
+    llvm::dbgs() << "  __addnode1: " << __addnode1 << "\n";
+    llvm::dbgs() << "  __addnode2: " << __addnode2 << "\n";
+    llvm::dbgs() << "  __addnode3: " << __addnode3 << "\n";
+    llvm::dbgs() << "  __addnode4: " << __addnode4 << "\n";
+    llvm::dbgs() << "  __addnode5: " << __addnode5 << "\n";
+    llvm::dbgs() << "  __addnode6: " << __addnode6 << "\n";
+    llvm::dbgs() << "  __addnode7: " << __addnode7 << "\n";
+    llvm::dbgs() << "  __addnode8: " << __addnode8 << "\n";
+    llvm::dbgs() << "  __addnode9: " << __addnode9 << "\n";
+    llvm::dbgs() << "  __addnode10: " << __addnode10 << "\n";
+
+    return std::move(ret);
+  }
 
  private:
-    int32_t getAEID(std::pair<CFG::CFGid, DUG::PartID> &pr) {
-      auto it = AEIDMap_.find(pr);
-      getAECount_++;
-
-      if (it == std::end(AEIDMap_)) {
-        auto ret = AEIDMap_.emplace(pr, nextAEID_);
-        assert(ret.second);
-        nextAEID_++;
-
-        it = ret.first;
-      }
-
-      return it->second;
+  int32_t getAEID(std::pair<CFG::CFGid, DUG::PartID> &pr) {
+    static_assert(
+        sizeof(CFG::CFGid) + sizeof(DUG::PartID) == sizeof(uint64_t),
+        "Assume I can squeeze pair of ids into uint64_t");
+    uint64_t new_id = pr.first.val();
+    new_id <<= 32;
+    new_id |= pr.second.val();
+    auto rc = AEIDMap_.emplace(new_id, nextAEID_);
+    // If the insertion was successful, increment our unique id
+    if (rc.second) {
+      nextAEID_++;
     }
+    auto it = rc.first;
 
-    int32_t nextAEID_ = 0;
-    struct AEIDHasher {
-      size_t operator()(const std::pair<DUG::DUGid, DUG::PartID> &pr) const {
-        size_t ret = DUG::DUGid::hasher()(pr.first);
-        ret <<= 1;
-        ret ^= DUG::PartID::hasher()(pr.second);
-        return ret;
-      }
-    };
+    getAECount_++;
 
-    size_t getAECount_ = 0;
-    /*
-    std::unordered_map<std::pair<DUG::DUGid, DUG::PartID>, int32_t, AEIDHasher>
-      AEIDMap_;
-    std::unordered_map<DUG::DUGid, Bitmap, DUG::DUGid::hasher> AEMap_;
-    */
-    std::map<std::pair<DUG::DUGid, DUG::PartID>, int32_t>
-      AEIDMap_;
-    std::map<DUG::DUGid, Bitmap> AEMap_;
+    return it->second;
+  }
+
+  int32_t nextAEID_ = 0;
+
+  size_t getAECount_ = 0;
+  /*
+  std::unordered_map<std::pair<DUG::DUGid, DUG::PartID>, int32_t, AEIDHasher>
+    AEIDMap_;
+  std::unordered_map<DUG::DUGid, Bitmap, DUG::DUGid::hasher> AEMap_;
+  */
+  std::unordered_map<uint64_t, int32_t>
+    AEIDMap_;
+  // FIXME: This doesn't work if this is an unordered_map... why?
+  std::map<DUG::DUGid, Bitmap> AEMap_;
 };
 
 
