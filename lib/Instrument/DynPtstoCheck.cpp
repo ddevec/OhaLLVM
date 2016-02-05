@@ -315,7 +315,8 @@ bool CheckDynPtsto::runOnModule(llvm::Module &m) {
         // Get the function
         auto fcn = LLVMHelper::getFcnFromCall(ci);
         // Get the arg_pos for the size from the function
-        auto size_val = AllocInfo::getMallocSizeArg(m, ci, fcn);
+        auto size_pr = AllocInfo::getMallocSizeArg(m, ci, fcn);
+        auto size_val = size_pr.first;
 
         llvm::Instruction *i8_ptr_val = ci;
         if (ci->getType() != i8_ptr_type) {
@@ -331,7 +332,11 @@ bool CheckDynPtsto::runOnModule(llvm::Module &m) {
         auto malloc_inst_call = llvm::CallInst::Create(
             malloc_fcn, args);
 
-        malloc_inst_call->insertAfter(i8_ptr_val);
+        if (size_pr.second == ci) {
+          malloc_inst_call->insertAfter(i8_ptr_val);
+        } else {
+          malloc_inst_call->insertAfter(size_pr.second);
+        }
       }
     }
 

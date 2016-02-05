@@ -5,6 +5,7 @@
 #ifndef INCLUDE_ASSUMPTIONS_H_
 #define INCLUDE_ASSUMPTIONS_H_
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <set>
@@ -472,6 +473,8 @@ class Assumption {  //{{{
 
     virtual Assumption *clone() const = 0;
 
+    virtual void remap(const util::ObjectRemap<ObjectMap::ObjID> &) { }
+
     Kind getKind() const {
       return kind_;
     }
@@ -526,6 +529,16 @@ class PtstoAssumption : public Assumption {  //{{{
 
     Assumption *clone() const override {
       return new PtstoAssumption(*this);
+    }
+
+    void remap(const util::ObjectRemap<ObjectMap::ObjID> &remap) override {
+      std::set<ObjectMap::ObjID> new_ptstos;
+      std::transform(std::begin(ptstos_), std::end(ptstos_),
+          std::inserter(new_ptstos, std::end(new_ptstos)),
+          [&remap] (ObjectMap::ObjID id) {
+            return remap[id];
+          });
+      ptstos_ = std::move(new_ptstos);
     }
 
  private:
@@ -636,8 +649,10 @@ class AssumptionSet {
     assumptions_.emplace_back(std::move(a));
   }
 
-  void updateObjIDs(const std::vector<ObjectMap::ObjID> &) {
-    llvm_unreachable("TODO");
+  void updateObjIDs(const util::ObjectRemap<ObjectMap::ObjID> &remap) {
+    for (auto &pasm : assumptions_) {
+      pasm->remap(remap);
+    }
   }
 
  private:

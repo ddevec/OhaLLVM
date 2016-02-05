@@ -7,6 +7,7 @@
 
 #include <cstdint>
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <unordered_map>
@@ -284,9 +285,6 @@ class ObjectMap {
   ObjID createPhonyID(const llvm::Value *val) {
     auto ret = createMapping(val);
 
-    assert(phonyMap_.find(ret) == std::end(phonyMap_));
-    phonyMap_.emplace(ret, val);
-
     return ret;
   }
 
@@ -324,7 +322,6 @@ class ObjectMap {
     auto ret = createMapping(val);
 
     numObjs_++;
-    assert(phonyMap_.find(ret) == std::end(phonyMap_));
     idToObj_.emplace(ret, val);
 
     return ret;
@@ -432,28 +429,10 @@ class ObjectMap {
 
   const llvm::Value *valueAtRep(ObjID id) const {
     auto rep = reps_.find(id);
-    /*
-    if (isPhony(id)) {
-      auto phony_it = phonyMap_.find(id);
-      if (phony_it != std::end(phonyMap_)) {
-        return phony_it->second;
-      }
-      return nullptr;
-    }
-    */
     return mapping_.at(rep.val());
   }
 
   const llvm::Value *valueAtID(ObjID id) const {
-    /*
-    if (isPhony(id)) {
-      auto phony_it = phonyMap_.find(id);
-      if (phony_it != std::end(phonyMap_)) {
-        return phony_it->second;
-      }
-      return nullptr;
-    }
-    */
     return mapping_.at(id.val());
   }
 
@@ -712,32 +691,88 @@ class ObjectMap {
   // Remapping optimizations {{{
   // Lowers all objects to the lowest set of obj-ids to increase SparseBitmap
   //   efficiency
-  std::vector<ObjID> lowerObjects() {
-    std::vector<ObjID> remap;
+  util::ObjectRemap<ObjID> lowerObjects() {
+    util::ObjectRemap<ObjID> remap(mapping_.size());
     // Find all objects, and lower them...
-    ObjID cur_id(0);
 
-    for (; static_cast<int32_t>(cur_id) <
-        static_cast<int32_t>(ObjEnum::eNumDefaultObjs);
-        ++cur_id) {
-      remap.push_back(cur_id);
+    // First map through special identifiers
+    ObjID remap_id(0);
+    for (ObjID i(0);
+        i < ObjID(static_cast<int32_t>(ObjEnum::eNumDefaultObjs));
+        ++i) {
+      remap.set(i, remap_id);
+      assert(i == remap_id);
+      ++remap_id;
     }
+
+    assert(remap_id == ObjID(static_cast<int32_t>(ObjEnum::eNumDefaultObjs)));
 
     // Make a place for all of the objects in the remap
     for (auto obj_id : objSet_) {
-      remap.push_back(obj_id);
-
-      ++cur_id;
+      remap.set(obj_id, remap_id);
+      remap_id++;
     }
 
+    maxObj_ = remap_id;
+
+    // Now handle non-objects...
+
     // Assert that we haven't repeated any ids...
+    // Now remap all of the other values.... uhh is this ideal?
+    // I don't really think so... b/c I don't know what the other values are?
+    // False -- I do know what the other values are..
+    // for id in all_ids:
+    //   if id NOT obj (as known by testing objSet_)
+    //     remap ID
+    for (ObjID i(0); i < ObjID(mapping_.size()); ++i) {
+      // If this is special, or an object, don't remap
+      if (isSpecial(i) || objSet_.test(i)) {
+        continue;
+      }
+
+      // Otherwise, remap this sucker
+      remap.set(i, remap_id);
+      remap_id++;
+    }
+
+    assert(static_cast<size_t>(remap_id) == mapping_.size());
+
+    objSet_.clear();
+
+    // Now, update all of our internal structures... meh
+    __update_internal(remap);
 
     return remap;
   }
 
   // Lowers all used ids, to increase SparseBitmap efficiency
-  std::vector<ObjID> lowerUsed() {
-    std::vector<ObjID> remap;
+  util::ObjectRemap<ObjID> lowerUsed() {
+    util::ObjectRemap<ObjID> remap(mapping_.size());
+    // First, loop through all ids, remapping any that are reps
+    ObjID remap_id(0);
+    for (ObjID i(0); i < ObjID(mapping_.size()); ++i) {
+      // If i is a rep, push it
+      if (getRep(i) == i) {
+        remap.set(i, remap_id);
+        ++remap_id;
+      }
+    }
+
+    // Then, loop through all ids, remapping any that are not reps
+    for (ObjID i(0); i < ObjID(mapping_.size()); ++i) {
+      // Push all non-reps
+      if (getRep(i) != i) {
+        remap.set(i, remap_id);
+        ++remap_id;
+      }
+    }
+
+    // FIXME: Should actually be asserting that no mappings in remap map to an
+    //   invalid id
+    assert(remap.size() == mapping_.size());
+    // Update where our maps point
+    __update_internal(remap);
+
     return remap;
   }
   //}}}
@@ -756,13 +791,13 @@ class ObjectMap {
   std::unordered_map<const llvm::Value *, ObjID> vargToID_;
 
   util::SparseBitmap<ObjID> objSet_;
+  ObjID maxObj_ = ObjID::invalid();
 
   // Reverse mapping
   idToValMap idToVal_;
   idToValMap idToObj_;
   idToValMap idToRet_;
   idToValMap idToVararg_;
-  idToValMap phonyMap_;
 
   // Rep useage (for optimization merging)
   mutable util::UnionFind<ObjID> reps_;
@@ -778,6 +813,96 @@ class ObjectMap {
   ///}}}
 
   // Internal helpers {{{
+  // FIXME: If this winds up being slow, I don't need to update any of the
+  //   object mappings after the first lowerObjects() call...
+  static void __remap_valToID(const util::ObjectRemap<ObjID> &remap,
+      std::unordered_map<const llvm::Value *, ObjID> &map) {
+    for (auto &pr : map) {
+      pr.second = remap[pr.second];
+    }
+  }
+
+  static void __remap_idToVal(const util::ObjectRemap<ObjID> &remap,
+      idToValMap &map) {
+    idToValMap newmap;
+
+    for (auto &pr : map) {
+      // UGH, I don't think htis will acutually work...
+      if_debug_enabled(auto rc =)
+        newmap.emplace(remap[pr.first], pr.second);
+      assert(rc.second);
+    }
+
+    map = std::move(newmap);
+  }
+
+  void __update_internal(const util::ObjectRemap<ObjID> &remap) {
+    // First, do the valToID_ mappings
+    __remap_valToID(remap, valToID_);
+    __remap_valToID(remap, objToID_);
+    __remap_valToID(remap, retToID_);
+    __remap_valToID(remap, vargToID_);
+
+    // Now the idToVal_ mappings
+    __remap_idToVal(remap, idToVal_);
+    __remap_idToVal(remap, idToObj_);
+    __remap_idToVal(remap, idToRet_);
+    __remap_idToVal(remap, idToVararg_);
+
+    // Then aliases
+    std::map<ObjID, std::vector<ObjID>> new_aliases;
+    for (auto &pr : objToAliases_) {
+      std::vector<ObjID> new_alias_vec(pr.second.size());
+      std::transform(std::begin(pr.second), std::end(pr.second),
+          std::begin(new_alias_vec),
+          [&remap](ObjID alias) { return remap[alias]; });
+
+      if_debug_enabled(auto rc =)
+        new_aliases.emplace(remap[pr.first], std::move(new_alias_vec));
+      assert(rc.second);
+    }
+    objToAliases_ = std::move(new_aliases);
+
+    std::map<ObjID, ObjID> new_to_obj;
+    for (auto &pr : aliasToObjs_) {
+      if_debug_enabled(auto rc =)
+        new_to_obj.emplace(remap[pr.first], remap[pr.second]);
+      assert(rc.second);
+    }
+    aliasToObjs_ = std::move(aliasToObjs_);
+
+    // Then objIsStruct
+    StructMap new_obj_is_struct;
+    for (auto &pr : objIsStruct_) {
+      if_debug_enabled(auto rc =)
+        new_obj_is_struct.emplace(remap[pr.first], pr.second);
+      assert(rc.second);
+    }
+    objIsStruct_ = std::move(new_obj_is_struct);
+
+    // And function mappings
+    {
+      for (auto &pr : functions_) {
+        pr.first = remap[pr.first];
+      }
+
+      std::set<ObjID> new_fcn_set;
+      for (auto &id : functionSet_) {
+        new_fcn_set.emplace(remap[id]);
+      }
+      functionSet_ = std::move(new_fcn_set);
+    }
+
+    // Finally redo the mappings
+    std::vector<const llvm::Value *> new_mappings(mapping_.size());
+    for (ObjID i(0); i < ObjID(mapping_.size()); ++i) {
+      new_mappings[remap[i].val()] = mapping_[i.val()];
+    }
+    mapping_ = std::move(new_mappings);
+
+    // Remap the reps...
+    reps_.remap(remap);
+  }
 
   ObjID getNextID() const {
     return ObjID(mapping_.size());

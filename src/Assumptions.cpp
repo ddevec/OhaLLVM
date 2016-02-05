@@ -268,7 +268,7 @@ bool AllocInst::doInstrument(llvm::Module &m) {
     auto called_fcn = LLVMHelper::getFcnFromCall(ci);
     auto size_val = AllocInfo::getMallocSizeArg(m,
         ci, called_fcn);
-    args.push_back(size_val);
+    args.push_back(size_val.first);
   }
 
   // Get first instruction:

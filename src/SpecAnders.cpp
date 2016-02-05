@@ -77,6 +77,13 @@ static ObjectMap::ObjID getRepID(ObjectMap::ObjID obj_id, ObjectMap &omap) {
   return new_id;
 }
 
+static llvm::cl::opt<bool>
+  do_spec_diff("anders-do-spec-diff", llvm::cl::init(false),
+      llvm::cl::value_desc("bool"),
+      llvm::cl::desc("if set specanders will print the ptstos counts which "
+        "would have been identified by a speculative sfs run (for reporting "
+        "improvment numbers)"));
+
 static llvm::cl::opt<std::string>
   fcn_name("anders-debug-fcn", llvm::cl::init(""),
       llvm::cl::value_desc("string"),
@@ -222,6 +229,17 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
     llvm::dbgs() << "hvn removed: " << removed << " constraints\n";
   }
 
+  /*
+  // Now manage remap:
+  {
+    auto remap = omap.lowerObjects();
+
+    // Use the remapping to adjust the CG and CFG
+    cg.updateObjIDs(remap);
+    // specAssumptions_.updateObjIDs(remap);
+  }
+  */
+
   // Then, do HRU
   {
     util::PerfTimerPrinter hru_timer(llvm::dbgs(), "HRU");
@@ -295,6 +313,18 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
 
     llvm::dbgs() << "  num_nodes: " << nodes.count() << "\n";
   }
+
+  // Now manage remap: -- before HCD, as HCD fills some stuff in the
+  //   class...
+  /*
+  {
+    auto remap = omap.lowerObjects();
+
+    // Use the remapping to adjust the CG and CFG
+    cg.updateObjIDs(remap);
+    // specAssumptions_.updateObjIDs(remap);
+  }
+  */
 
   // Then, HCD
   {
@@ -657,6 +687,83 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
           }
         }
       }
+    }
+    //}}}
+  }
+
+
+  if (do_spec_diff) {
+    // STATS! {{{
+    int64_t total_variables = 0;
+    int64_t total_ptstos = 0;
+
+    int32_t num_objects[10] = {};
+
+    size_t max_objects = 0;
+    int32_t num_max = 0;
+
+    auto &uf = getAnalysis<UnusedFunctions>();
+
+    auto obj_update_fcn = [this, &total_variables, &total_ptstos, &num_objects,
+         &max_objects, &num_max, &omap]
+           (const llvm::Value *val) {
+      auto val_id = omap.getValueRep(val);
+
+      // Statistics
+      auto &ptsto = graph_.getNode(val_id).ptsto();
+      size_t ptsto_size = ptsto.size();
+      // size_t ptsto_size = ptsto.getSizeNoStruct(omap);
+
+      total_variables++;
+      total_ptstos += ptsto_size;
+
+      if (ptsto_size < 10) {
+        num_objects[ptsto_size]++;
+      }
+
+      if (ptsto_size > max_objects) {
+        max_objects = ptsto_size;
+        num_max = 0;
+      }
+
+      if (ptsto_size == max_objects) {
+        num_max++;
+      }
+    };
+
+    // Woot, time to walk the CFG!
+    for (auto &fcn : m) {
+      if (uf.isUsed(fcn)) {
+        std::for_each(fcn.arg_begin(), fcn.arg_end(),
+            [&obj_update_fcn, &omap]
+            (const llvm::Argument &arg) {
+          if (llvm::isa<llvm::PointerType>(arg.getType())) {
+            obj_update_fcn(&arg);
+          }
+        });
+      }
+      for (auto &bb : fcn) {
+        if (!uf.isUsed(bb)) {
+          continue;
+        }
+
+        for (auto &inst : bb) {
+          if (llvm::isa<llvm::PointerType>(inst.getType())) {
+            obj_update_fcn(&inst);
+          }
+        }
+      }
+    }
+
+    llvm::dbgs() << "Number tracked values: " << total_variables << "\n";
+    llvm::dbgs() << "Number tracked ptstos: " << total_ptstos << "\n";
+
+    llvm::dbgs() << "Max ptsto is: " << max_objects << ", with num_max: " <<
+      num_max << "\n";
+
+    llvm::dbgs() << "lowest ptsto counts:\n";
+    for (int i = 0; i < 10; i++) {
+      llvm::dbgs() << "  [" << i << "]:  " << num_objects[i] << "\n";
     }
     //}}}
   }

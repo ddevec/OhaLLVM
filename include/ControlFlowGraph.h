@@ -606,8 +606,90 @@ class CFG {
     //}}}
 
     // Update {{{
-    void updateObjIDs(const std::vector<ObjectMap::ObjID> &) {
-      llvm_unreachable("TODO");
+    void updateObjIDs(const util::ObjectRemap<ObjectMap::ObjID> &remap) {
+      // Update all of the object ids...
+      auto do_remap = [&remap] (const ObjectMap::ObjID &id) { return remap[id]; };
+      auto do_remap_key =
+        [&remap] (const std::pair<ObjectMap::ObjID, CFGid> &pr) {
+          return std::make_pair(remap[pr.first], pr.second);
+        };
+      auto do_remap_unused =
+        [&remap] (std::pair<const ObjectMap::ObjID,
+            std::vector<ConstraintGraph::ConsID>> &pr) {
+          return std::make_pair(remap[pr.first], std::move(pr.second));
+        };
+
+      // First the dirCallsites
+      for (auto &pr : cfgDirCallsites_) {
+        std::transform(std::begin(pr.second), std::end(pr.second),
+            std::begin(pr.second), do_remap);
+      }
+      // Then indir Callsites
+      {
+        std::map<ObjectMap::ObjID, CFGid> new_fcn_entries;
+        std::transform(std::begin(cfgFunctionEntries_),
+            std::end(cfgFunctionEntries_),
+            std::inserter(new_fcn_entries, std::end(new_fcn_entries)),
+            do_remap_key);
+        cfgFunctionEntries_ = std::move(new_fcn_entries);
+      }
+
+      // Then indirFcns
+      {
+        for (auto &pr : indirectCalls_) {
+          pr.first = remap[pr.first];
+        }
+
+        std::map<ObjectMap::ObjID, std::vector<ObjectMap::ObjID>> new_indir_fcns;
+        for (auto &pr : indirFcns_) {
+          std::vector<ObjectMap::ObjID> new_vec(pr.second.size());
+          std::transform(std::begin(pr.second), std::end(pr.second),
+              std::begin(new_vec), do_remap);
+          new_indir_fcns.emplace(remap[pr.first], std::move(new_vec));
+        }
+        indirFcns_ = std::move(new_indir_fcns);
+      }
+
+      // then FunctionEntries
+      {
+        std::map<ObjectMap::ObjID, CFGid> new_fcn_entries;
+        std::transform(std::begin(cfgFunctionEntries_),
+            std::end(cfgFunctionEntries_),
+            std::inserter(new_fcn_entries, std::end(new_fcn_entries)),
+            do_remap_key);
+        cfgFunctionEntries_ = std::move(new_fcn_entries);
+      }
+
+      // Function Returns
+      {
+        std::map<ObjectMap::ObjID, CFGid> new_fcn_returns;
+        std::transform(std::begin(cfgFunctionReturns_),
+            std::end(cfgFunctionReturns_),
+            std::inserter(new_fcn_returns, std::end(new_fcn_returns)),
+            do_remap_key);
+        cfgFunctionEntries_ = std::move(new_fcn_returns);
+      }
+
+      // objToCFG
+      {
+        std::map<ObjectMap::ObjID, CFGid> new_obj_to_cfg;
+        std::transform(std::begin(objToCFG_),
+            std::end(objToCFG_),
+            std::inserter(new_obj_to_cfg, std::end(new_obj_to_cfg)),
+            do_remap_key);
+        objToCFG_ = std::move(new_obj_to_cfg);
+      }
+
+      // unusedFunctions
+      {
+        std::map<ObjectMap::ObjID, std::vector<ConstraintGraph::ConsID>>
+          new_unused_functions;
+        std::transform(std::begin(unusedFunctions_),
+            std::end(unusedFunctions_),
+            std::inserter(new_unused_functions, std::end(new_unused_functions)),
+            do_remap_unused);
+        unusedFunctions_ = std::move(new_unused_functions);
+      }
     }
     //}}}
 

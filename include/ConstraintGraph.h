@@ -184,6 +184,14 @@ class Constraint {
     //}}}
     //}}}
 
+    // Remap {{{
+    void remap(const util::ObjectRemap<ObjID> &remap) {
+      src_ = remap[src_];
+      dest_ = remap[dest_];
+      rep_ = remap[rep_];
+    }
+    // }}}
+
     // Print helper {{{
     void print_label(dbg_ostream &ofil, const ObjectMap &) const {
       switch (type()) {
@@ -298,6 +306,12 @@ class ConstraintGraph {
          return std::end(args_);
        }
 
+       void remap(const util::ObjectRemap<ObjID> &remap) {
+         callee_ = remap[callee_];
+         std::transform(std::begin(args_), std::end(args_), std::begin(args_),
+             [&remap] (ObjID id) { return remap[id]; });
+       }
+
      private:
       const bool isPointer_;
       ObjID callee_;
@@ -363,8 +377,28 @@ class ConstraintGraph {
       constraints_.at(id.val()).reset(nullptr);
     }
 
-    void updateObjIDs(const std::vector<ObjectMap::ObjID> &) {
-      llvm_unreachable("TODO");
+    void updateObjIDs(const util::ObjectRemap<ObjID> &remap) {
+      // First constraints
+      for (auto &pcons : constraints_) {
+        // Remap the rep dest and src of the constraint
+        if (pcons != nullptr) {
+          pcons->remap(remap);
+        }
+      }
+
+      // Then P2I
+      for (auto &pr : P2ICast_) {
+        pr.second = remap[pr.second];
+      }
+
+      // Finally indir calls
+      std::map<ObjID, IndirectCallInfo> new_indir;
+      for (auto &pr : indirectCalls_) {
+        pr.second.remap(remap);
+        new_indir.emplace(remap[pr.first], std::move(pr.second));
+      }
+
+      indirectCalls_ = std::move(new_indir);
     }
     //}}}
 

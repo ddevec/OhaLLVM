@@ -148,6 +148,12 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
     int32_t fcn_num_allocas = 0;
     std::vector<llvm::Instruction *> ret_list;
 
+
+    // FIXME: Need to support context swap!  setcontext swapcontext and
+    //    longjmp, siglongjmp...
+    // Means I also need to associate contexts...
+    //    getcontext swapcontext setjmp, sigsetjmp
+
     for (auto &bb : fcn) {
       // Create list to hold all malloc/free Value*s that needs instrumenting
       // within this function
@@ -333,7 +339,9 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
         // Get the function
         auto fcn = LLVMHelper::getFcnFromCall(ci);
         // Get the arg_pos for the size from the function
-        auto size_val = AllocInfo::getMallocSizeArg(m, ci, fcn);
+        auto size_pr = AllocInfo::getMallocSizeArg(m, ci, fcn);
+        auto size_val = size_pr.first;
+        auto after = size_pr.second;
 
         llvm::Instruction *i8_ptr_val = ci;
         if (ci->getType() != i8_ptr_type) {
@@ -349,7 +357,11 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
         auto malloc_inst_call = llvm::CallInst::Create(
             malloc_fcn, args);
 
-        malloc_inst_call->insertAfter(i8_ptr_val);
+        if (after == ci) {
+          malloc_inst_call->insertAfter(i8_ptr_val);
+        } else {
+          malloc_inst_call->insertAfter(after);
+        }
       }
     }
 

@@ -95,16 +95,16 @@ bool ConstraintPass::runOnModule(llvm::Module &m) {
     }
   }
 
-  /*
   // Need to now re-order constraints, with objects at bottom and values at
   //   top...
-  std::vector<ObjectMap::ObjID> remap = omap_.lowerObjects();
+  {
+    auto remap = omap_.lowerObjects();
 
-  // Use the remapping to adjust the CG and CFG
-  cg_.updateObjIDs(remap);
-  cfg_.updateObjIDs(remap);
-  specAssumptions_.updateObjIDs(remap);
-  */
+    // Use the remapping to adjust the CG and CFG
+    cg_.updateObjIDs(remap);
+    cfg_.updateObjIDs(remap);
+    specAssumptions_.updateObjIDs(remap);
+  }
 
   // We don't change code.  Ever.
   return false;

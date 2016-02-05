@@ -533,7 +533,34 @@ std::ostream &operator<<(std::ostream &o,
   o << id.val_;
   return o;
 }
+
+template<typename id_type>
+class ObjectRemap {
+ public:
+  ObjectRemap() = delete;
+  explicit ObjectRemap(size_t size) : remap_(size) { }
+
+  const id_type &operator[](id_type id) const {
+    return remap_[static_cast<size_t>(id)];
+  }
+
+  id_type &operator[](id_type id) {
+    return remap_[static_cast<size_t>(id)];
+  }
+
+  void set(id_type old_id, id_type new_id) {
+    remap_[static_cast<size_t>(old_id)] = new_id;
+  }
+
+  size_t size() const {
+    return remap_.size();
+  }
+
+ private:
+  std::vector<id_type> remap_;
+};
 //}}}
+
 
 // Union Find {{{
 // id_type must be construtable from a size_t, have the
@@ -586,6 +613,21 @@ class UnionFind {
   size_t size() const {
     assert(ids_.size() == ranks_.size());
     return ids_.size();
+  }
+
+  void remap(const ObjectRemap<id_type> &remap) {
+    assert(ranks_.size() == ids_.size());
+    assert(remap.size() == ids_.size());
+
+    std::vector<int32_t> new_ranks(ranks_.size());
+    std::vector<id_type> new_ids(ranks_.size());
+
+    for (size_t i = 0; i < ids_.size(); ++i) {
+      new_ids[static_cast<size_t>(remap[id_type(i)])] = remap[ids_[i]];
+      new_ranks[static_cast<size_t>(remap[id_type(i)])] = ranks_[i];
+    }
+    ranks_ = std::move(new_ranks);
+    ids_ = std::move(new_ids);
   }
 
  private:

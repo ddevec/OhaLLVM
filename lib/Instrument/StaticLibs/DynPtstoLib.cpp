@@ -140,11 +140,15 @@ void __DynPtsto_do_call() {
 
 void __DynPtsto_do_alloca(int32_t obj_id, int64_t size,
     void *addr) {
+  // Can happen on some null allocations *glares at getenv*
+  if (size == 0) {
+    return;
+  }
   // Size is in bits...
   size /= 8;
   // Handle alloca
   // Add addresses to stack frame
-  // std::cout << "stacking: (" << obj_id << ") " << addr << std::endl;
+  std::cout << "stacking: (" << obj_id << ") " << addr << std::endl;
   stack_allocs.back().push_back(addr);
   // Add ptstos to ptsto map
   auto ret =
@@ -183,9 +187,9 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
   size /= 8;
 
   // Add ptsto to map
-  /*
   std::cout << "mallocing: (" << obj_id << ") " << addr << ", "
     << size << std::endl;
+  /*
   if (obj_id == 66 || obj_id == 1488 || obj_id == 1568) {
     uintptr_t start_addr = reinterpret_cast<uintptr_t>(addr);
     std::cerr << "obj_id: " << obj_id << " => (" << start_addr << ", " <<
@@ -203,28 +207,27 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
     if (addr == nullptr) {
       return;
     }
-    /*
     std::cerr << "Couldn't place range: " << cur_range << std::endl;
     std::cerr << "Old range is: " << ret.first->first << std::endl;
-    */
+
     // Replace ret...
     auto vec = std::move(ret.first->second);
     int64_t new_addr = std::min(ret.first->first.start(), cur_range.start());
     int64_t new_len = std::max(cur_range.end() - new_addr,
         ret.first->first.end() - new_addr);
     AddrRange new_range(reinterpret_cast<void *>(new_addr), new_len);
-    // std::cerr << "new range is: " << ret.first->first << std::endl;
+    std::cerr << "new range is: " << ret.first->first << std::endl;
     addr_to_objid.erase(ret.first);
     ret = addr_to_objid.emplace(new_range, std::move(vec));
   }
 
   ret.first->second.push_back(obj_id);
-  // assert(ret.second);
+  assert(ret.second);
 }
 
 void __DynPtsto_do_free(void *addr) {
   // Remove ptsto from map
-  // std::cout << "freeing: " << addr << std::endl;
+  std::cout << "freeing: " << addr << std::endl;
   // We shouldn't have double allocated anything except globals, which are never
   //   freed
   assert(addr_to_objid.at(AddrRange(addr)).size() == 1);
