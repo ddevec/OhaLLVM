@@ -314,6 +314,7 @@ class CFG {
       indirectCalls_(other.indirectCalls_),
       indirFcns_(other.indirFcns_),
       cfgCallSuccessors_(other.cfgCallSuccessors_),
+      cfgFunctionEntries_(other.cfgFunctionEntries_),
       cfgFunctionReturns_(other.cfgFunctionReturns_),
       objToCFG_(other.objToCFG_),
       unusedFunctions_(other.unusedFunctions_) { }
@@ -343,6 +344,23 @@ class CFG {
       cfgCallSuccessors_[call_id] = ret_id;
     }
 
+    void addLongjmp(CFGid jmp_id, const llvm::Value *env) {
+      longJmps_.push_back(std::make_pair(jmp_id, env));
+    }
+
+    void addSetjmp(CFGid dest_id, const llvm::Value *env) {
+      setJmps_.push_back(std::make_pair(dest_id, env));
+    }
+
+    const std::vector<std::pair<CFGid, const llvm::Value *>> &
+    getLongjmps() const {
+      return longJmps_;
+    }
+
+    const std::vector<std::pair<CFGid, const llvm::Value *>> &
+    getSetjmps() const {
+      return setJmps_;
+    }
 
     void addFunctionStart(ObjectMap::ObjID fcn_id, CFGid id) {
       cfgFunctionEntries_[fcn_id] = id;
@@ -459,8 +477,20 @@ class CFG {
       return objToCFG_.at(obj_id);
     }
 
+    bool isCallRet(ObjectMap::ObjID obj_id) const {
+      return cfgFunctionReturns_.find(obj_id) == std::end(cfgFunctionReturns_);
+    }
+
     void swapObjToCFG(std::map<ObjectMap::ObjID, CFGid> &mapping) {
       objToCFG_.swap(mapping);
+    }
+
+    void swapFunctionStarts(std::map<ObjectMap::ObjID, CFGid> &mapping) {
+      cfgFunctionEntries_.swap(mapping);
+    }
+
+    void swapFunctionReturns(std::map<ObjectMap::ObjID, CFGid> &mapping) {
+      cfgFunctionReturns_.swap(mapping);
     }
 
     bool isStrong(ObjectMap::ObjID) const {
@@ -575,6 +605,29 @@ class CFG {
     }
     //}}}
 
+    // Function to CFG iterators {{{
+    typedef std::map<ObjectMap::ObjID, CFGid>::iterator  // NOLINT
+      fcn_cfg_iterator;
+    typedef std::map<ObjectMap::ObjID, CFGid>::const_iterator  // NOLINT
+      const_fcn_cfg_iterator;
+
+    const_fcn_cfg_iterator function_start_begin() const {
+      return std::begin(cfgFunctionEntries_);
+    }
+
+    const_fcn_cfg_iterator function_start_end() const {
+      return std::end(cfgFunctionEntries_);
+    }
+
+    const_fcn_cfg_iterator function_ret_begin() const {
+      return std::begin(cfgFunctionReturns_);
+    }
+
+    const_fcn_cfg_iterator function_ret_end() const {
+      return std::end(cfgFunctionReturns_);
+    }
+    //}}}
+
     // Def/use/global init Iterators {{{
     //}}}
 
@@ -624,15 +677,6 @@ class CFG {
         std::transform(std::begin(pr.second), std::end(pr.second),
             std::begin(pr.second), do_remap);
       }
-      // Then indir Callsites
-      {
-        std::map<ObjectMap::ObjID, CFGid> new_fcn_entries;
-        std::transform(std::begin(cfgFunctionEntries_),
-            std::end(cfgFunctionEntries_),
-            std::inserter(new_fcn_entries, std::end(new_fcn_entries)),
-            do_remap_key);
-        cfgFunctionEntries_ = std::move(new_fcn_entries);
-      }
 
       // Then indirFcns
       {
@@ -667,7 +711,7 @@ class CFG {
             std::end(cfgFunctionReturns_),
             std::inserter(new_fcn_returns, std::end(new_fcn_returns)),
             do_remap_key);
-        cfgFunctionEntries_ = std::move(new_fcn_returns);
+        cfgFunctionReturns_ = std::move(new_fcn_returns);
       }
 
       // objToCFG
@@ -707,6 +751,10 @@ class CFG {
     // Function call -> CFG node
     std::vector<std::pair<ObjectMap::ObjID, CFGid>> indirectCalls_;
     std::map<ObjectMap::ObjID, std::vector<ObjectMap::ObjID>> indirFcns_;
+
+    // set/longjmp
+    std::vector<std::pair<CFGid, const llvm::Value *>> setJmps_;
+    std::vector<std::pair<CFGid, const llvm::Value *>> longJmps_;
 
     // The return CFG node associated with each CFG containing a call
     std::map<CFGid, CFGid> cfgCallSuccessors_;

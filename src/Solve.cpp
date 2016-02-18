@@ -249,6 +249,7 @@ void DUG::LoadNode::processShared(DUG &dug, TopLevelPtsto &pts_top,
 
       auto &nd = dug.getNode(dug_id);
 
+      /*
       if (!nd.in().canOrPart(in, dug.objToPartMap(), part_id)) {
         llvm::dbgs() << "orPart failing, node: " << id() << "\n";
         llvm::dbgs() << "  Load SHARED\n";
@@ -261,6 +262,7 @@ void DUG::LoadNode::processShared(DUG &dug, TopLevelPtsto &pts_top,
         llvm::dbgs() << "  part_id is: " << part_id << "\n";
         llvm::dbgs() << "  nd is: " << nd.id() << "\n";
       }
+      */
 
       bool ch = nd.in().orPart(in, dug.objToPartMap(), part_id);
 
@@ -372,6 +374,7 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top,
 
         ld_nd.processShared(dug, pts_top, work, priority, in_);
       } else {
+        /*
         if (!nd.in().canOrPart(in_, dug.objToPartMap(), part_id)) {
           llvm::dbgs() << "orPart failing, node: " << id() << "\n";
           llvm::dbgs() << "  LOAD\n";
@@ -382,6 +385,7 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top,
           llvm::dbgs() << "  nd.in() is: " << nd.in() << "\n";
           llvm::dbgs() << "  nd is: " << nd.id() << "\n";
         }
+        */
         bool ch = nd.in().orPart(in_, dug.objToPartMap(), part_id);
 
         if (ch) {
@@ -456,11 +460,14 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top,
 
   // If this is a strong update, remove all outgoing edges from dest
   // NOTE: This is a strong update if we are updating a single concrete location
-  if (strong() && dest_pts.size() == 1) {
+  if (strong() && dest_pts.singleton()) {
     // Clear all outgoing edges from pts_top(src) from out
     dout("DOING STRONG UPDATE!!!\n");
     dout("dest is: " << dest() << "\n");
     dout("in is: " << in() << "\n");
+
+    dout("    Initial out: " << out_ << "\n");
+    dout("    Initial in: " << in() << "\n");
 
     change |= out_.orExcept(in(), *std::begin(dest_pts));
 
@@ -521,9 +528,11 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top,
       } else {
         // Update the input set of the successor node
         //
+        /*
         if (!nd.in().canOrPart(out_, dug.objToPartMap(), part_id)) {
           llvm::dbgs() << "orPart failing, node: " << id() << "\n";
           llvm::dbgs() << "  LOAD\n";
+          llvm::dbgs() << "  part_id: " << part_id << "\n";
           llvm::dbgs() << "  value at src() (" << src() << ")\n";
           llvm::dbgs() << "  value at dest() (" << dest() << ")\n";
           llvm::dbgs() << "  src is " << src() << " " << src_pts << "\n";
@@ -533,6 +542,7 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top,
           llvm::dbgs() << "  nd is: " << dug_id << "\n";
           llvm::dbgs() << "  nd.id() is: " << nd.id() << "\n";
         }
+        */
 
         bool c = nd.in().orPart(out_, dug.objToPartMap(), part_id);
 

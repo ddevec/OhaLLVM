@@ -299,8 +299,6 @@ class DUG {
 
       // Need to create a list of providers for each id, and go from there...
       // First, map all ids to sources
-      // O(n*log(n))
-      // std::multimap<ObjID, DUGid> dest_to_node;
       int32_t max_dest = 0;
       int64_t edge_count = 0;
       std::for_each(std::begin(DUG_), std::end(DUG_),
@@ -315,8 +313,12 @@ class DUG {
       std::for_each(std::begin(DUG_), std::end(DUG_),
           [this, &dest_to_node, &edge_count] (SEG::node_iter_type &upnode) {
         auto &node = cast<DUGNode>(*upnode);
-        dest_to_node[node.dest().val()].push_back(node.id());
-        edge_count++;
+        // Don't monitor the dest on store nodes... those are handled by the
+        //   partiton successors
+        if (!llvm::isa<DUG::StoreNode>(node)) {
+          dest_to_node[node.dest().val()].push_back(node.id());
+          edge_count++;
+        }
       });
       llvm::dbgs() << "Discovered " << edge_count << " linkages\n";
 
@@ -350,6 +352,7 @@ class DUG {
             for (auto src_id : srcs) {
               auto &pr_node = DUG_.getNode<DUGNode>(src_id);
               auto node_id = node.id();
+              // 82816...
               // Don't add an edge to yourself!
               // assert(pr_node.id() != node_id);
               if (pr_node.id() != node_id) {
@@ -357,6 +360,10 @@ class DUG {
               // edge_count++;
               // DUG_.addSucc(dest_id, node.id());
                 pr_node.succs().insert(node_id);
+                if (node_id.val() == 86539) {
+                  llvm::dbgs() << __LINE__ << "Have edge from: " <<
+                    pr_node.id() << " -> " << node_id << "\n";
+                }
               }
             }
           } else {
@@ -381,6 +388,10 @@ class DUG {
               if (src_id != node.id()) {
                 // O(1)
                 DUG_.addSucc(src_id, node.id());
+                if (node.id().val() == 86539) {
+                  llvm::dbgs() << __LINE__ << "Have edge from: " << src_id <<
+                    " -> " << node.id() << "\n";
+                }
               }
             }
           }
@@ -515,8 +526,7 @@ class DUG {
       partNodes_ = std::move(mapping);
     }
 
-    void setNodeToPartition(
-        std::map<ObjID, PartID> mapping) {
+    void setNodeToPartition(std::vector<PartID> mapping) {
       revPartitionMap_ = std::move(mapping);
     }
 
@@ -533,12 +543,12 @@ class DUG {
       return relevantNodes_;
     }
 
-    std::map<ObjID, PartID> &objToPartMap() {
+    std::vector<PartID> &objToPartMap() {
       return revPartitionMap_;
     }
 
     PartID getPart(ObjID obj_id) {
-      return revPartitionMap_.at(obj_id);
+      return revPartitionMap_[obj_id.val()];
     }
 
     std::vector<ObjectMap::ObjID> &getObjs(PartID part_id) {
@@ -973,7 +983,7 @@ class DUG {
     // The Partition equivalence for each object in the graph
     std::map<PartID, std::vector<ObjID>> partitionMap_;
     std::vector<Bitmap> relevantNodes_;
-    std::map<ObjID, PartID> revPartitionMap_;
+    std::vector<PartID> revPartitionMap_;
     // std::map<ObjID, std::vector<DUGid>> partNodes_;
     std::vector<std::vector<DUGid>> partNodes_;
 

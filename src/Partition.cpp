@@ -56,7 +56,7 @@ class DUGAccessEquiv {
   }
 
   std::vector<std::vector<DUG::DUGid>> getAESets() const {
-    std::unordered_map<Bitmap, std::vector<DUG::DUGid>, Bitmap::hasher> ae;
+    std::unordered_map<Bitmap, std::vector<DUG::DUGid>, BitmapHash> ae;
     // std::map<Bitmap, std::vector<DUG::DUGid>, BitmapLT> ae;
 
     for (auto &pr : AEMap_) {
@@ -269,12 +269,10 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
       }
 
       auto &aux_ptsto = aux.getPointsTo(obj_id);
-      /*
-      if (obj_id == ObjectMap::ObjID(77377)) {
+      if (obj_id == ObjectMap::ObjID(82470)) {
         llvm::dbgs() << "  aux_pts for " << obj_id << " is: " << aux_ptsto <<
           "\n";
       }
-      */
       /*
       llvm::dbgs() << "aux_pts for " << obj_id << " is: " << aux_ptsto << "\n";
       */
@@ -369,7 +367,7 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
   // Create the node to partition mapping
   // To do this, we basically just reverse the part to node mapping
   // NOTE: We also deduplicate the node to part mapping here -- Is this needed?
-  std::map<ObjectMap::ObjID, DUG::PartID> part_map;
+  std::vector<DUG::PartID> part_map(AE.size(), DUG::PartID::invalid());
   {
     util::PerfTimerPrinter part_map_printer(llvm::dbgs(),
         "Populating part_map");
@@ -403,10 +401,31 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
         */
 
         // Now, just add the obj
-        part_map[obj_id] = pr.first;
+        part_map[obj_id.val()] = pr.first;
       });
     });
   }
+
+  /*
+  llvm::dbgs() << "  Partition for 47070 is: " <<
+    part_map[ObjectMap::ObjID(47070)] << "\n";
+  */
+
+  ObjectMap::ObjID rel_id(181419);
+  llvm::dbgs() << "  ObjID " << rel_id << " is part of part_id: " <<
+    part_map[rel_id.val()] << "\n";
+  for (auto id : AE[rel_id.val()]) {
+    llvm::dbgs() << " " << id;
+  }
+  llvm::dbgs() << "\n";
+
+  ObjectMap::ObjID node_id(181419);
+  llvm::dbgs() << "  Part nodes[" << node_id << "] is:";
+  for (auto &id : part_nodes[node_id.val()]) {
+    llvm::dbgs() << " " << id;
+  }
+  llvm::dbgs() << "\n";
+
 
   /*
   llvm::dbgs() << "  ObjID 941 is part of part_id: " <<
@@ -507,15 +526,13 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
       auto &rel_map = graph.getRelevantNodes();
       dout("Getting rel_map for: " << obj_id << "\n");
       auto &rel_bitmap = rel_map[obj_id.val()];
-      /*
-      if (part_id.val() == 46) {
+      if (part_id.val() == 279) {
         llvm::dbgs() << "  Part " << part_id << " got rel_bitmap of:";
         for (auto rel_id : rel_bitmap) {
           llvm::dbgs() << " " << rel_id;
         }
         llvm::dbgs() << "\n";
       }
-      */
 
       int num_loads = 0;
       int num_stores = 0;
@@ -538,7 +555,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
 
         for (auto dug_id : dug_ids) {
           /*
-          if (part_id.val() == 46) {
+          if (part_id.val() == 279) {
             llvm::dbgs() << "part: " << part_id <<
                 ": Getting obj_id: " << obj_id << " for dug_id: " << dug_id <<
                 "\n";
@@ -571,7 +588,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
           if (llvm::isa<DUG::LoadNode>(node) ||
               llvm::isa<DUG::ConstPartNode>(node)) {
             /*
-            if (part_id.val() == 46) {
+            if (part_id.val() == 279) {
               llvm::dbgs() << "    Load!\n";
             }
             */
@@ -580,7 +597,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
           // If its a store:
           } else if (llvm::isa<DUG::StoreNode>(node)) {
             /*
-            if (part_id.val() == 46) {
+            if (part_id.val() == 279) {
               llvm::dbgs() << "    Store!\n";
             }
             */
@@ -610,6 +627,12 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
             for (auto &pr : part_load) {
               auto load_id = pr.first;
               graph.addEdge(st_id, load_id, part_id);
+              /*
+              if (load_id.val() == 86539) {
+                llvm::dbgs() << __LINE__ << "Have edge from: " << st_id <<
+                  " -> " << load_id << " for part: " << part_id << "\n";
+              }
+              */
               // These are all part of an AE set...
               __addnode2++;
               dug_ae.addNode(load_id, std::make_pair(CFG::CFGid::invalid(),
@@ -635,6 +658,10 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
             for (auto &pr : part_store) {
               auto st_id = pr.first;
               graph.addEdge(st_id, load_id, part_id);
+              if (load_id.val() == 86539) {
+                llvm::dbgs() << __LINE__ << "Have edge from: " << st_id <<
+                  " -> " << load_id << " for part: " << part_id << "\n";
+              }
               // These all have distrinct AE sets
               __addnode4++;
               dug_ae.addNode(st_id, std::make_pair(inv_id, part_id));
@@ -674,19 +701,25 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
             // Get the node in the CFG
             auto &node = part_graph.getNode<CFG::Node>(cfg_id);
 
+            if (part_id.val() == 279) {
+              llvm::dbgs() << "  Part " << part_id << " store node: " <<
+                dug_id << " has cfg_id: " << node.id() << "\n";
+            }
+
             // Set M and R
             node.setM();
             node.setR();
 
+            // FIXME: I'm unsure about this... ignoring
+            /*
             // Possibly set C
             if (ssa.isStrong(obj_id)) {
               node.setC();
             }
+            */
 
             // Denote this CFGid references this DUG entry
-            // FIXME:
-            // MAHHHH this is the wrong type of ID... so I'm forcing it...
-            //   because I'm ticked off!
+            // FIXME: id typing ugly here
             dout("Adding def to node: " << node.id() << "\n");
             node.addDef(ObjectMap::ObjID(dug_id.val()));
           }
@@ -698,13 +731,16 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
             // Get the node in the CFG
             auto &node = part_graph.getNode<CFG::Node>(cfg_id);
 
+            if (part_id.val() == 279) {
+              llvm::dbgs() << "  Part " << part_id << " load node: " <<
+                dug_id << " has cfg_id: " << node.id() << "\n";
+            }
+
             // Set R
             node.setR();
 
             // Denote this CFG node maps to this DUG node
-            // FIXME:
-            // MAHHHH this is the wrong type of ID... so I'm forcing it...
-            //   because I'm ticked off!
+            // FIXME: id typing ugly here
             dout("Adding use to node: " << node.id() << "\n");
             node.addUse(ObjectMap::ObjID(dug_id.val()));
           }
@@ -717,8 +753,21 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
             part_graph.printDotFile(part_file, *g_omap);
           }
 #endif
+          if (part_id.val() == 279) {
+            std::string part_file("part_graph");
+            part_file += std::to_string(part_id.val());
+            part_file += ".dot";
+            part_graph.printDotFile(part_file, *g_omap);
+          }
           // Now, calculate ssa form for this graph:
           computeSSA(part_graph);
+
+          if (part_id.val() == 279) {
+            std::string part_file("part_graph_after");
+            part_file += std::to_string(part_id.val());
+            part_file += ".dot";
+            part_graph.printDotFile(part_file, *g_omap);
+          }
         }
 
         auto &part_ssa = part_graph;
@@ -825,6 +874,10 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
               dout("  --Adding rep-st edge {" << dug_id << " -(" <<
                   part_id << ")-> " << st_id << "}\n");
               graph.addEdge(dug_id, st_id, part_id);
+              if (st_id.val() == 86539) {
+                llvm::dbgs() << __LINE__ << "Have edge from: " << dug_id <<
+                  " -> " << st_id << " for part: " << part_id << "\n";
+              }
               // Add the "leader" node to our AE set
               __addnode9++;
               dug_ae.addNode(st_id, std::make_pair(cfg_id, part_id));
@@ -851,6 +904,10 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
               dout("  --Adding rep-ld edge {" << dug_id << " -(" <<
                   part_id << ")-> " << ld_id << "}\n");
               graph.addEdge(dug_id, ld_id, part_id);
+              if (ld_id.val() == 86539) {
+                llvm::dbgs() << __LINE__ << "Have edge from: " << dug_id <<
+                  " -> " << ld_id << " for part: " << part_id << "\n";
+              }
 
               __addnode10++;
               dug_ae.addNode(ld_id, std::make_pair(cfg_id, part_id));
@@ -905,6 +962,10 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
               dout("    --Adding cfg edge {" << pred_rep_id << " -(" <<
                 part_id << ")-> " << dug_id << "}\n");
               graph.addEdge(pred_rep_id, dug_id, part_id);
+              if (dug_id.val() == 86539) {
+                llvm::dbgs() << __LINE__ << "Have edge from: " << pred_rep_id <<
+                  " -> " << dug_id << " for part: " << part_id << "\n";
+              }
             }
           }
         });
@@ -941,6 +1002,11 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
                 " -(" << std::get<2>(tup) << ")-> " << std::get<1>(tup)
                 << "}\n");
             graph.addEdge(pred_rep_id, std::get<1>(tup), std::get<2>(tup));
+            if (std::get<1>(tup).val() == 86539) {
+              llvm::dbgs() << __LINE__ << "Have edge from: " << pred_rep_id <<
+                " -> " << std::get<1>(tup) << " for part: " << std::get<2>(tup)
+                << "\n";
+            }
         });
       }
     });
@@ -1046,6 +1112,10 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
         // We choose an arbitrary part_id, but not invalid, this will not be
         //   evaluated due to the handling of shared loads
         graph.addEdge(rep_node.id(), load_node.id(), DUG::PartID(0));
+        if (rep_node.id().val() == 86539) {
+          llvm::dbgs() << __LINE__ << "Have edge from: " << rep_node.id() <<
+            " -> " << load_node.id() << " for part: " << 0 << "\n";
+        }
       }
 
       /*

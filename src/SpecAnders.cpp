@@ -65,18 +65,6 @@ static void error(const std::string &msg) {
 }
 //}}}
 
-static ObjectMap::ObjID getRepID(ObjectMap::ObjID obj_id, ObjectMap &omap) {
-  ObjectMap::ObjID new_id = obj_id;
-
-  do {
-    obj_id = new_id;
-    auto val = omap.valueAtID(obj_id);
-    new_id = omap.getValue(val);
-  } while (new_id != obj_id);
-
-  return new_id;
-}
-
 static llvm::cl::opt<bool>
   do_spec_diff("anders-do-spec-diff", llvm::cl::init(false),
       llvm::cl::value_desc("bool"),
@@ -560,8 +548,16 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
     for (auto &pr : dyn_ptsto) {
       auto old_id = pr.first;
       auto &old_set = pr.second;
-      auto val = omap.valueAtID(old_id);
-      auto new_id = omap.getValue(val);
+      auto new_id = omap.getRep(old_id);
+
+      // Also, strip out structures to their base field
+      if (!ObjectMap::isSpecial(new_id)) {
+        auto val = omap.valueAtID(new_id);
+        if (val != nullptr) {
+          new_id = omap.getValue(val);
+        }
+        // assert(omap.isObject(new_id));
+      }
 
       auto &new_set = new_dyn_ptsto[new_id];
 
@@ -592,7 +588,8 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
       // And we get the appropriate top-level ptsto variable:
       // NOTE: We intentionally copy that set here
       // Convert old node to new node:
-      auto corrected_obj_id = getRepID(obj_id, omap);
+      auto corrected_obj_id = omap.getRep(obj_id);
+
       /*
       llvm::dbgs() << "corrected_id: " << corrected_obj_id << ", obj_id: " <<
         obj_id << "\n";
@@ -658,11 +655,13 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
 
               // Check if the ID given by the omap is equivalent to the ID given
               //   by our anaysis
-              auto new_set_id = omap.getValue(val);
-              if (new_set_id != set_obj_id) {
-                llvm::dbgs() << "  !! Merged AWAY by cons_opt !!\n";
-                llvm::dbgs() << "  !! new id: " << new_set_id << " !!\n";
-                llvm::dbgs() << "  !! old id: " << set_obj_id << " !!\n";
+              if (val != nullptr) {
+                auto new_set_id = omap.getValue(val);
+                if (new_set_id != set_obj_id) {
+                  llvm::dbgs() << "  !! Merged AWAY by cons_opt !!\n";
+                  llvm::dbgs() << "  !! new id: " << new_set_id << " !!\n";
+                  llvm::dbgs() << "  !! old id: " << set_obj_id << " !!\n";
+                }
               }
 
               set_id_found = true;
@@ -711,7 +710,7 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
 
       // Statistics
       auto &ptsto = graph_.getNode(val_id).ptsto();
-      size_t ptsto_size = ptsto.size();
+      size_t ptsto_size = ptsto.count();
       // size_t ptsto_size = ptsto.getSizeNoStruct(omap);
 
       total_variables++;
@@ -793,7 +792,7 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
         num_node_pts++;
       }
 
-      total_pts_size += node.ptsto().size();
+      total_pts_size += node.ptsto().count();
       num_copy_edges += node.copySuccs().count();
       num_gep_edges += node.gepSuccs().size();
       /*
@@ -851,7 +850,7 @@ llvm::AliasAnalysis::AliasResult SpecAnders::alias(const Location &L1,
   auto &pts2 = node2.ptsto();
 
   // If either of the sets point to nothing, no alias
-  if (pts1.size() == 0 || pts2.size() == 0) {
+  if (pts1.empty() || pts2.empty()) {
     return NoAlias;
   }
 

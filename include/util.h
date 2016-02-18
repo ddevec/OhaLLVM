@@ -15,7 +15,6 @@
 #include <list>
 #include <memory>
 #include <set>
-#include <stack>
 #include <string>
 #include <vector>
 
@@ -51,6 +50,20 @@ typename T::const_iterator cend(const T &container) {
 }  // namespace std14
 
 namespace util {
+// General helpers {{{
+constexpr bool is_power_of_two(size_t x) {
+  return x && ((x & (x-1)) == 0);
+}
+
+constexpr bool is_divisible_by(size_t x, size_t y) {
+  return (x % y) == 0;
+}
+
+template<typename T>
+constexpr T div_round_up(T x, T y) {
+  return (x + (y-1)) / y;
+}
+//}}}
 
 // PerfTimers {{{
 class PerfTimer {
@@ -720,6 +733,8 @@ class StackAlloc : public std::allocator<T> {
   typedef T* pointer;
   typedef const T* const_pointer;
 
+  static const size_t StackSize = 10000;
+
   template <typename nT>
   struct rebind {
     typedef StackAlloc<nT> other;
@@ -727,18 +742,22 @@ class StackAlloc : public std::allocator<T> {
 
   pointer allocate(size_type n, const void *hint = 0) {
     pointer ret = nullptr;
-    if (st_.empty()) {
+    if (pos_ == 0) {
       ret = std::allocator<T>::allocate(n, hint);
     } else {
-      ret = st_.top();
-      st_.pop();
+      pos_--;
+      ret = st_[pos_];
     }
     return ret;
   }
 
-  void deallocate(pointer p, size_type) {
-    st_.push(p);
-    // std::allocator<T>::deallocate(p, n);
+  void deallocate(pointer p, size_type n) {
+    if (pos_ < StackSize && n == 1) {
+      st_[pos_] = p;
+      pos_++;
+    } else {
+      std::allocator<T>::deallocate(p, n);
+    }
   }
 
   StackAlloc() : std::allocator<T>() { }  // NOLINT
@@ -747,30 +766,187 @@ class StackAlloc : public std::allocator<T> {
   StackAlloc(const StackAlloc<nT> &nt) : std::allocator<T>(nt) { }
 
  private:
-  static std::stack<pointer> st_;
+  static size_t pos_;
+  static std::vector<pointer> st_;
 };
 
 template <typename T>
-std::stack<T *> StackAlloc<T>::st_;
+std::vector<T *> StackAlloc<T>::st_(StackAlloc<T>::StackSize, nullptr);
+
+template <typename T>
+size_t StackAlloc<T>::pos_(0);
 //}}}
 
 // Sparse BitMap {{{
-template <size_t bits_per_field = 128>
-struct BitmapNode {
-  typedef typename std::bitset<bits_per_field> bmap;
+template <size_t bits_per_field>
+class BitmapNode {
+ public:
+  // Note: we use c-type here as gcc makes it a word size
+  static const int32_t BitsPerSet = 8*sizeof(unsigned long); //  NOLINT
 
-  explicit BitmapNode(size_t idx) : index(idx) { }
+  static_assert(is_divisible_by(bits_per_field, BitsPerSet),
+      "bits_per_field must be divsible by BitsPerSet");
+
+  static const size_t NumBitsets = bits_per_field / BitsPerSet;
+
+  typedef typename std::array<std::bitset<BitsPerSet>, NumBitsets> bmap;
+
+  explicit BitmapNode(size_t idx) : index_(idx) { }
 
   bool operator==(const BitmapNode &rhs) const {
-    return index == rhs.index && bitmap == rhs.bitmap;
+    return index() == rhs.index() && bitmap_ == rhs.bitmap_;
   }
 
   bool operator!=(const BitmapNode &rhs) const {
     return !(*this == rhs);
   }
 
-  size_t index;
-  bmap bitmap;
+  bool operator|=(const BitmapNode &rhs) {
+    assert(index() == rhs.index());
+
+    bool ch = false;
+    auto rhs_it = std::begin(rhs.bitmap_);
+
+    for (auto &bs : bitmap_) {
+      auto c1 = bs.to_ulong();
+
+      bs |= *rhs_it;
+
+      ch |= (c1 != bs.to_ulong());
+      ++rhs_it;
+    }
+
+    return ch;
+  }
+
+  bool operator&=(const BitmapNode &rhs) {
+    if (rhs.index() != index()) {
+      return false;
+    }
+
+    bool ch = false;
+    auto rhs_it = std::begin(rhs.bitmap_);
+    for (auto &bs : bitmap_) {
+      auto c1 = bs.count();
+
+      bs &= *rhs_it;
+
+      ch |= (c1 != bs.count());
+      ++rhs_it;
+    }
+
+    return ch;
+  }
+
+  bool orWithIntersect(const BitmapNode &rhs,
+      const BitmapNode &is) {
+    assert(index() == rhs.index());
+    assert(index() == is.index());
+
+    bool ch = false;
+    auto rhs_it = std::begin(rhs.bitmap_);
+    auto is_it = std::begin(is.bitmap_);
+
+    for (auto &bs : bitmap_) {
+      auto c1 = bs.to_ulong();
+
+      bs |= (*rhs_it & *is_it);
+
+      // FIXME: Should be enabled in llvm code, but testcase doesn't enforce
+      // this
+      // assert((bs & std::bitset<BitsPerSet>(*is_it).flip()).none());
+
+      ch |= (c1 != bs.to_ulong());
+      ++rhs_it;
+      ++is_it;
+    }
+
+    return ch;
+  }
+
+  static BitmapNode Intersect(const BitmapNode &rhs,
+      const BitmapNode &intersect) {
+    BitmapNode ret(rhs);
+
+    rhs &= intersect;
+
+    return rhs;
+  }
+
+  bool intersects(const BitmapNode &rhs) const {
+    if (index() != rhs.index()) {
+      return false;
+    }
+
+    auto rhs_it = std::begin(rhs.bitmap_);
+    for (auto &elm : bitmap_) {
+      if (!(elm & *rhs_it).none()) {
+        return true;
+      }
+      ++rhs_it;
+    }
+
+    return false;
+  }
+
+  bool test(size_t idx) const {
+    size_t bitset = idx / BitsPerSet;
+    size_t offs = idx % BitsPerSet;
+    return bitmap_[bitset].test(offs);
+  }
+
+  void set(size_t idx) {
+    size_t bitset = idx / BitsPerSet;
+    size_t offs = idx % BitsPerSet;
+    bitmap_[bitset].set(offs);
+  }
+
+  void reset(size_t idx) {
+    size_t bitset = idx / BitsPerSet;
+    size_t offs = idx % BitsPerSet;
+    bitmap_[bitset].reset(offs);
+  }
+
+  size_t count() const {
+    size_t ret = 0;
+    for (auto &bset : bitmap_) {
+      ret += bset.count();
+    }
+    return ret;
+  }
+
+  bool none() const {
+    for (auto &bs : bitmap_) {
+      if (!bs.none()) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  size_t index() const {
+    return index_;
+  }
+
+  unsigned long getUl(size_t idx) const { //  NOLINT
+    return bitmap_[idx].to_ulong();
+  }
+
+  size_t hash() const {
+    static_assert(sizeof(size_t) == sizeof(unsigned long),  // NOLINT
+        "hash assumes sizeof size_t == sizeof ulong");
+    size_t ret = 0;
+    for (auto &elm : bitmap_) {
+      // ret ^= elm.to_ulong();
+      ret ^= std::hash<std::bitset<BitsPerSet>>()(elm);
+    }
+    return ret;
+  }
+
+ private:
+  bmap bitmap_;
+  size_t index_;
 };
 
 template <typename id_type = int32_t, size_t bits_per_field = 128,
@@ -780,7 +956,36 @@ class SparseBitmap {
   typedef BitmapNode<bits_per_field> node;
   typedef typename std::list<node, alloc> bitmap_list;
 
-  SparseBitmap() = default;
+  // Constructors {{{
+  explicit SparseBitmap(const alloc &a = alloc()) : alloc_(a), elms_(alloc_),
+      curElm_(std::end(elms_)) { }
+
+  SparseBitmap(const SparseBitmap &s) : alloc_(s.alloc_),
+      elms_(std::begin(s.elms_), std::end(s.elms_)),
+  /*
+      curElm_(std::next(std::begin(elms_),
+            std::distance(std::begin(s.elms_), s.curElm_))) { }
+            */
+      curElm_(std::begin(elms_)) { }
+  SparseBitmap(SparseBitmap &&s) = default;
+
+  SparseBitmap &operator=(const SparseBitmap &s) {
+    alloc_ = s.alloc_;
+
+    elms_.clear();
+    elms_.insert(std::end(elms_), std::begin(s.elms_), std::end(s.elms_));
+
+    curElm_ = std::begin(elms_);
+    /*
+    curElm_ = std::next(std::begin(elms_),
+      std::distance(std::begin(s.elms_), s.curElm_));
+      */
+
+    return *this;
+  }
+
+  SparseBitmap &operator=(SparseBitmap &&) = default;
+  //}}}
 
   // Misc {{{
   bool empty() const {
@@ -801,11 +1006,11 @@ class SparseBitmap {
       return false;
     }
 
-    if (it->index != idx) {
+    if (it->index() != idx) {
       return false;
     }
 
-    return it->bitmap.test(getOffs(id));
+    return it->test(getOffs(id));
   }
 
   bool intersects(SparseBitmap &rhs) const {
@@ -821,13 +1026,13 @@ class SparseBitmap {
         return false;
       }
 
-      if (it1->index > it2->index) {
+      if (it1->index() > it2->index()) {
         ++it2;
-      } else if (it2->index > it1->index) {
+      } else if (it2->index() > it1->index()) {
         ++it1;
       // index1 == index2
       } else {
-        if (!(it1->bitmap & it2->bitmap).none()) {
+        if (it1->intersects(*it2)) {
           return true;
         }
         ++it1;
@@ -837,10 +1042,15 @@ class SparseBitmap {
     return false;
   }
 
+  bool singleton() const {
+    return elms_.size() == 1 &&
+      elms_.front().count() == 1;
+  }
+
   size_t count() const {
     size_t ret = 0;
     for (auto &elm : elms_) {
-      ret += elm.bitmap.count();
+      ret += elm.count();
     }
     return ret;
   }
@@ -853,14 +1063,14 @@ class SparseBitmap {
     auto it = findClosest(idx);
 
     if (it == std::end(elms_) ||
-        it->index != idx) {
+        it->index() != idx) {
       return;
     }
 
-    it->bitmap.reset(getOffs(id));
+    it->reset(getOffs(id));
 
     // If no bits are set, erase the bitset
-    if (it->bitmap.none()) {
+    if (it->none()) {
       // Advance curElm because we're about to erase this one
       ++curElm_;
       elms_.erase(it);
@@ -874,18 +1084,18 @@ class SparseBitmap {
     // Need to insert at rear?
     if (it == std::end(elms_)) {
       it = elms_.insert(it, node(idx));
-    } else if (it->index != idx) {
-      if (it->index > idx) {
+    } else if (it->index() != idx) {
+      if (it->index() < idx) {
         it = elms_.insert(++it, node(idx));
       } else {
         it = elms_.insert(it, node(idx));
       }
     }
 
-    assert(it->index == idx);
+    assert(it->index() == idx);
     curElm_ = it;
 
-    it->bitmap.set(getOffs(id));
+    it->set(getOffs(id));
   }
 
   bool test_and_set(id_type id) {
@@ -896,9 +1106,9 @@ class SparseBitmap {
     // Need to insert at rear?
     if (it == std::end(elms_)) {
       it = elms_.insert(it, node(idx));
-    } else if (it->index != idx) {
+    } else if (it->index() != idx) {
       // std::cout << "it->idx: " << it->index << std::endl;
-      if (it->index < idx) {
+      if (it->index() < idx) {
         // std::cout << "InsAfter" << std::endl;
         it = elms_.insert(++it, node(idx));
       } else {
@@ -910,9 +1120,73 @@ class SparseBitmap {
     curElm_ = it;
 
     auto offs = getOffs(id);
-    bool ret = !(it->bitmap.test(offs));
-    it->bitmap.set(offs);
+    bool ret = !(it->test(offs));
+    it->set(offs);
     return ret;
+  }
+
+  bool orWithIntersect(const SparseBitmap &rhs,
+      const SparseBitmap *intersect) {
+    if (intersect == nullptr) {
+      return operator|=(rhs);
+    }
+
+    // If they are empty nothing changes...
+    if (rhs.empty()) {
+      return false;
+    }
+
+    bool ch = false;
+    auto it1 = std::begin(elms_);
+    auto it2 = std::begin(rhs.elms_);
+    auto it_int = std::begin(intersect->elms_);
+
+    while (it2 != std::end(rhs.elms_)) {
+      while (it_int != std::end(intersect->elms_) &&
+          it2->index() > it_int->index()) {
+        ++it_int;
+      }
+
+      if (it_int == std::end(intersect->elms_)) {
+        break;
+      }
+
+      // Only proceed to check if the two intersect
+      if (it_int->index() > it2->index()) {
+        ++it2;
+        continue;
+      }
+
+      node new_node(*it2);
+      new_node &= *it_int;
+
+      // If the intersection of rhs and intersect is empty, move on
+      if (new_node.none()) {
+        ++it2;
+        continue;
+      }
+
+      assert(it_int->index() == it2->index());
+      assert(new_node.index() == it2->index());
+
+      // std::cout << "it1->idx: " << it1->index() << std::endl;
+      // std::cout << "it2->idx: " << it2->index() << std::endl;
+      if (it1 == std::end(elms_) || it1->index() > it2->index()) {
+        elms_.insert(it1, std::move(new_node));
+        ++it2;
+        ch = true;
+      } else if (it1->index() == it2->index()) {
+        ch |= it1->orWithIntersect(*it2, *it_int);
+        ++it1;
+        ++it2;
+      } else {
+        ++it1;
+      }
+    }
+
+    curElm_ = std::begin(elms_);
+
+    return ch;
   }
   //}}}
 
@@ -946,19 +1220,15 @@ class SparseBitmap {
     auto it2 = std::begin(rhs.elms_);
 
     while (it2 != std::end(rhs.elms_)) {
-      if (it1 == std::end(elms_) || it1->index > it2->index) {
+      // std::cout << "it1->idx: " << it1->index() << std::endl;
+      // std::cout << "it2->idx: " << it2->index() << std::endl;
+      if (it1 == std::end(elms_) || it1->index() > it2->index()) {
         elms_.insert(it1, *it2);
         ++it2;
         ch = true;
-      } else if (it1->index == it2->index) {
+      } else if (it1->index() == it2->index()) {
         // Don't do copy if we've already changed
-        if (!ch) {
-          auto old = it1->bitmap;
-          it1->bitmap |= it2->bitmap;
-          ch = old != it1->bitmap;
-        } else {
-          it1->bitmap |= it2->bitmap;
-        }
+        ch |= (*it1 |= *it2);
         ++it1;
         ++it2;
       } else {
@@ -986,19 +1256,14 @@ class SparseBitmap {
         return ch;
       }
 
-      if (it1->index > it2->index) {
+      if (it1->index() > it2->index()) {
         ++it2;
-      } else if (it1->index == it2->index) {
+      } else if (it1->index() == it2->index()) {
         // Don't do copy if we've already changed
-        if (!ch) {
-          auto old = it1->bitmap;
-          it1->bitmap &= it2->bitmap;
-          ch = old != it1->bitmap;
-        } else {
-          it1->bitmap &= it2->bitmap;
-        }
+        ch = (*it1 &= *it2);
 
-        if (it1->bitmap.none()) {
+        if (it1->none()) {
+          assert(ch);
           auto tmp = it1;
           ++it1;
           elms_.erase(tmp);
@@ -1021,14 +1286,12 @@ class SparseBitmap {
   //}}}
 
   // Hash {{{
-  class hasher {
-   public:
+  struct hasher {
     size_t operator()(const SparseBitmap &map) const {
       size_t ret = 0;
 
       for (auto &elm : map.elms_) {
-        ret ^= elm.index;
-        ret ^= std::hash<std::bitset<bits_per_field>>()(elm.bitmap);
+        ret ^= elm.hash();
       }
 
       return ret;
@@ -1040,7 +1303,8 @@ class SparseBitmap {
   class iterator :
       public std::iterator<std::forward_iterator_tag, id_type> {
    public:
-    int32_t BitsPerShift = 64;
+    // NOTE: We use unsigned long here for size of machine word... works w/ gcc
+    int32_t BitsPerShift = 8*sizeof(unsigned long);  // NOLINT
 
     explicit iterator(const bitmap_list &bl, bool end) :
         bl_(bl), it_(std::begin(bl)), end_(end) {
@@ -1064,7 +1328,9 @@ class SparseBitmap {
 
     id_type operator*() const {
       // -1 b/c the bsPos_ is 1 indexed
-      auto ret = id_type(bsPos_-1 + bsShift_ + it_->index * bits_per_field);
+      auto ret = id_type(bsPos_-1 +
+          (bsShift_ * node::BitsPerSet)
+          + it_->index() * bits_per_field);
 
       // std::cout << "Returning: " << ret << std::endl;
 
@@ -1083,18 +1349,13 @@ class SparseBitmap {
     }
 
    private:
-    constexpr std::bitset<bits_per_field> mask() {
-      return std::bitset<bits_per_field>(
-          std::numeric_limits<uint64_t>::max());
-    }
-
     void getBsVal() {
-      bsVal_ = ((it_->bitmap >> bsShift_) & mask()).to_ullong();
+      bsVal_ = it_->getUl(bsShift_);
       // std::cout << "getBsVal: " << bsVal_ << std::endl;
     }
 
     void advanceBs() {
-      bsShift_ += BitsPerShift;
+      bsShift_++;
     }
 
     void nextBsVal() {
@@ -1103,14 +1364,16 @@ class SparseBitmap {
     }
 
     void nextBsPos() {
-      int val = __builtin_ffsll(bsVal_);
+      int val = __builtin_ffsl(bsVal_);
       assert(val != 0);
-      if (val == 64) {
+      if (val == 8*sizeof(unsigned long)) {  // NOLINT
         bsVal_ = 0;
       } else {
         bsVal_ >>= val;
       }
-      // std::cout << "~new bsVal_: " << bsVal_ << std::endl;
+      /*
+      std::cout << "~new bsVal_: " << std::hex << bsVal_ << std::dec << std::endl;
+      */
       bsPos_ += val;
     }
 
@@ -1125,7 +1388,7 @@ class SparseBitmap {
       }
 
       it_ = std::begin(bl_);
-      // std::cout << "init it->idx: " << it_->index  << std::endl;
+      // std::cout << "init it->idx: " << it_->index() << std::endl;
 
       // Initialize bsVal_;
       getBsVal();
@@ -1137,12 +1400,16 @@ class SparseBitmap {
         nextBsVal();
       }
 
-      // std::cout << "post-inc bsVal_: " << bsVal_ << std::endl;
+      /*
+      std::cout << "post-inc bsVal_: " << std::hex << bsVal_ << std::dec << std::endl;
+      */
 
       // Okay, now find the first bit
       bsPos_ = 0;
       nextBsPos();
       // std::cout << "init bsPos_: " << bsPos_ << std::endl;
+      // std::cout << "init bsVal_: " << bsVal_ << std::endl;
+      // std::cout << "init bsShift_: " << bsShift_ << std::endl;
     }
 
     void advanceBit() {
@@ -1154,7 +1421,7 @@ class SparseBitmap {
       while (bsVal_ == 0) {
         bsPos_ = 0;
         // std::cout << "have bsShift_: " << bsShift_ << std::endl;
-        if (bsShift_ == bits_per_field) {
+        if (bsShift_ == (node::NumBitsets-1)) {
           ++it_;
           // std::cout << "IT advance" << std::endl;
           if (it_ == std::end(bl_)) {
@@ -1180,7 +1447,7 @@ class SparseBitmap {
 
     bool end_ = false;
     uint32_t bsPos_ = 0;
-    uint64_t bsVal_;
+    unsigned long bsVal_;  // NOLINT
     uint32_t bsShift_ = 0;
   };
 
@@ -1212,6 +1479,16 @@ class SparseBitmap {
     os << " }";
     return os;
   }
+
+  friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+      const SparseBitmap &map) {
+    os << "{";
+    for (auto val : map) {
+      os << " " << val;
+    }
+    os << " }";
+    return os;
+  }
   //}}}
 
  private:
@@ -1235,16 +1512,16 @@ class SparseBitmap {
     }
 
     auto elm = curElm_;
-    if (elm->index == idx) {
+    if (elm->index() == idx) {
       return elm;
-    } else if (elm->index > idx) {
+    } else if (elm->index() > idx) {
       while (elm != std::begin(elms_) &&
-          elm->index > idx) {
+          elm->index() > idx) {
         --elm;
       }
     } else {
       while (elm != std::end(elms_) &&
-          elm->index < idx) {
+          elm->index() < idx) {
         ++elm;
       }
     }
@@ -1252,6 +1529,8 @@ class SparseBitmap {
     curElm_ = elm;
     return elm;
   }
+
+  alloc alloc_;
 
   mutable bitmap_list elms_;
 

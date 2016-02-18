@@ -348,6 +348,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
 
     // If the node is not a value, make it indirect, so its not merged
     //   arbitrarily
+    // Don't optimize away funciton call/ret information
     auto obj_id = nodeToObj(node_id);
     if (!omap.isValue(obj_id) || graph.isIndirCall(obj_id)) {
       auto &node = hu_graph.getNode<HUNode>(node_id);
@@ -366,6 +367,26 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
     auto node_rep_id = objToNode(rep_id);
     auto &node = hu_graph.getNode<HUNode>(node_rep_id);
     calc.giveNewPE(node);
+  });
+
+  // Also add a PE for each call/return node
+  std::for_each(cfg.function_start_begin(), cfg.function_start_end(),
+      [&hu_graph, &calc]
+      (const std::pair<ObjectMap::ObjID, CFG::CFGid> &pr) {
+    // Store constraints don't define nodes!
+    auto ret_id = objToNode(pr.first);
+    auto &node = hu_graph.getNode<HUNode>(ret_id);
+    node.setIndirect();
+    // calc.giveNewPE(node);
+  });
+  std::for_each(cfg.function_ret_begin(), cfg.function_ret_end(),
+      [&hu_graph, &calc]
+      (const std::pair<ObjectMap::ObjID, CFG::CFGid> &pr) {
+    // Store constraints don't define nodes!
+    auto ret_id = objToNode(pr.first);
+    auto &node = hu_graph.getNode<HUNode>(ret_id);
+    node.setIndirect();
+    // calc.giveNewPE(node);
   });
 
   // Add the edges for each constraint
@@ -396,7 +417,7 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
   // hu_graph.printDotFile("HuOpt.dot", *g_omap);
 
   //  Used to map objs to the PE class
-  std::unordered_map<Bitmap, SEG::NodeID, Bitmap::hasher> pts_to_pe;
+  std::unordered_map<Bitmap, SEG::NodeID, BitmapHash> pts_to_pe;
 
   // Find equiv classes for each node in the hu_graph
   // Merge nodes into their equiv classes
@@ -580,6 +601,57 @@ bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
     assert(ret.second);
   });
   cfg.swapObjToCFG(new_obj_to_cfg);
+
+  {
+    std::map<ObjectMap::ObjID, CFG::CFGid> new_fcn_entries;
+    std::for_each(cfg.function_start_begin(), cfg.function_start_end(),
+        [&new_fcn_entries, &hu_graph, &omap]
+        (const std::pair<const ObjectMap::ObjID, CFG::CFGid> &pr) {
+      auto new_obj_id = omap.getRep(pr.first);
+
+      /*
+      if (new_obj_id != pr.first) {
+        llvm::dbgs() << "Inserting " << new_obj_id << " to obj_to_cfg at: " <<
+            pr.second << "\n";
+        llvm::dbgs() << "  In place of: " << pr.first << "\n";
+      }
+      */
+
+      // NOTE: I don't think the addition has to succeed.  THe two nodes are
+      // equivalent, so if they were on different CFG nodes that shouldn't
+      // matter, either is the same...
+
+      if_debug_enabled(auto ret =)
+        new_fcn_entries.emplace(new_obj_id, pr.second);
+      assert(ret.second);
+    });
+    cfg.swapFunctionStarts(new_fcn_entries);
+  }
+
+  {
+    std::map<ObjectMap::ObjID, CFG::CFGid> new_fcn_entries;
+    std::for_each(cfg.function_ret_begin(), cfg.function_ret_end(),
+        [&new_fcn_entries, &hu_graph, &omap]
+        (const std::pair<const ObjectMap::ObjID, CFG::CFGid> &pr) {
+      auto new_obj_id = omap.getRep(pr.first);
+
+      /*
+      llvm::dbgs() << "Inserting " << new_obj_id << " to obj_to_cfg at: " <<
+          pr.second << "\n";
+      llvm::dbgs() << "  In place of: " << pr.first << "\n";
+      */
+
+      // NOTE: I don't think the addition has to succeed.  THe two nodes are
+      // equivalent, so if they were on different CFG nodes that shouldn't
+      // matter, either is the same...
+
+      if_debug_enabled(auto ret =)
+        new_fcn_entries.emplace(new_obj_id, pr.second);
+      assert(ret.second);
+    });
+    cfg.swapFunctionReturns(new_fcn_entries);
+  }
+
 
   return false;
 }
@@ -881,7 +953,9 @@ class HVNNode : public OptNode {
 
   bool isNonPtr() override {
     auto ret = ptsto().test(PENonPtr);
-    assert(!ret || ptsto().count() == 1);
+
+    // If this is a non pointer, the ptsto count should be 1
+    assert(!(ret && ptsto().count() != 1));
     return ret;
   }
 
@@ -1204,7 +1278,7 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
   // hvn_graph.printDotFile("HVNDone.dot", *g_omap);
 
   // Now, use PE set as index into PE mapping, assign equivalent PEs
-  std::unordered_map<Bitmap, SEG::NodeID, Bitmap::hasher> pts_to_pe;
+  std::unordered_map<Bitmap, SEG::NodeID, BitmapHash> pts_to_pe;
 
   // Find equiv classes for each node, unify the nodes in the class
   for (auto &pnode : hvn_graph) {
@@ -1217,11 +1291,17 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
       ptsto.set(HVNNode::PENonPtr);
     }
 
-    auto it = pts_to_pe.find(ptsto);
 
+    // auto rc = pts_to_pe.emplace(ptsto, node.id());
+
+    auto it = pts_to_pe.find(ptsto);
     if (it == std::end(pts_to_pe)) {
       pts_to_pe.emplace(ptsto, node.id());
     } else {
+    /*
+    if (!rc.second) {
+      auto &it = rc.first;
+      */
       auto &rep_node = hvn_graph.getNode<HVNNode>(it->second);
 
       /*

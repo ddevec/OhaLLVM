@@ -60,6 +60,11 @@ static const std::string CallInstName = "__DynPtsto_do_call";
 static const std::string RetInstName = "__DynPtsto_do_ret";
 static const std::string MallocInstName = "__DynPtsto_do_malloc";
 static const std::string FreeInstName = "__DynPtsto_do_free";
+
+// setjump/longjmp *sigh*
+static const std::string SetjmpInstName = "__DynPtsto_do_setjmp";
+static const std::string LongjmpInstName = "__DynPtsto_do_longjmp";
+
 // Called on ptr returnin fcn
 static const std::string VisitInstName = "__DynPtsto_do_visit";
 
@@ -91,12 +96,7 @@ void InstrDynPtsto::getAnalysisUsage(llvm::AnalysisUsage &au) const {
 }
 
 void InstrDynPtsto::setupSpecSFSids(llvm::Module &) {
-  // Set up our alias analysis
-  // -- This is required for the llvm AliasAnalysis interface
-  // InitializeAliasAnalysis(this);
-
-  // Clear the def-use graph
-  // It should already be cleared, but I'm paranoid
+  // Get the ids from the constraint pass
   const auto &cons_pass = getAnalysis<ConstraintPass>();
   ConstraintGraph cg(cons_pass.getConstraintGraph());
   CFG cfg(cons_pass.getControlFlowGraph());
@@ -160,6 +160,8 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
       std::vector<llvm::Instruction *> alloca_list;
       std::vector<llvm::Instruction *> malloc_list;
       std::vector<llvm::Instruction *> free_list;
+      std::vector<llvm::Instruction *> setjmp_list;
+      std::vector<llvm::Instruction *> jmp_list;
 
       // Also create list for all pointer values
       std::vector<llvm::Instruction *> pointer_list;
@@ -172,7 +174,7 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
             fcn_num_allocas++;
             alloca_list.push_back(&inst);
           }
-        // Possible alloc/dealloc
+        // Possible alloc/dealloc or setjmp/longjmp
         } else if (auto ci = dyn_cast<llvm::CallInst>(&inst)) {
           auto fcn = LLVMHelper::getFcnFromCall(ci);
 
@@ -183,6 +185,15 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
             }
             if (AllocInfo::fcnIsFree(fcn)) {
               free_list.push_back(&inst);
+            }
+            // Also check for setjmp/longjmp
+            if (fcn->getName() == "__sigsetjmp" ||
+                fcn->getName() == "__setjmp") {
+              setjmp_list.push_back(&inst);
+            }
+            if (fcn->getName() == "longjmp" ||
+                fcn->getName() == "siglongjmp") {
+              jmp_list.push_back(&inst);
             }
           }
         // Add stack deallocation
@@ -324,6 +335,49 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
         std::vector<llvm::Value *> args;
         args.push_back(free_arg);
         llvm::CallInst::Create(free_fcn,
+            args, "", val);
+      }
+
+      // Used to identify jump locations for debugging
+      static int32_t jumpcnt = 0;
+      auto jmp_fcn = m.getFunction(LongjmpInstName);
+      for (auto val : jmp_list) {
+        auto ci = cast<llvm::CallInst>(val);
+
+        // Get the arg_pos for the object being freed
+        auto jmpvar = ci->getOperand(0);
+        auto i8_ptr_val = jmpvar;
+        if (jmpvar->getType() != i8_ptr_type) {
+          // Add bitcast
+          i8_ptr_val = new llvm::BitCastInst(jmpvar, i8_ptr_type, "", ci);
+        }
+
+        // Call the instrumentation, before calling free
+        std::vector<llvm::Value *> args;
+        args.push_back(llvm::ConstantInt::get(i32_type, jumpcnt));
+        jumpcnt++;
+        args.push_back(i8_ptr_val);
+        llvm::CallInst::Create(jmp_fcn,
+            args, "", val);
+      }
+
+      auto setjmp_fcn = m.getFunction(SetjmpInstName);
+      for (auto val : setjmp_list) {
+        auto ci = cast<llvm::CallInst>(val);
+
+        // Get the arg_pos for the object being freed
+        auto jmpvar = ci->getOperand(0);
+        auto i8_ptr_val = jmpvar;
+        if (jmpvar->getType() != i8_ptr_type) {
+          // Add bitcast
+          i8_ptr_val = new llvm::BitCastInst(jmpvar, i8_ptr_type, "", ci);
+        }
+        // Call the instrumentation, before calling free
+        std::vector<llvm::Value *> args;
+        args.push_back(llvm::ConstantInt::get(i32_type, jumpcnt));
+        jumpcnt++;
+        args.push_back(i8_ptr_val);
+        llvm::CallInst::Create(setjmp_fcn,
             args, "", val);
       }
 
@@ -579,6 +633,40 @@ void InstrDynPtsto::addExternalFunctions(llvm::Module &m) {
     llvm::Function::Create(free_fcn_type,
         llvm::GlobalValue::ExternalLinkage,
         FreeInstName, &m);
+  }
+
+  // SetjmpInst(i8 *ptr)
+  {
+    // Create the args
+    std::vector<llvm::Type *> setjmp_fcn_type_args;
+    setjmp_fcn_type_args.push_back(i32_type);
+    setjmp_fcn_type_args.push_back(i8_ptr_type);
+    // Create the function type
+    auto setjmp_fcn_type = llvm::FunctionType::get(
+        void_type,
+        setjmp_fcn_type_args,
+        false);
+    // Create the function
+    llvm::Function::Create(setjmp_fcn_type,
+        llvm::GlobalValue::ExternalLinkage,
+        SetjmpInstName, &m);
+  }
+
+  // LongjmpInst(i8 *ptr)
+  {
+    // Create the args
+    std::vector<llvm::Type *> longjmp_fcn_type_args;
+    longjmp_fcn_type_args.push_back(i32_type);
+    longjmp_fcn_type_args.push_back(i8_ptr_type);
+    // Create the function type
+    auto longjmp_fcn_type = llvm::FunctionType::get(
+        void_type,
+        longjmp_fcn_type_args,
+        false);
+    // Create the function
+    llvm::Function::Create(longjmp_fcn_type,
+        llvm::GlobalValue::ExternalLinkage,
+        LongjmpInstName, &m);
   }
 
   // VisitInst(i32 val_id, i8 *ptr)

@@ -67,6 +67,7 @@ class ObjectMap {
     eArgvObjectObject = 14,
     eStdIOValue = 15,
     eIoctlValue = 16,
+    eDirObject = 17,
     eNumDefaultObjs
   } DefaultObjs;
 
@@ -89,6 +90,7 @@ class ObjectMap {
   static const ObjID StdIOObject;
   static const ObjID StdIOValue;
   static const ObjID IoctlValue;
+  static const ObjID DirObject;
   //}}}
 
   static constexpr ObjID getOffsID(ObjID id, int32_t offs) {
@@ -463,6 +465,11 @@ class ObjectMap {
 
   ObjID getFunction(const llvm::Function *fcn) const {
     return valToID_.at(cast<const llvm::Value>(fcn));
+  }
+
+  ObjID getFunctionRep(const llvm::Function *fcn) const {
+    auto ret_id = valToID_.at(cast<const llvm::Value>(fcn));
+    return getRep(ret_id);
   }
 
   const llvm::Function *getFunction(ObjID id) const {
@@ -869,7 +876,7 @@ class ObjectMap {
         new_to_obj.emplace(remap[pr.first], remap[pr.second]);
       assert(rc.second);
     }
-    aliasToObjs_ = std::move(aliasToObjs_);
+    aliasToObjs_ = std::move(new_to_obj);
 
     // Then objIsStruct
     StructMap new_obj_is_struct;

@@ -52,9 +52,24 @@ struct BitmapLT {
   }
 };
 
+/*
+typedef Bitmap::hasher BitmapHash;
 struct BitmapHash {
   size_t operator() (const Bitmap &b1) const {
     return Bitmap::hasher()(b1);
+  }
+};
+*/
+
+struct BitmapHash {
+  size_t operator() (const Bitmap &b1) const {
+    size_t ret = 0;
+    for (auto elm : b1) {
+      ret ^= std::hash<int32_t>()(elm);
+      ret <<= 1;
+    }
+
+    return ret;
   }
 };
 //}}}
@@ -238,20 +253,9 @@ class PtstoSet {
     }
 
     bool operator|=(const PtstoSet &rhs) {
-      Bitmap init = ptsto_;
+      bool ch = ptsto_.orWithIntersect(rhs.ptsto_, dynPtsto_.get());
 
-      bool ch = ptsto_ |= rhs.ptsto_;
-
-      if (ch) {
-        bool rc = clearDynPtsto();
-        if (!rc) {
-          return true;
-        }
-      } else {
-        return false;
-      }
-
-      return (init != ptsto_);
+      return ch;
     }
 
     bool operator|=(ObjectMap::ObjID &id) {
@@ -298,12 +302,7 @@ class PtstoSet {
       }
 
       if (ret) {
-        bool ch = clearDynPtsto();
-        if (!ch) {
-          return true;
-        }
-      } else {
-        return false;
+        clearDynPtsto();
       }
 
       return (init != ptsto_);
@@ -345,8 +344,12 @@ class PtstoSet {
       return ret;
     }
 
-    size_t size() const {
+    size_t count() const {
       return ptsto_.count();
+    }
+
+    size_t singleton() const {
+      return ptsto_.singleton();
     }
 
     bool empty() const {
@@ -493,7 +496,7 @@ class PtstoSet {
     bool clearDynPtsto() {
       bool ret = false;
       if (dynPtsto_ != nullptr) {
-        llvm::dbgs() << "!!!!!CLEAR DYN PTSTO????\n";
+        // llvm::dbgs() << "!!!!!CLEAR DYN PTSTO????\n";
         ret = (ptsto_ &= *dynPtsto_);
       }
 
@@ -546,7 +549,7 @@ class TopLevelPtsto {
 
     TopLevelPtsto(const std::vector<ObjID> &objs,
         std::map<ObjID, Bitmap> dyn_sets) :
-          dynConstraints_(std::move(dyn_sets)) {
+          dynConstraints_(std::begin(dyn_sets), std::end(dyn_sets)) {
       assert(is_sorted(std::begin(objs), std::end(objs)));
       assert(std::adjacent_find(std::begin(objs), std::end(objs))
           == std::end(objs));
@@ -667,7 +670,8 @@ class TopLevelPtsto {
 
  private:
     // std::map<ObjID, std::vector<PtstoSet>> data_;
-    std::map<ObjectMap::ObjID, Bitmap> dynConstraints_;
+    std::unordered_map<ObjectMap::ObjID, Bitmap, ObjectMap::ObjID::hasher>
+      dynConstraints_;
     std::vector<PtsPair> data_;
   //}}}
 };
@@ -780,13 +784,10 @@ class PtstoGraph {
     }
 
     bool canOrPart(const PtstoGraph &rhs,
-        std::map<ObjID, __PartID> &part_map, __PartID part_id) const {
+        std::vector<__PartID> &part_map,
+        __PartID part_id) const {
       for (ObjID obj_id : rhs.change_) {
-        if (part_map.count(obj_id) == 0) {
-          continue;
-        }
-
-        if (part_map.at(obj_id) != part_id) {
+        if (part_map[obj_id.val()] != part_id) {
           continue;
         }
 
@@ -799,12 +800,12 @@ class PtstoGraph {
     }
 
     bool orPart(const PtstoGraph &rhs,
-        std::map<ObjID, __PartID> &part_map,
+        std::vector<__PartID> &part_map,
         __PartID part_id) {
       bool ret = false;
 
       for (ObjID obj_id : rhs.change_) {
-        if (part_map.at(obj_id) != part_id) {
+        if (part_map[obj_id.val()] != part_id) {
           continue;
         }
 
@@ -864,7 +865,6 @@ class PtstoGraph {
       return data_.empty();
     }
 
-#ifndef SPECSFS_IS_TEST
     friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
         const PtstoGraph &g) {
       o << "( ";
@@ -881,7 +881,6 @@ class PtstoGraph {
       o << " )";
       return o;
     }
-#endif
 
  private:
     class ChangeSet {

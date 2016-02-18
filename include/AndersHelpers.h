@@ -528,6 +528,7 @@ class AndersGraph {
             arg_begin, arg_end));
     });
 
+    /*
     auto &nd = getNode(ObjID(138391));
     llvm::dbgs() << "Node " << nd.id() << " has constriants:\n";
     for (auto &pcons : nd.constraints()) {
@@ -549,6 +550,7 @@ class AndersGraph {
       llvm::dbgs() << " (" << succ_pr.first << " + " << succ_pr.second << ")";
     }
     llvm::dbgs() << " }\n";
+    */
   }
 
   // Removes any unneeded information after solve completes

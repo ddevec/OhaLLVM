@@ -75,6 +75,10 @@ const ObjectMap::ObjID ObjectMap::IoctlValue =
     ObjectMap::ObjID(
         static_cast<int32_t>(ObjectMap::ObjEnum::eIoctlValue));
 
+const ObjectMap::ObjID ObjectMap::DirObject =
+    ObjectMap::ObjID(
+        static_cast<int32_t>(ObjectMap::ObjEnum::eDirObject));
+
 ObjectMap::ObjectMap() {
   for (int32_t i = 0; i < static_cast<int32_t>(ObjEnum::eNumDefaultObjs);
       i++) {

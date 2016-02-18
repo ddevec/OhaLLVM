@@ -346,11 +346,6 @@ void identifyAUXFcnCallRetInfo(CFG &cfg,
         }
         dout("\n"));
 
-      CFG::CFGid call_id = cfg.nextNode();
-      CFG::CFGid ret_id = cfg.nextNode();
-      dout("call cfg_id: " << call_id << "\n");
-      dout("ret cfg_id: " << ret_id << "\n");
-
       for (ObjectMap::ObjID obj_id : ptsto) {
         // FIXME: Andersen's reports the function as pointing to the universal
         //   set... or all unknown functions... I'm ignoring this for now, but
@@ -361,31 +356,18 @@ void identifyAUXFcnCallRetInfo(CFG &cfg,
           continue;
         }
 
-        ObjectMap::ObjID fcn_id = obj_id;
+        auto fcn = dyn_cast_or_null<llvm::Function>(omap.valueAtID(obj_id));
+
+        // Ignore nullptrs to values, they don't point to callable functions
+        if (fcn == nullptr) {
+          continue;
+        }
+
+        ObjectMap::ObjID fcn_id =
+          omap.getObject(fcn);
 
         cfg.addIndirFcn(pair.first, fcn_id);
-
-        // Add edge from call->fcn start node
-        dout("Getting cfgfunctionstart for: " << fcn_id << "\n");
-        dout("Function is: " <<
-          cast<const llvm::Function>(omap.valueAtID(fcn_id))->getName() <<
-          "\n");
-        // NOTE: Should add assert that the if should only be skipped in
-        //   instances of DCE
-        if (cfg.hasFunctionStart(fcn_id)) {
-          auto fcn_start_id = cfg.getFunctionStart(fcn_id);
-          cfg.addPred(fcn_start_id, call_id);
-
-          // Some functions (like "error" or "abort" don't return)
-          if (cfg.hasFunctionReturn(fcn_id)) {
-            // Add edge from fcn ret node->ret
-            auto fcn_ret_id = cfg.getFunctionReturn(fcn_id);
-            cfg.addPred(ret_id, fcn_ret_id);
-          }
-        }
       }
-
-      cfg.addCallRetInfo(omap.getValue(fptr), call_id, ret_id);
     });
   // If we do have dynamic info, just ignore the andersens info, and use ours
   } else {
@@ -400,9 +382,6 @@ void identifyAUXFcnCallRetInfo(CFG &cfg,
 
       llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
       auto fptr = CS.getCalledValue();
-
-      CFG::CFGid call_id = cfg.nextNode();
-      CFG::CFGid ret_id = cfg.nextNode();
 
       // llvm::dbgs() << "Getting info for target: " << *ci << "\n";
       auto fcn_targets = dyn_info->getTargets(ci);
@@ -432,21 +411,10 @@ void identifyAUXFcnCallRetInfo(CFG &cfg,
       }
 
       for (auto fcn : fcn_targets) {
-        auto fcn_id = omap.getFunction(cast<llvm::Function>(fcn));
+        auto fcn_id = omap.getObject(cast<llvm::Function>(fcn));
 
         cfg.addIndirFcn(pair.first, fcn_id);
-
-        auto fcn_start_id = cfg.getFunctionStart(fcn_id);
-        cfg.addPred(fcn_start_id, call_id);
-
-        if (cfg.hasFunctionReturn(fcn_id)) {
-          // Add edge from fcn ret node->ret
-          auto fcn_ret_id = cfg.getFunctionReturn(fcn_id);
-          cfg.addPred(ret_id, fcn_ret_id);
-        }
       }
-
-      cfg.addCallRetInfo(omap.getValue(fptr), call_id, ret_id);
     });
   }
 }
@@ -541,11 +509,10 @@ void addCFGCallsite(CFG &cfg, ObjectMap &omap,
   if (fcn) {
     // We don't add edges now because we haven't identified the entry and return
     //   CFGid's for all functions yet
-    // We also use a getObject(F) because functions are all associated with
-    // objects, only some are associated with values
     dout("Adding direct call to: " << fcn->getName() << " id: "
         << omap.getObject(fcn) << "\n");
-    cfg.addCallsite(call_id, omap.getFunction(fcn), next_id);
+    // cfg.addCallsite(call_id, omap.getFunction(fcn), next_id);
+    cfg.addCallsite(call_id, omap.getObject(fcn), next_id);
   } else {
     // We also don't add edges between the call_id and the callsite for indirect
     //    calls because we don't know the destination until we run our AUX
@@ -590,9 +557,9 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
       F->getName() == "setuid" || F->getName() == "setgid" ||
       F->getName() == "seteuid" || F->getName() == "setegid" ||
       F->getName() == "geteuid" || F->getName() == "getegid" ||
-      F->getName() == "__sigsetjmp" || F->getName() == "getpid" ||
+      F->getName() == "getpid" ||
       F->getName() == "setvbuf" || F->getName() == "setbuf" ||
-      F->getName() == "siglongjmp" || F->getName() == "ftruncate" ||
+      F->getName() == "ftruncate" ||
       F->getName() == "closedir" || F->getName() == "putenv" ||
       F->getName() == "kill" || F->getName() == "frexp" ||
       F->getName() == "__isnan" ||
@@ -636,9 +603,6 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
       F->getName() == "setfscreatecon" || F->getName() == "strspn" ||
       F->getName() == "strcspn" ||
       F->getName() == "bsearch" || F->getName() == "clock" ||
-      // FIXME: well, this is actually ugly, wrt the cfg
-      F->getName() == "_setjmp" ||
-      F->getName() == "longjmp" ||
       // End jump fixme
       F->getName() == "getpagesize" ||
       // FIXME: gcc stuffs?
@@ -695,6 +659,53 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
       F->getName() == "sysconf" || F->getName() == "ceilf" ||
       F->getName() == "setlinebuf" || F->getName() == "putchar" ||
       F->getName() == "getopt_long" || F->getName() == "getopt") {
+    return true;
+  }
+
+  // Okay, how do we handle jmp functions?
+  // Uhhh, well... we... um, you-know
+  // For anders we do nothing
+  // For sfs, we need to add edges to the CFG
+  // -- based on results from anders (where the jmps may come from or go)
+  //    Similar to indirect functions:
+  //
+  // For each setjmp:
+  //    Make a mapping of obj-ids to setjmps
+  //    Also ensure that each setjmp is a boundry with a new cfgnode
+  //
+  // for each longjmp do a lookup in the setjmp map
+  //   Add an edge from each longjmp to each setjmp
+  // FIXME: well, this is actually ugly, wrt the cfg
+  //
+  // Broken down:
+  // Responsibility here:
+  //  setjmp:
+  //    Alert the CFG of a setjmp, to be filled in later
+  //    Break the node after the setjmp, as the entry for any incoming
+  //      longjmps
+  if (F->getName() == "_setjmp" ||
+      F->getName() == "__sigsetjmp") {
+    // Add new node to cfg (to be the dest of any longjmps about this node)
+    auto succ_id = cfg.nextNode();
+    cfg.addPred(succ_id, *next_id);
+    *next_id = succ_id;
+
+    // Add succ_id into the cfg longjump list
+    cfg.addSetjmp(succ_id, CS.getArgument(0));
+    return true;
+  }
+
+  //  longjmp:
+  //    Alert the CFG of a longjmp here
+  //    Break the node, remove any cfg edges going out of the prior node, to be
+  //    replaced with longjmp destinations
+  if ( F->getName() == "siglongjmp" ||
+      F->getName() == "longjmp") {
+    auto succ_id = cfg.nextNode();
+
+    cfg.addLongjmp(*next_id, CS.getArgument(0));
+
+    *next_id = succ_id;
     return true;
   }
 
@@ -888,6 +899,12 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
     return true;
   }
   */
+  if (F->getName() == "opendir") {
+    cg.add(ConstraintType::AddressOf,
+      omap.getValue(CS.getInstruction()),
+      ObjectMap::DirObject);
+    return true;
+  }
 
   // CType Functions
   if (F->getName() == "__ctype_b_loc") {
@@ -1138,8 +1155,10 @@ static void addConstraintForConstPtr(ConstraintGraph &cg,
       // If its a ptr to int, add an "intvalue"
       if (CE->getOpcode() == llvm::Instruction::PtrToInt) {
         if (!inserted) {
+          /*
           llvm::dbgs() << __LINE__ <<
             ": addConstForConstPtr returns IntValue\n";
+          */
           cg.add(ConstraintType::Copy, ObjectMap::IntValue,
             omap.getValue(&glbl));
 
@@ -1203,13 +1222,13 @@ static bool analyzeUsesOfFunction(const llvm::Value &val) {
   return false;
 }
 
+/*
 static void addConstraintsForNonInternalLinkage(ConstraintGraph &,
     ObjectMap &,
     const llvm::Function &) {
   // FIXME: Need to do this:
   // If we have a non-internal linkage, then we:
   //   Store the universal value in all of the input arguments
-  /*
   std::for_each(fcn.arg_begin(), fcn.arg_end(),
       [&cg, &omap] (const llvm::Argument &arg) {
     if (llvm::isa<llvm::PointerType>(arg.getType())) {
@@ -1221,8 +1240,8 @@ static void addConstraintsForNonInternalLinkage(ConstraintGraph &,
       // omap.addObjAlias(ObjectMap::UniversalValue, arg_id);
     }
   });
-  */
 }
+*/
 
 
 static void addConstraintsForIndirectCall(ConstraintGraph &cg, ObjectMap &omap,
@@ -1266,6 +1285,7 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
     llvm::CallSite &CS, llvm::Function *F) {
   // llvm::dbgs() << "Add direct call: " << *CS.getInstruction() << "\n";
   // If this call returns a pointer
+  assert(F != nullptr);
   if (llvm::isa<llvm::PointerType>(F->getFunctionType()->getReturnType())) {
     auto val = omap.getValue(CS.getInstruction());
 
@@ -1281,7 +1301,7 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
 
   // The callsite returns a non-pointer, but the function returns a
   // pointer value, treat it as a pointer cast to a non-pointer
-  } else if (F &&
+  } else if (
       llvm::isa<llvm::PointerType>(F->getFunctionType()->getReturnType())) {
     // The call now aliases the universal value
     llvm::dbgs() << "FIXME: Direct call returns universal value: " <<
@@ -1414,6 +1434,8 @@ static bool addConstraintsForCall(ConstraintGraph &cg, CFG &cfg,
   if (F) {
     addConstraintsForDirectCall(cg, omap, CS, F);
   } else {
+    assert(next_id != nullptr && "Adding constraints for indirect call in "
+        "indirect call resolution");
     addConstraintsForIndirectCall(cg, omap, CS);
   }
 
@@ -1980,7 +2002,12 @@ void processBlock(const UnusedFunctions &unused_fcns,
       cfg.addPred(next_id, CFG::CFGInit);
     }
 
-    cfg.addFunctionStart(omap.getFunction(BB.getParent()), next_id);
+    cfg.addFunctionStart(omap.getObject(BB.getParent()), next_id);
+    /*
+    llvm::dbgs() << "Creating Function start (" <<
+      BB.getParent()->getName() << "): " <<
+      omap.getObject(BB.getParent()) << " -> " << next_id << "\n";
+    */
   }
 
 
@@ -2004,7 +2031,7 @@ void processBlock(const UnusedFunctions &unused_fcns,
           // Otherwise, we consider the entry node as the return node
           }
 
-          cfg.addFunctionReturn(omap.getFunction(BB.getParent()), next_id);
+          cfg.addFunctionReturn(omap.getObject(BB.getParent()), next_id);
 
           idRetInst(cg, omap, inst);
         }
@@ -2384,7 +2411,6 @@ bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
               con_ids.emplace_back(con_id);
             }
           });
-          cfg.addUnusedFunction(omap.getFunction(&fcn), std::move(con_ids));
         }
       }
 
@@ -2479,17 +2505,89 @@ bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
             new DeadCodeAssumption(const_cast<llvm::BasicBlock *>(&bb))));
     }
   }
+
+  // Now that we've identified all of our funcitons, lets fill out any remaining
+  // CFG return edges
+  for (auto it = cfg.direct_begin(), en = cfg.direct_end();
+      it != en; ++it) {
+    auto &pr = *it;
+    auto entry_id = pr.first;
+    auto &fcn_targets = pr.second;
+
+    // For each direct callsite, get the callsite incoming and outgoing edge
+    auto callsite_ent = entry_id;
+    auto callsite_ret = cfg.getCallSuccessor(entry_id);
+
+    for (auto &target_id : fcn_targets) {
+      // Get the target (function) incoming and outgoing edge
+      auto target_ent = cfg.getFunctionStart(target_id);
+      // callsite_ent -> target_ent
+      cfg.addPred(target_ent, callsite_ent);
+
+
+      if (cfg.hasFunctionReturn(target_id)) {
+        auto target_ret = cfg.getFunctionReturn(target_id);
+
+        // target_ret -> callsite_ret
+        cfg.addPred(callsite_ret, target_ret);
+      }
+    }
+  }
   //}}}
 
   return false;
   //}}}
 }
 
+
+// Jumps {{{
+void handleJmps(CFG &cfg, SpecAnders &aux, ObjectMap &omap) {
+  std::multimap<ObjectMap::ObjID, CFG::CFGid> obj_to_dest;
+
+  // First create a mapping of objid to dest cfgid
+  for (auto &pr : cfg.getSetjmps()) {
+    auto &ptsto = aux.getPointsTo(omap.getValue(pr.second));
+    for (auto obj_id : ptsto) {
+      obj_to_dest.emplace(obj_id, pr.first);
+    }
+  }
+
+
+  // Now, for each jmp
+  for (auto &pr : cfg.getLongjmps()) {
+    // Find the objids of that jmpenv
+    auto &ptsto = aux.getPointsTo(omap.getValue(pr.second));
+
+    // Now, find all the possible dests
+    std::vector<CFG::CFGid> dests;
+    for (auto obj_id : ptsto) {
+      auto pr = obj_to_dest.equal_range(obj_id);
+      for (; pr.first != pr.second; ++pr.first) {
+        dests.push_back(pr.first->second);
+      }
+    }
+
+    std::sort(std::begin(dests), std::end(dests));
+    auto it = std::unique(std::begin(dests), std::end(dests));
+    dests.erase(it, std::end(dests));
+
+    // Now, for each destination, add a cfg edge
+    for (auto &dest_id : dests) {
+      // Add an edge from the longjmp (src) to the setjmp (destination)
+      cfg.addPred(dest_id, pr.first);
+    }
+  }
+}
+//}}}
+
+// NOTE: Also handles sigjmp and longjmps
 bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
     SpecAnders &aux, const IndirFunctionInfo *dyn_indir_info,
     ObjectMap &omap) {
   //{{{
   identifyAUXFcnCallRetInfo(cfg, omap, aux, dyn_indir_info);
+
+  handleJmps(cfg, aux, omap);
 
   if_debug(
     dout("initial unused functions are: ");
@@ -2509,28 +2607,15 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
     const llvm::CallInst *ci =
       cast<llvm::CallInst>(omap.valueAtID(pair.first));
     llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
-    auto fptr = CS.getCalledValue();
 
     /*
-    llvm::dbgs() << "Have call: " << pair.first << " " << ValPrint(pair.first)
-        << "\n";
+    llvm::dbgs() << "Have call: " << pair.first << " " <<
+        FullValPrint(pair.first) << "\n";
     */
 
     // Add an edge from this call to the fcn
     CFG::CFGid call_id = pair.second;
     CFG::CFGid ret_id = cfg.getCallSuccessor(call_id);
-
-
-    // Get the functon call/ret info for this function:
-    auto &cr_vec = cfg.getCallRetInfo(getValue(cg, omap, fptr));
-    for (auto pr : cr_vec) {
-      CFG::CFGid aux_call_id = pr.first;
-      CFG::CFGid aux_ret_id = pr.second;
-
-      // Now add edges
-      cfg.addPred(aux_call_id, call_id);
-      cfg.addPred(ret_id, aux_ret_id);
-    }
 
     bool is_ext = false;
     // I'm also only following indirect functions for functions I can precisely
@@ -2558,6 +2643,29 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
           continue;
         }
 
+        /*
+        llvm::dbgs() << "obj_id is: " << omap.getObject(omap.valueAtID(fcn_id))
+          << " val: " << ValPrint(fcn_id, omap) << "\n";
+        llvm::dbgs() << "val_id is: " << omap.getValue(omap.valueAtID(fcn_id))
+          << " val: " << ValPrint(fcn_id, omap) << "\n";
+        */
+
+        // Add the CFG edges
+        // FIXME: Should add assert that the if should only be skipped in
+        //   instances of DCE
+        if (cfg.hasFunctionStart(fcn_id)) {
+          auto fcn_start_id = cfg.getFunctionStart(fcn_id);
+          cfg.addPred(fcn_start_id, call_id);
+
+          // Some functions (like "error" or "abort" don't return)
+          if (cfg.hasFunctionReturn(fcn_id)) {
+            // Add edge from fcn ret node->ret
+            auto fcn_ret_id = cfg.getFunctionReturn(fcn_id);
+            cfg.addPred(ret_id, fcn_ret_id);
+          }
+        }
+
+        // Add any new constraints
         // If this is an allocation we need to note that in our structures...
         if (AllocInfo::fcnIsMalloc(fcn) &&
             llvm::isa<llvm::PointerType>(ci->getType())) {
@@ -2592,8 +2700,6 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
           is_ext |= addConstraintsForCall(cg, cfg, omap, CS,
             const_cast<llvm::Function *>(fcn), nullptr);
         }
-
-        cfg.removeUnusedFunction(cg, fcn_id);
       }
     // If we can't figure out the target, add a universal constraint
     } else {
@@ -2635,9 +2741,7 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
     CFG::CFGid call_id = pair.first;
     CFG::CFGid ret_id = cfg.getCallSuccessor(call_id);
 
-    std::for_each(pair.second.cbegin(), pair.second.cend(),
-        [&cg, &cfg, &omap, &call_id, &ret_id]
-        (const ConstraintGraph::ObjID &ins_id) {
+    for (auto ins_id : pair.second) {
       dout("Got value: " << ValPrint(ins_id) << "\n");
 
       ConstraintGraph::ObjID fcn_id = ins_id;
@@ -2658,12 +2762,10 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
       } else {
         cfg.addPred(ret_id, call_id);
       }
-
-
-      cfg.removeUnusedFunction(cg, fcn_id);
-    });
+    }
   });
 
+  /*
   if_debug(
       dout("Post insert unused functions are: ");
       std::for_each(cfg.unused_function_begin(), cfg.unused_function_end(),
@@ -2684,6 +2786,7 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
       cg.removeConstraint(id);
     }
   });
+  */
 
   return false;
   //}}}

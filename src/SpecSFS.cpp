@@ -9,6 +9,8 @@
 
 #include "include/SpecSFS.h"
 
+#include <google/profiler.h>
+
 #include <execinfo.h>
 
 #include <algorithm>
@@ -251,9 +253,11 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   // Finally, solve the graph
   {
     util::PerfTimerPrinter solve_timer(llvm::dbgs(), "solve");
+    ProfilerStart("solve.prof");
     if (solve(graph, std::move(dyn_pts))) {
       error("Solve failure!");
     }
+    ProfilerStop();
   }
 
 
@@ -363,7 +367,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
 
       // Statistics
       auto &ptsto = pts_top_.at(val_id);
-      size_t ptsto_size = ptsto.size();
+      size_t ptsto_size = ptsto.count();
       // size_t ptsto_size = ptsto.getSizeNoStruct(omap);
 
       total_variables++;
@@ -499,8 +503,16 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     for (auto &pr : dyn_ptsto) {
       auto old_id = pr.first;
       auto &old_set = pr.second;
-      auto val = omap.valueAtID(old_id);
-      auto new_id = omap.getValue(val);
+      auto new_id = omap.getRep(old_id);
+
+      // Also, strip out structures to their base field
+      if (!ObjectMap::isSpecial(new_id)) {
+        auto val = omap.valueAtID(new_id);
+        if (val != nullptr) {
+          new_id = omap.getValue(val);
+        }
+        // assert(omap.isObject(new_id));
+      }
 
       auto &new_set = new_dyn_ptsto[new_id];
 
@@ -537,6 +549,8 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
         for (auto obj_id : dyn_pts_set) {
           // Ensure that this element is in the static set
           if (st_pts_set.test(obj_id) == false) {
+            // If this is the first time we've found a missing value for this
+            //    set...
             if (!set_id_found) {
               const llvm::Function *fcn = nullptr;
               const llvm::BasicBlock *bb = nullptr;
@@ -577,8 +591,8 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
 
               // Check if the ID given by the omap is equivalent to the ID given
               //   by our anaysis
-              auto new_set_id = omap.getValue(val);
-              if (new_set_id != set_obj_id) {
+              auto rep_id = omap.getRep(set_obj_id);
+              if (rep_id != set_obj_id) {
                 llvm::dbgs() << "  !! Merged AWAY by cons_opt !!\n";
               }
 
@@ -587,7 +601,9 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
             auto val = omap.valueAtID(obj_id);
             llvm::dbgs() << "  Found element in dyn set not in static set:\n";
             llvm::dbgs() << "    ";
-            if (auto ins = dyn_cast<llvm::Instruction>(val)) {
+            if (val == nullptr) {
+              llvm::dbgs() << "NULL";
+            } else if (auto ins = dyn_cast<llvm::Instruction>(val)) {
               llvm::dbgs() << ins->getParent()->getParent()->getName() << ", "
                   << ins->getParent()->getName();
             } else if (auto ins = dyn_cast<llvm::Argument>(val)) {

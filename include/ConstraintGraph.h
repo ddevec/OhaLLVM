@@ -49,9 +49,11 @@ class Constraint {
 
       // assert(rep.val() != 191751);
 
+      /*
       if (dest.val() == 2822 || src.val() == 2822) {
         llvm::dbgs() << "!!Have 2822 cons: " << *this << "\n";
       }
+      */
 
       /*
       if (dest == ObjectMap::NullValue) {
@@ -63,6 +65,7 @@ class Constraint {
       }
       */
 
+      /*
       if (dest == ObjectMap::IntValue) {
         llvm::dbgs() << "Have dest of intval in cons: " << *this << "\n";
       }
@@ -74,6 +77,7 @@ class Constraint {
       if (src == ObjectMap::IntValue) {
         llvm::dbgs() << "Have src of intval in cons: " << *this << "\n";
       }
+      */
 
       if (src == ObjectMap::UniversalValue) {
         /*

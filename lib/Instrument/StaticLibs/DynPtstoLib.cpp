@@ -17,6 +17,12 @@
 #include <string>
 #include <vector>
 
+#ifndef NDEBUG
+#  define if_debug_enabled(...) __VA_ARGS__
+#else
+#  define if_debug_enabled(...)
+#endif
+
 class AddrRange {
  public:
     explicit AddrRange(void *addr) :
@@ -65,6 +71,11 @@ class AddrRange {
 std::map<AddrRange, std::vector<int32_t>> addr_to_objid;
 std::unordered_map<int32_t, std::set<int32_t>> valid_to_objids;
 std::vector<std::vector<void *>> stack_allocs;
+// Used to pop jmp_env's from the stack on pop
+// std::vector<std::vector<std::map<void *, std::pair<std::vector<std::vector<void *>>::iterator, std::vector<void *>::iterator>>::iterator>> stack_longjmps;  // NOLINT
+ std::vector<std::vector<std::map<void *, std::pair<size_t, size_t>>::iterator>> stack_longjmps;  // NOLINT
+// Used to lookup the stack location jumped to
+std::map<void *, std::pair<size_t, size_t>> longjmps;  // NOLINT
 
 extern "C" {
 
@@ -135,6 +146,7 @@ void __DynPtsto_main_init3(int32_t obj_id, int32_t argv_dest_id,
 void __DynPtsto_do_call() {
   // Push a frame on the "stack"
   stack_allocs.emplace_back();
+  stack_longjmps.emplace_back();
 }
 
 
@@ -148,7 +160,7 @@ void __DynPtsto_do_alloca(int32_t obj_id, int64_t size,
   size /= 8;
   // Handle alloca
   // Add addresses to stack frame
-  std::cout << "stacking: (" << obj_id << ") " << addr << std::endl;
+  // std::cout << "stacking: (" << obj_id << ") " << addr << std::endl;
   stack_allocs.back().push_back(addr);
   // Add ptstos to ptsto map
   auto ret =
@@ -170,15 +182,82 @@ void __DynPtsto_do_ret() {
   const std::vector<void *> &cur_frame = stack_allocs.back();
   for (auto addr : cur_frame) {
     // std::cout << "popping: " << addr << std::endl;
-#ifndef NDEBUG
-    auto ret =
-#endif
+    if_debug_enabled(auto ret =)
       addr_to_objid.erase(AddrRange(addr));
     assert(ret == 1);
   }
-
   // Pop ptsto frame from stack
   stack_allocs.pop_back();
+
+  // Also pop the setjumps...
+  for (auto &it : stack_longjmps.back()) {
+    longjmps.erase(it);
+  }
+  stack_longjmps.pop_back();
+}
+
+void __DynPtsto_do_setjmp(int32_t, void *addr) {
+  // Add ourself to the longjmp ret, so where know where to return to
+  auto stack_pos = std::make_pair(stack_allocs.size()-1,
+      stack_allocs.back().size()-1);
+  auto rc = longjmps.emplace(addr, stack_pos);
+
+  // We reset a jump without clearing it from the stack
+  //   This can happen if setjmp is called 2x on the same jmp_env
+  if (!rc.second) {
+    rc.first->second = stack_pos;
+  }
+
+  // Add ourself to the longjmp stack (so we're cleared on ret)
+  stack_longjmps.back().push_back(rc.first);
+}
+
+void __DynPtsto_do_longjmp(int32_t id, void *addr) {
+  // Look up our jump in the map...
+  auto jump_pr = longjmps.at(addr);
+
+  // Now, free the later frames from the vector
+  // while (std::next(jump_pr.first) != std::end(stack_allocs))
+  for (size_t i = stack_allocs.size()-1; i > jump_pr.first; --i) {
+    const std::vector<void *> &cur_frame = stack_allocs[i];
+    for (auto addr : cur_frame) {
+      // std::cout << "popping: " << addr << std::endl;
+      auto ret = addr_to_objid.erase(AddrRange(addr));
+      if (ret != 1) {
+        std::cerr << "do_longjmp failed at return erase\n";
+        std::cerr << "do_longjmp id: " << id << "\n";
+        std::cerr << "frame: " << stack_allocs.size()-1 << "\n";
+        std::cerr << "addr: " << addr << "\n";
+        abort();
+      }
+    }
+    // Pop ptsto frame from stack
+    stack_allocs.pop_back();
+
+    // Also pop the setjumps...
+    for (auto &it : stack_longjmps.back()) {
+      longjmps.erase(it);
+    }
+    stack_longjmps.pop_back();
+
+    // We should have the same number of frames for both allocs and longjmps
+    assert(stack_longjmps.size() == stack_allocs.size());
+  }
+
+  // Then free anything after this jump
+  /*std::for_each(std::next(jump_pr.second), std::end(stack_allocs.back()),
+      [] (void *addr)*/
+  auto &vec = stack_allocs.back();
+  for (size_t i = vec.size() - 1; i > jump_pr.second; --i) {
+    void *addr = vec[i];
+    // std::cout << "popping: " << addr << std::endl;
+    if_debug_enabled(auto ret =)
+      addr_to_objid.erase(AddrRange(addr));
+    assert(ret == 1);
+    vec.pop_back();
+  }
+
+  // stack_allocs.back().erase(jump_pr.second, std::end(stack_allocs.back()));
 }
 
 void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
@@ -187,9 +266,9 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
   size /= 8;
 
   // Add ptsto to map
+  /*
   std::cout << "mallocing: (" << obj_id << ") " << addr << ", "
     << size << std::endl;
-  /*
   if (obj_id == 66 || obj_id == 1488 || obj_id == 1568) {
     uintptr_t start_addr = reinterpret_cast<uintptr_t>(addr);
     std::cerr << "obj_id: " << obj_id << " => (" << start_addr << ", " <<
@@ -207,8 +286,10 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
     if (addr == nullptr) {
       return;
     }
+    /*
     std::cerr << "Couldn't place range: " << cur_range << std::endl;
     std::cerr << "Old range is: " << ret.first->first << std::endl;
+    */
 
     // Replace ret...
     auto vec = std::move(ret.first->second);
@@ -216,7 +297,7 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
     int64_t new_len = std::max(cur_range.end() - new_addr,
         ret.first->first.end() - new_addr);
     AddrRange new_range(reinterpret_cast<void *>(new_addr), new_len);
-    std::cerr << "new range is: " << ret.first->first << std::endl;
+    // std::cerr << "new range is: " << ret.first->first << std::endl;
     addr_to_objid.erase(ret.first);
     ret = addr_to_objid.emplace(new_range, std::move(vec));
   }
@@ -227,7 +308,7 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
 
 void __DynPtsto_do_free(void *addr) {
   // Remove ptsto from map
-  std::cout << "freeing: " << addr << std::endl;
+  // std::cout << "freeing: " << addr << std::endl;
   // We shouldn't have double allocated anything except globals, which are never
   //   freed
   assert(addr_to_objid.at(AddrRange(addr)).size() == 1);
