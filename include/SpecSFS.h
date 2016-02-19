@@ -31,7 +31,6 @@ class SpecSFS : public llvm::ModulePass,
  public:
   static char ID;
   SpecSFS();
-  explicit SpecSFS(char &id);
 
   virtual bool runOnModule(llvm::Module &M);
 
@@ -115,6 +114,7 @@ class SpecSFS : public llvm::ModulePass,
       std::map<ObjectMap::ObjID, Bitmap> dyn_constraints);
 
  protected:
+  /*
   // Optimizes the top-level constraints in the DUG
   // This requires the omap, so it knows which ids are objects, and doesn't
   //   group them
@@ -122,11 +122,14 @@ class SpecSFS : public llvm::ModulePass,
   //   loads
   bool optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
       ObjectMap &omap);
+      */
 
+  /*
   // Adds additional indirect call info, given an AUX analysis
   //   (in this case, Andersens analysis)
   bool addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
       SpecAnders &aux, const IndirFunctionInfo *, ObjectMap &omap);
+      */
 
   // Private data {{{
   ObjectMap omap_;
@@ -153,5 +156,18 @@ class SpecSFS : public llvm::ModulePass,
   std::map<ObjectMap::ObjID, ObjectMap::ObjID> obj_to_rep_;
   //}}}
 };
+
+// Optimizes the top-level constraints in the DUG
+// This requires the omap, so it knows which ids are objects, and doesn't
+//   group them
+// It also requires the CFG, because it will change the destination of some
+//   loads
+bool SFSHU(ConstraintGraph &graph, CFG &cfg,
+    ObjectMap &omap);
+
+// Adds additional indirect call info, given an AUX analysis
+//   (in this case, Andersens analysis)
+bool addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
+    SpecAnders &aux, const IndirFunctionInfo *, ObjectMap &omap);
 
 #endif  // INCLUDE_SPECSFS_H_

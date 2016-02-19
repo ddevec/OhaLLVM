@@ -105,7 +105,7 @@ set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -std=c++11 -D__STDC_FORMAT
 
 set(SPECSFS_SOURCES
   lib/UnusedFunctions/UnusedFunctions.cpp
-  lib/PrintID.cpp
+  #lib/PrintID.cpp
 
   src/ConstraintPass.cpp
 
@@ -138,6 +138,7 @@ set(SPECSFS_SOURCES
 
   lib/StaticSlice.cpp
   lib/StaticSliceCounter.cpp
+  lib/AliasTest.cpp
 
   #uhh, testing stuff
   lib/TestAA.cpp

@@ -101,7 +101,7 @@ SpecSFS::addDynPtstoInfo(llvm::Module &m, DUG &,
   //         -- unless I somehow get that info dynamically
 
   auto &prof_info = getAnalysis<llvm::ProfileInfo>();
-  const auto &dyn_ptsto = getAnalysis<DynPtstoLoader>();
+  auto &dyn_ptsto = getAnalysis<DynPtstoLoader>();
   // To check if ProfileInfo is valid...
   const auto &unused_fcn = getAnalysis<UnusedFunctions>();
 
@@ -138,18 +138,19 @@ SpecSFS::addDynPtstoInfo(llvm::Module &m, DUG &,
                 // NOTE: in the instance I encounter an unknown value in my
                 //   dynamic ptsto analysis, I will drop that ptsto, so
                 //   hasPtsto is needed...
-                if (dyn_ptsto.hasPtsto(val_id)) {
+                if (dyn_ptsto.hasPtsto(&instr)) {
+                  auto &ptsto = dyn_ptsto.getPtsto(&instr);
                   // Add dyn_ptsto info for this top level variable
 
                   // Don't add dyn_ptsto info for alloc instructions
                   std::unique_ptr<Assumption> ptsto_aspn(new PtstoAssumption(
-                        &instr, dyn_ptsto.getPtsto(val_id)));
+                        &instr, ptsto));
 
                   auto approx_deps = ptsto_aspn->getApproxDependencies(omap, m);
 
                   if (ca.costIsLow(approx_deps)) {
                     auto &dyn_bmp = top_level_constraints[val_id];
-                    for (auto &cons : dyn_ptsto.getPtsto(val_id)) {
+                    for (auto cons : ptsto) {
                       auto pr = omap.findObjAliases(cons);
 
                       if (pr.first) {

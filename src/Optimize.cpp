@@ -296,7 +296,7 @@ static void addHUEdge(SEG::NodeID src, SEG::NodeID dest,
 }  // End anon namespace
 
 // SFS HU implementation {{{
-bool SpecSFS::optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
+bool SFSHU(ConstraintGraph &graph, CFG &cfg,
     ObjectMap &omap) {
 
   // Okay, we run HU here, over the constraints

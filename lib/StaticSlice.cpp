@@ -129,7 +129,7 @@ class StaticSlice : public llvm::ModulePass {
 
 
             if (do_dyn_pts) {
-              auto &ptsto = dyn_pts.getPtstoSet(dest);
+              auto &ptsto = dyn_pts.getPtsto(dest);
 
               for (auto pts_id : ptsto) {
                 // Thing to insert...
@@ -157,7 +157,7 @@ class StaticSlice : public llvm::ModulePass {
             // get ptsto of loaded addr
 
             if (do_dyn_pts) {
-              auto &ptsto = dyn_pts.getPtstoSet(inst.getOperand(0));
+              auto &ptsto = dyn_pts.getPtsto(inst.getOperand(0));
 
               // for each ptsto
               for (auto obj_id : ptsto) {
@@ -211,7 +211,7 @@ class StaticSlice : public llvm::ModulePass {
             } else {
               // Get the set of pointed to ids
               if (do_dyn_pts) {
-                auto &objs = dyn_pts.getPtstoSet(cs.getCalledValue());
+                auto &objs = dyn_pts.getPtsto(cs.getCalledValue());
 
                 for (auto obj_id : objs) {
                   // Get the functions associated with those ids

@@ -316,7 +316,7 @@ class PtstoSet {
       return ptsto_.test(obj_id.val());
     }
 
-    bool insersectsIgnoring(PtstoSet &rhs, ObjectMap::ObjID ignore) {
+    bool intersectsIgnoring(PtstoSet &rhs, ObjectMap::ObjID ignore) {
       bool ret = false;
 
       bool lhs_add = ptsto_.test(ignore.val());
@@ -339,7 +339,6 @@ class PtstoSet {
       if (rhs_add) {
         rhs.ptsto_.set(ignore.val());
       }
-
 
       return ret;
     }

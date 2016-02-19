@@ -69,11 +69,11 @@ static const std::string LongjmpInstName = "__DynPtsto_do_longjmp";
 static const std::string VisitInstName = "__DynPtsto_do_visit";
 
 // Instrument dyn ptsto info {{{
-class InstrDynPtsto : public SpecSFS {
+class InstrDynPtsto : public llvm::ModulePass {
  public:
     static char ID;
 
-    InstrDynPtsto() : SpecSFS(ID) { }
+    InstrDynPtsto() : llvm::ModulePass(ID) { }
 
     bool runOnModule(llvm::Module &m) override;
 
@@ -86,25 +86,31 @@ class InstrDynPtsto : public SpecSFS {
     llvm::Instruction *addMallocCall(llvm::Module &m, ObjectMap::ObjID obj_id,
         llvm::Value *val, llvm::Value *size_val,
         llvm::Instruction *insert_before);
+
+    ObjectMap omap_;
 };
 
 void InstrDynPtsto::getAnalysisUsage(llvm::AnalysisUsage &au) const {
   au.addRequired<UnusedFunctions>();
   au.addRequired<ConstraintPass>();
-  au.addRequired<SpecAnders>();
+  // au.addRequired<SpecAnders>();
   au.setPreservesAll();
 }
 
 void InstrDynPtsto::setupSpecSFSids(llvm::Module &) {
   // Get the ids from the constraint pass
   const auto &cons_pass = getAnalysis<ConstraintPass>();
+  /*
   ConstraintGraph cg(cons_pass.getConstraintGraph());
   CFG cfg(cons_pass.getControlFlowGraph());
+  */
   omap_ = cons_pass.getObjectMap();
 
+
+  /*
   ObjectMap &omap = omap_;
 
-  if (optimizeConstraints(cg, cfg, omap)) {
+  if (SFSHU(cg, cfg, omap)) {
     abort();
   }
 
@@ -115,6 +121,7 @@ void InstrDynPtsto::setupSpecSFSids(llvm::Module &) {
   if (addIndirectCalls(cg, cfg, aux, nullptr, omap)) {
     abort();
   }
+  */
 }
 
 bool InstrDynPtsto::runOnModule(llvm::Module &m) {
@@ -856,11 +863,35 @@ static llvm::RegisterPass<InstrDynPtsto> X("insert-ptsto-profiling",
 
 // The dynamic ptsto pass loader {{{
 void DynPtstoLoader::getAnalysisUsage(llvm::AnalysisUsage &au) const {
+  au.addRequired<ConstraintPass>();
   au.addRequired<UnusedFunctions>();
   au.setPreservesAll();
 }
 
 bool DynPtstoLoader::runOnModule(llvm::Module &) {
+  // Setup omap:
+  const auto &cp = getAnalysis<ConstraintPass>();
+  omap_ = cp.getObjectMap();
+  /*
+  {
+    ConstraintGraph cg(cp.getConstraintGraph());
+    CFG cfg(cp.getControlFlowGraph());
+
+    ObjectMap &omap = omap_;
+
+    if (SFSHU(cg, cfg, omap)) {
+      abort();
+    }
+
+    // Now, fill in the indirect function calls
+    if (addIndirectCalls(cg, cfg, aux, nullptr, omap)) {
+      abort();
+    }
+  }
+  */
+
+  // Now optimize so its related to spec's
+
   std::ifstream logfile(DynPtstoFilename);
   llvm::dbgs() << "Loading DynPtstoFile: " << DynPtstoFilename << "\n";
   if (!logfile.is_open()) {
@@ -891,9 +922,7 @@ bool DynPtstoLoader::runOnModule(llvm::Module &) {
 
         // Don't add a ptsto for null value
         if (obj_id != ObjectMap::NullValue) {
-          if_debug_enabled(auto ret =)
-            obj_set.insert(obj_id);
-          assert(ret.second);
+          obj_set.set(obj_id);
         }
 
         // If we have a universal value, we don't maintain dyn ptsto constraints
@@ -924,7 +953,7 @@ bool DynPtstoLoader::runOnModule(llvm::Module &) {
 
       for (auto &pr : valToObjs_) {
         auto &ptsto = pr.second;
-        auto ptsto_size = ptsto.size();
+        auto ptsto_size = ptsto.count();
         total_variables++;
         total_ptstos += ptsto_size;
 
@@ -955,26 +984,55 @@ bool DynPtstoLoader::runOnModule(llvm::Module &) {
     }
   }
 
-  /*
-  llvm::dbgs() << "Printing loaded ptsto for top-level variables:\n";
-  for (auto &pr : valToObjs_) {
-    llvm::dbgs() << "Value (" << pr.first << ") is: " <<
-        ValPrint(pr.first, omap_) << ":\n";
-
-    auto &pts_set = pr.second;
-    for (auto obj_id : pts_set) {
-      llvm::dbgs() << "  " << ValPrint(obj_id, omap_) << "\n";
-    }
-  }
-  */
-
   return false;
 }
 
 char DynPtstoLoader::ID = 0;
+char DynPtstoAA::ID = 0;
 
-static llvm::RegisterPass<DynPtstoLoader> D("load-ptsto",
+void DynPtstoAA::getAnalysisUsage(llvm::AnalysisUsage &au) const {
+  au.addRequired<llvm::AliasAnalysis>();
+  au.addRequired<DynPtstoLoader>();
+  au.setPreservesAll();
+}
+
+bool DynPtstoAA::runOnModule(llvm::Module &) {
+  InitializeAliasAnalysis(this);
+
+  // Setup omap:
+  dynPts_ = &getAnalysis<DynPtstoLoader>();
+  return false;
+}
+
+llvm::AliasAnalysis::AliasResult DynPtstoAA::alias(
+    const AliasAnalysis::Location &L1,
+    const AliasAnalysis::Location &L2) {
+  // Get the object of the location...
+  // Now, go from here...
+  // Get the objects:
+
+  auto &pts1 = dynPts_->getPtsto(L1.Ptr);
+  auto &pts2 = dynPts_->getPtsto(L2.Ptr);
+
+  if (pts1.empty() || pts2.empty()) {
+    return NoAlias;
+  }
+
+  if (!pts1.intersectsIgnoring(pts2, ObjectMap::NullObjectValue)) {
+    return NoAlias;
+  }
+
+  return AliasAnalysis::alias(L1, L2);
+}
+
+namespace llvm {
+static RegisterPass<DynPtstoLoader> DynPtsLoadReg("dyn-loader",
     "loads dynamic ptsto set info, for use with SpecSFS",
     false, false);
+static RegisterPass<DynPtstoAA> DynPtsAAReg("dyn-aa",
+    " dynamic ptsto aa set info, for use with SpecSFS",
+    false, true);
+RegisterAnalysisGroup<AliasAnalysis> DynPtsAAAnalysisReg(DynPtsAAReg);
+}
 // }}}
 

@@ -13,6 +13,7 @@
 
 #include "include/util.h"
 #include "include/ObjectMap.h"
+#include "include/SolveHelpers.h"
 
 #include "llvm/Constants.h"
 #include "llvm/Function.h"
@@ -350,10 +351,11 @@ class AssignmentInst : public InstrumentationSite {  //{{{
 class SetCheckInst : public InstrumentationSite {  //{{{
  public:
     SetCheckInst(llvm::Value *assign_inst,
-        std::set<ObjectMap::ObjID> check_set,
+        PtstoSet check_set,
         SetCache &set_cache) :
       InstrumentationSite(InstrumentationSite::Kind::SetCheckInst),
-      assignInst_(assign_inst), checkSet_(check_set),
+      assignInst_(assign_inst),
+      checkSet_(std::begin(check_set), std::end(check_set)),
       setCache_(set_cache) { }
 
     bool operator<(const InstrumentationSite &is) const override {
@@ -519,7 +521,7 @@ class Assumption {  //{{{
 class PtstoAssumption : public Assumption {  //{{{
  public:
     PtstoAssumption(llvm::Value *inst,
-        const std::set<ObjectMap::ObjID> &ptstos) :
+        const PtstoSet &ptstos) :
           Assumption(Assumption::Kind::DynPtsto),
           instOrArg_(inst), ptstos_(ptstos) { }
 
@@ -532,11 +534,10 @@ class PtstoAssumption : public Assumption {  //{{{
     }
 
     void remap(const util::ObjectRemap<ObjectMap::ObjID> &remap) override {
-      std::set<ObjectMap::ObjID> new_ptstos;
-      std::transform(std::begin(ptstos_), std::end(ptstos_),
-          std::inserter(new_ptstos, std::end(new_ptstos)),
-          [&remap] (ObjectMap::ObjID id) {
-            return remap[id];
+      PtstoSet new_ptstos;
+      std::for_each(std::begin(ptstos_), std::end(ptstos_),
+          [&remap, &new_ptstos] (ObjectMap::ObjID id) {
+            return new_ptstos.set(remap[id]);
           });
       ptstos_ = std::move(new_ptstos);
     }
@@ -544,7 +545,7 @@ class PtstoAssumption : public Assumption {  //{{{
  private:
     // ObjectMap::ObjID objID_;
     llvm::Value *instOrArg_;
-    std::set<ObjectMap::ObjID> ptstos_;
+    PtstoSet ptstos_;
 
  protected:
     std::vector<std::unique_ptr<InstrumentationSite>>

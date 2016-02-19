@@ -44,7 +44,7 @@ class PrintID : public SpecSFS {
 
 char PrintID::ID = 0;
 // Constructor
-PrintID::PrintID() : SpecSFS(ID), filename_(PrintIDFilename) { }
+PrintID::PrintID() : filename_(PrintIDFilename) { }
 
 static llvm::RegisterPass<PrintID>
   print_register("print-ids",

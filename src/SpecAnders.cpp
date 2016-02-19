@@ -109,12 +109,11 @@ static llvm::cl::opt<bool>
 
 // Constructor
 SpecAnders::SpecAnders() : llvm::ModulePass(ID) { }
-SpecAnders::SpecAnders(char &id) : llvm::ModulePass(id) { }
 char SpecAnders::ID = 0;
 namespace llvm {
   static RegisterPass<SpecAnders>
       SpecAndersRP("SpecAnders", "Speculative Andersens Analysis", false, true);
-  RegisterAnalysisGroup<SpecAnders> SpecAndersRAG(SpecAndersRP);
+  RegisterAnalysisGroup<AliasAnalysis> SpecAndersRAG(SpecAndersRP);
 }  // namespace llvm
 
 void SpecAnders::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
@@ -840,14 +839,16 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
 
 llvm::AliasAnalysis::AliasResult SpecAnders::alias(const Location &L1,
                                             const Location &L2) {
-  auto obj_id1 = omap_.getValue(L1.Ptr);
-  auto obj_id2 = omap_.getValue(L2.Ptr);
+  auto obj_id1 = omap_.getValueRep(L1.Ptr);
+  auto obj_id2 = omap_.getValueRep(L2.Ptr);
 
   auto &node1 = graph_.getNode(obj_id1);
   auto &node2 = graph_.getNode(obj_id2);
 
   auto &pts1 = node1.ptsto();
   auto &pts2 = node2.ptsto();
+
+  // llvm::dbgs() << "Anders Alias Check\n";
 
   // If either of the sets point to nothing, no alias
   if (pts1.empty() || pts2.empty()) {
@@ -856,7 +857,7 @@ llvm::AliasAnalysis::AliasResult SpecAnders::alias(const Location &L1,
 
   // Check to see if the two pointers are known to not alias.  They don't alias
   // if their points-to sets do not intersect.
-  if (!pts1.insersectsIgnoring(pts2,
+  if (!pts1.intersectsIgnoring(pts2,
         ObjectMap::NullObjectValue)) {
     return NoAlias;
   }

@@ -388,9 +388,9 @@ void identifyAUXFcnCallRetInfo(CFG &cfg,
 
       // Manage speculative assumptions:
       {
-        std::set<ObjectMap::ObjID> pts_ids;
+        PtstoSet pts_ids;
         for (auto fcn : fcn_targets) {
-          pts_ids.insert(omap.getObject(fcn));
+          pts_ids.set(omap.getObject(fcn));
         }
 
         /*
@@ -2539,7 +2539,6 @@ bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
   //}}}
 }
 
-
 // Jumps {{{
 void handleJmps(CFG &cfg, SpecAnders &aux, ObjectMap &omap) {
   std::multimap<ObjectMap::ObjID, CFG::CFGid> obj_to_dest;
@@ -2581,7 +2580,7 @@ void handleJmps(CFG &cfg, SpecAnders &aux, ObjectMap &omap) {
 //}}}
 
 // NOTE: Also handles sigjmp and longjmps
-bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
+bool addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
     SpecAnders &aux, const IndirFunctionInfo *dyn_indir_info,
     ObjectMap &omap) {
   //{{{
@@ -2602,7 +2601,7 @@ bool SpecSFS::addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
   // We iterate each indirect call in the DUG
   // to add the indirect info to the constraint map:
   std::for_each(cfg.indirect_cbegin(), cfg.indirect_cend(),
-      [this, &cg, &cfg, &aux, &omap]
+      [&cg, &cfg, &aux, &omap]
       (const std::pair<ConstraintGraph::ObjID, CFG::CFGid> &pair) {
     const llvm::CallInst *ci =
       cast<llvm::CallInst>(omap.valueAtID(pair.first));

@@ -100,7 +100,7 @@ static void error(const std::string &msg) {
 
 // Constructor
 SpecSFS::SpecSFS() : llvm::ModulePass(ID) { }
-SpecSFS::SpecSFS(char &id) : llvm::ModulePass(id) { }
+// SpecSFS::SpecSFS(char &id) : llvm::ModulePass(id) { }
 char SpecSFS::ID = 0;
 namespace llvm {
   static RegisterPass<SpecSFS>
@@ -170,7 +170,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   //   control-flow information for those nodes into account yet
   {
     util::PerfTimerPrinter opt_timer(llvm::dbgs(), "optimizeConstarints");
-    if (optimizeConstraints(cg, cfg, omap)) {
+    if (SFSHU(cg, cfg, omap)) {
       error("OptimizeConstraints failure!");
     }
   }
@@ -659,7 +659,7 @@ llvm::AliasAnalysis::AliasResult SpecSFS::alias(const Location &L1,
 
   // Check to see if the two pointers are known to not alias.  They don't alias
   // if their points-to sets do not intersect.
-  if (!pts1.front().insersectsIgnoring(pts2.front(),
+  if (!pts1.front().intersectsIgnoring(pts2.front(),
         ObjectMap::NullObjectValue)) {
     return NoAlias;
   }

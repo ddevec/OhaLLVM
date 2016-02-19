@@ -5,7 +5,6 @@
 #include <map>
 #include <vector>
 
-#include "include/Andersens.h"
 #include "include/DUG.h"
 #include "include/ObjectMap.h"
 #include "include/lib/UnusedFunctions.h"
@@ -34,6 +33,7 @@ class TestAA : public llvm::ModulePass {
   void getAnalysisUsage(llvm::AnalysisUsage &usage) const {
     usage.setPreservesAll();
     usage.addRequired<llvm::AliasAnalysis>();
+    usage.addRequired<UnusedFunctions>();
   }
 
   bool runOnModule(llvm::Module &m) override {
