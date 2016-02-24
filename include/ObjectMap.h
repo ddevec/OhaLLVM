@@ -1125,43 +1125,6 @@ static const llvm::Type *findLargestType(ObjectMap &omap,
   return biggest_type;
 }
 
-// FIXME: Should put somewhere I don't have to deal with unused warnings
-// NOTE: User can be both a ConstantExpr, and a GetElementPtrInst
-[[ gnu::unused ]]
-static int32_t getGEPOffs(ObjectMap &omap, const llvm::User &gep) {
-  int32_t offs = 0;
-
-  // This loop is essentially to handle the nested nature of
-  //   GEP instructions
-  // It basically says, For the outer-layer of the struct
-  for (auto gi = llvm::gep_type_begin(gep),
-        en = llvm::gep_type_end(gep);
-      gi != en; ++gi) {
-    auto type = *gi;
-    auto struct_type = dyn_cast<llvm::StructType>(type);
-    // If it isn't a struct field, don't add subfield offsets
-    if (struct_type == nullptr) {
-      continue;
-    }
-
-    auto &si = omap.getStructInfo(cast<llvm::StructType>(type));
-
-    auto operand = gi.getOperand();
-
-    // Get the offset from this const value
-    auto cons_op = dyn_cast<llvm::ConstantInt>(operand);
-    assert(cons_op);
-    uint32_t idx = cons_op ? cons_op->getZExtValue() : 0;
-
-    // Add the translated offset
-    offs += si.getFieldOffset(idx);
-  }
-
-  return offs;
-}
-
-// }}}
-
 // For debug only, not guaranteed to persist
 extern ObjectMap *g_omap;
 

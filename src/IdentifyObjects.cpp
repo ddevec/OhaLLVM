@@ -57,7 +57,7 @@ ObjectMap::ObjID getConstValue(ConstraintGraph &cg, ObjectMap &omap,
           // Need to calc offset here...
           // But this encounters obj vs value issues...
 
-          auto offs = getGEPOffs(omap, *ce);
+          auto offs = LLVMHelper::getGEPOffs(omap, *ce);
           auto obj_id = getConstValue(cg, omap, ce->getOperand(0));
 
           // Now we need to get a gep to convert this value to the gep'd offset:
@@ -139,7 +139,7 @@ ObjectMap::ObjID getValue(ConstraintGraph &cg, ObjectMap &omap,
     }
   }
 
-  auto id = omap.getValue(val);
+  auto id = omap.getValueRep(val);
 
   // graph.associateNode(id, id);
 
@@ -332,6 +332,7 @@ void identifyAUXFcnCallRetInfo(CFG &cfg,
       const llvm::CallInst *ci =
         cast<llvm::CallInst>(omap.valueAtID(pair.first));
 
+
       llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
 
       auto fptr = CS.getCalledValue();
@@ -351,8 +352,10 @@ void identifyAUXFcnCallRetInfo(CFG &cfg,
         //   set... or all unknown functions... I'm ignoring this for now, but
         //   will fix if needed
         if (obj_id == ObjectMap::UniversalValue) {
+          /*
           llvm::dbgs() << "FIXME: Function points to universal value..."
             " Ignoring the universal value ptr\n";
+          */
           continue;
         }
 
@@ -1261,7 +1264,7 @@ static void addConstraintsForIndirectCall(ConstraintGraph &cg, ObjectMap &omap,
   // Instead we alert the constraint graph of the appropriate nodes, and allow
   //   it to fill in the information later.
   // Create a ret node:
-  auto call_id = omap.getValue(CS.getInstruction());
+  auto call_id = omap.getValueRep(CS.getInstruction());
   bool is_pointer =
     llvm::isa<llvm::PointerType>(CS.getInstruction()->getType());
   std::vector<ObjectMap::ObjID> args;
@@ -1287,7 +1290,7 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
   // If this call returns a pointer
   assert(F != nullptr);
   if (llvm::isa<llvm::PointerType>(F->getFunctionType()->getReturnType())) {
-    auto val = omap.getValue(CS.getInstruction());
+    auto val = omap.getValueRep(CS.getInstruction());
 
     // If the function that's called also returns a pointer
     // Add a copy from the return value into this value
@@ -1296,7 +1299,7 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
     llvm::dbgs() << "cv is: " << *CS.getCalledValue() << "\n";
     llvm::dbgs() << "Fcn is: " << *F << "\n";
     */
-    auto ret_val = omap.getReturn(F);
+    auto ret_val = omap.getReturnRep(F);
     cg.add(ConstraintType::Copy, val, ret_val);
 
   // The callsite returns a non-pointer, but the function returns a
@@ -1306,7 +1309,7 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
     // The call now aliases the universal value
     llvm::dbgs() << "FIXME: Direct call returns universal value: " <<
         CS.getInstruction() << "\n";
-    auto ret_id = omap.getReturn(F);
+    auto ret_id = omap.getReturnRep(F);
     cg.add(ConstraintType::Copy,
         ret_id, ObjectMap::UniversalValue);
   }
@@ -1768,7 +1771,7 @@ static void idGEPInst(ConstraintGraph &cg, ObjectMap &omap,
   auto &gep = cast<const llvm::GetElementPtrInst>(inst);
 
   auto gep_id = omap.getValue(&gep);
-  auto src_offs = getGEPOffs(omap, gep);
+  auto src_offs = LLVMHelper::getGEPOffs(omap, gep);
   auto src_id = getValue(cg, omap, gep.getOperand(0));
 
   dout("id gep_id: " << ValPrint(gep_id) << "\n");
@@ -2653,6 +2656,7 @@ bool addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
         // FIXME: Should add assert that the if should only be skipped in
         //   instances of DCE
         if (cfg.hasFunctionStart(fcn_id)) {
+          llvm::dbgs() << "Adding cfg edge!\n";
           auto fcn_start_id = cfg.getFunctionStart(fcn_id);
           cfg.addPred(fcn_start_id, call_id);
 

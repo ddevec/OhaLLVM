@@ -14,6 +14,7 @@
 #include "include/ConstraintPass.h"
 #include "include/DUG.h"
 #include "include/ObjectMap.h"
+#include "include/lib/DynPtsto.h"
 #include "include/lib/UnusedFunctions.h"
 #include "include/lib/IndirFcnTarget.h"
 
@@ -141,6 +142,8 @@ class SpecAnders : public llvm::ModulePass,
   AssumptionSet specAssumptions_;
 
   std::map<ObjectMap::ObjID, ObjectMap::ObjID> hcdPairs_;
+
+  DynPtstoLoader *dynPts_;
   //}}}
 };
 

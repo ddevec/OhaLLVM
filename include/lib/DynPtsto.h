@@ -17,11 +17,11 @@
 #include "llvm/Module.h"
 #include "llvm/Pass.h"
 #include "llvm/PassManager.h"
+#include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Support/CallSite.h"
 #include "llvm/Support/Debug.h"
 
 #include "include/SolveHelpers.h"
-#include "include/SpecSFS.h"
 #include "include/ObjectMap.h"
 
 class DynPtstoLoader : public llvm::ModulePass {
@@ -79,19 +79,6 @@ class DynPtstoLoader : public llvm::ModulePass {
     }
   }
 
-  /*
-  const PtstoSet &getPtsto(ObjectMap::ObjID &val_id) const {
-    assert(hasInfo_);
-    static PtstoSet empty_set;
-    auto it = valToObjs_.find(val_id);
-    if (it == std::end(valToObjs_)) {
-      return empty_set;
-    } else {
-      return it->second;
-    }
-  }
-  */
-
   typedef std::map<ObjectMap::ObjID, PtstoSet>::const_iterator
     const_iterator;
 
@@ -101,6 +88,21 @@ class DynPtstoLoader : public llvm::ModulePass {
 
   const_iterator end() const {
     return std::end(valToObjs_);
+  }
+
+  bool noAlias(const llvm::Value *v1, const llvm::Value *v2) {
+    auto &pts1 = getPtsto(v1);
+    auto &pts2 = getPtsto(v2);
+
+    if (pts1.empty() || pts2.empty()) {
+      return true;
+    }
+
+    if (!pts1.intersectsIgnoring(pts2, ObjectMap::NullValue)) {
+      return true;
+    }
+
+    return false;
   }
 
  private:

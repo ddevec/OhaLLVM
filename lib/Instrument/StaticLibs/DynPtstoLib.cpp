@@ -15,6 +15,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifndef NDEBUG
@@ -27,11 +28,13 @@ class AddrRange {
  public:
     explicit AddrRange(void *addr) :
         start_(reinterpret_cast<intptr_t>(addr)),
-        end_(start_+1) { }
+        end_(start_+1),
+        baseAddr_(addr) { }
 
     AddrRange(void *addr, int64_t size) :
         start_(reinterpret_cast<intptr_t>(addr)),
-        end_(reinterpret_cast<intptr_t>(addr)+size) { }
+        end_(reinterpret_cast<intptr_t>(addr)+size),
+        baseAddr_(addr) { }
 
     bool overlaps(const AddrRange &tmp) const {
       return (
@@ -58,17 +61,100 @@ class AddrRange {
       return end_;
     }
 
+    void *base() const {
+      return baseAddr_;
+    }
+
+    AddrRange split(intptr_t offs) {
+      AddrRange ret(offs, end_, baseAddr_);
+      end_ = offs;
+
+      return ret;
+    }
+
     friend std::ostream &operator<<(std::ostream &os, const AddrRange &ar) {
-      os << "( " << ar.start() << ", " << ar.end() << " )";
+      os << "( " << reinterpret_cast<void *>(ar.start()) << ", " <<
+       reinterpret_cast<void *>(ar.end()) << " )";
       return os;
     }
 
  private:
+    AddrRange(intptr_t s, intptr_t e, void *b) : start_(s), end_(e),
+        baseAddr_(b) { }
+
     intptr_t start_;
-    intptr_t end_;
+    // Not inclusive
+    // FIXME: Super hacky!
+    // Mutable so we can reduce the end w/o changing the element when a key in a
+    //    map
+    // This is technically illegal.... but it makes our life so much easier, and
+    //    will work w/ the standard map implementation
+    mutable intptr_t end_;
+
+    void * const baseAddr_;
 };
 
-std::map<AddrRange, std::vector<int32_t>> addr_to_objid;
+class AddressValue {
+ public:
+  AddressValue() = default;
+  explicit AddressValue(int32_t obj_id) : AddressValue(obj_id, false) { }
+  explicit AddressValue(int32_t obj_id, bool gep) : objs_(1, obj_id),
+        gep_(gep) { }
+
+  void addId(int32_t id) {
+    objs_.push_back(id);
+  }
+
+  bool gep() const {
+    return gep_;
+  }
+
+  void setGep(int32_t new_id, bool force_gep) {
+    assert(!gep_);
+    assert(size() == 1);
+    gep_ = force_gep;
+
+    objs_[0] = new_id;
+  }
+
+  size_t size() const {
+    return objs_.size();
+  }
+
+  int32_t id() const {
+    assert(objs_.size() == 1);
+    return objs_[0];
+  }
+
+  const std::vector<int32_t> ids() const {
+    return objs_;
+  }
+
+  typedef std::vector<int32_t>::iterator iterator;
+  typedef std::vector<int32_t>::const_iterator const_iterator;
+
+  iterator begin() {
+    return std::begin(objs_);
+  }
+
+  iterator end() {
+    return std::end(objs_);
+  }
+
+  const_iterator begin() const {
+    return std::begin(objs_);
+  }
+
+  const_iterator end() const {
+    return std::end(objs_);
+  }
+
+ private:
+  std::vector<int32_t> objs_;
+  bool gep_ = false;
+};
+
+std::map<AddrRange, AddressValue> addr_to_objid;
 std::unordered_map<int32_t, std::set<int32_t>> valid_to_objids;
 std::vector<std::vector<void *>> stack_allocs;
 // Used to pop jmp_env's from the stack on pop
@@ -76,6 +162,11 @@ std::vector<std::vector<void *>> stack_allocs;
  std::vector<std::vector<std::map<void *, std::pair<size_t, size_t>>::iterator>> stack_longjmps;  // NOLINT
 // Used to lookup the stack location jumped to
 std::map<void *, std::pair<size_t, size_t>> longjmps;  // NOLINT
+
+
+// GEP support
+// static std::unordered_map<void *, std::vector<AddrRange *>> base_locs;
+static std::unordered_multimap<void *, const AddrRange *> base_locs;
 
 extern "C" {
 
@@ -149,6 +240,163 @@ void __DynPtsto_do_call() {
   stack_longjmps.emplace_back();
 }
 
+void __DynPtsto_do_gep(int32_t offs, void *base_addr,
+    void *res_addr, int64_t size) {
+  size /= 8;
+  // Get the current field at the res_addr
+  std::cout << "gep: " << offs << ", " << res_addr << ", " <<
+      size << std::endl;
+  auto it = addr_to_objid.find(AddrRange(res_addr));
+  if (it == std::end(addr_to_objid)) {
+    std::cerr << "WARNING: gep addr not found: " << res_addr << "\n";
+    return;
+  }
+  auto addr = it->first;
+  std::cout << "  addr: " << addr << std::endl;
+
+  auto base_id = addr_to_objid.at(AddrRange(base_addr)).id();
+
+  bool force_gep = (offs != 0);
+
+  // Now, get the address to associate this free with...
+  auto base_hint = base_locs.find(addr.base());
+  ++base_hint;
+
+  auto hint_it = it;
+  ++hint_it;
+
+  // Split the address into 2 parts
+
+  // This happens if we're looking up an addr that already has a top-level ptsto
+  // In this instance, we don't do the first split, instead we assign second to
+  // be equal to addr;
+  if (reinterpret_cast<intptr_t>(res_addr) == addr.start()) {
+    if (!it->second.gep()) {
+      it->second.setGep(base_id + offs, force_gep);
+    }
+    // Check if we need a third
+    if (addr.end() != addr.start() + size) {
+      // it->second.setGep(offs);
+      // Update the id of the GEP range
+      assert(it->second.size() == 1);
+
+      auto new_addr = addr;
+      auto third = new_addr.split(
+          reinterpret_cast<intptr_t>(new_addr.start() + size));
+      assert(new_addr.base() == third.base());
+
+      std::cout << "  new_addr: " << new_addr << " -> " <<
+        base_id + offs << std::endl;
+      std::cout << "    new_addr range: " << it->first << std::endl;
+      std::cout << "  third: " << third << " -> " << base_id << std::endl;
+
+      // Second (res_addr, res_addr+size-1) is id + offs
+      assert(it->second.size() == 1);
+      addr_to_objid.erase(it);
+      addr_to_objid.emplace_hint(hint_it, new_addr,
+          AddressValue(base_id + offs, force_gep));
+      auto a1_it = addr_to_objid.emplace_hint(hint_it,
+          third, AddressValue(base_id));
+
+      // Update the free_map, add res_addr, and res_addr+size
+      base_locs.emplace_hint(base_hint, reinterpret_cast<void *>(third.base()),
+          &a1_it->first);
+    }
+  } else {
+    // First (base, res_addr-1) is old_id
+    // Note, we've already taken care of this
+    auto new_addr = addr;
+    auto second = new_addr.split(reinterpret_cast<intptr_t>(res_addr));
+    assert(new_addr.base() == second.base());
+
+    assert(it->second.size() == 1);
+    addr_to_objid.erase(it);
+    addr_to_objid.emplace_hint(hint_it, new_addr,
+        AddressValue(base_id));
+
+    // If we've already covered this address, we're done
+    if (second.start() != second.end()) {
+      std::cout << "  new addr: " << it->first << " -> " << it->second.id()
+        << std::endl;
+
+      // Second (res_addr, res_addr+size-1) is id + offs
+      auto a1_it = addr_to_objid.emplace_hint(hint_it,
+          second, AddressValue(base_id + offs, force_gep));
+      assert(a1_it->first == second);
+      assert(a1_it->second.id() == base_id + offs);
+
+      std::cout << "  new second: " << a1_it->first << " -> " <<
+        a1_it->second.id() << std::endl;
+      // Update the free_map, add res_addr, and res_addr+size
+      base_locs.emplace_hint(base_hint, reinterpret_cast<void *>(second.base()),
+          &a1_it->first);
+
+      if (second.start() + size != second.end()) {
+        auto new_second = a1_it->first;
+        auto third = new_second.split(second.start() + size);
+        assert(new_second.base() == third.base());
+        std::cout << "  second: " << new_second << " -> " << base_id + offs
+          << std::endl;
+
+        std::cout << "  third: " << third << " -> " << base_id <<
+          std::endl;
+
+        // Third (res_addr+size, base_end) is old_id
+        addr_to_objid.erase(a1_it);
+        addr_to_objid.emplace_hint(hint_it,
+            new_second, AddressValue(base_id + offs, force_gep));
+
+        auto a2_it = addr_to_objid.emplace_hint(hint_it,
+            third, AddressValue(base_id));
+        base_locs.emplace_hint(base_hint,
+            reinterpret_cast<void *>(third.base()),
+            &a2_it->first);
+      } else {
+       std::cout << "  second: " << second << " -> " <<
+         (base_id + offs) << std::endl;
+      }
+    } else {
+      // std::cout << "  sanity addr: " << addr << std::endl;
+    }
+  }
+
+  /*
+  intptr_t new_addr = reinterpret_cast<intptr_t>(res_addr) & (~(intptr_t)0xFFF);
+  new_addr |= 0x210;
+
+  auto new_it = addr_to_objid.find(
+      AddrRange(reinterpret_cast<void *>(new_addr)));
+  if (new_it != std::end(addr_to_objid)) {
+    std::cout << "  obj at new_addr: " <<
+      new_it->second.id() << std::endl;
+
+    std::cout << "  range at new_addr: " <<
+      new_it->first << std::endl;
+  }
+  */
+
+  std::cout << "  obj at res_addr (" << res_addr << "): " <<
+    addr_to_objid.at(AddrRange(res_addr)).id() << std::endl;
+
+  std::cout << "  obj at base_addr(" << base_addr << "): " <<
+    addr_to_objid.at(AddrRange(base_addr)).id() << std::endl;
+
+  /*
+  if (addr_to_objid.at(AddrRange(res_addr)).front() !=
+      (addr_to_objid.at(AddrRange(base_addr)).front() + offs)) {
+    std::cout << "res_addr: " << res_addr << std::endl;
+    std::cout << "obj at res_addr: " <<
+      addr_to_objid.at(AddrRange(res_addr)).front() << std::endl;
+
+    std::cout << "base_addr: " << res_addr << std::endl;
+    std::cout << "obj at base_addr: " <<
+      addr_to_objid.at(AddrRange(base_addr)).front() << std::endl;
+
+    abort();
+  }
+  */
+}
+
 
 void __DynPtsto_do_alloca(int32_t obj_id, int64_t size,
     void *addr) {
@@ -165,26 +413,48 @@ void __DynPtsto_do_alloca(int32_t obj_id, int64_t size,
   // Add ptstos to ptsto map
   auto ret =
     addr_to_objid.emplace(AddrRange(addr, size),
-        std::vector<int32_t>(1, obj_id));
+        AddressValue(obj_id));
   if (!ret.second) {
     std::cerr << "failed to place obj_id: " << obj_id << std::endl;
     std::cerr << "old obj_ids are:";
-    for (auto &old_obj_id : ret.first->second) {
+    for (auto &old_obj_id : ret.first->second.ids()) {
       std::cerr << " " << old_obj_id;
     }
     std::cerr << std::endl;
   }
+
+  base_locs.emplace(addr, &(ret.first->first));
   assert(ret.second);
+}
+
+static bool do_free_addr(void *addr) {
+  auto pr = base_locs.equal_range(addr);
+
+  bool ret = false;
+
+  std::for_each(pr.first, pr.second,
+      [&ret] (std::pair<void * const, const AddrRange *> &pr_it) {
+    auto &range = *pr_it.second;
+    // std::cout << "popping: " << addr << std::endl;
+    ret |=
+      (addr_to_objid.erase(range) != 1);
+  });
+
+  base_locs.erase(pr.first, pr.second);
+
+  return ret;
 }
 
 void __DynPtsto_do_ret() {
   // Remove all ptstos on stack from map
   const std::vector<void *> &cur_frame = stack_allocs.back();
   for (auto addr : cur_frame) {
-    // std::cout << "popping: " << addr << std::endl;
-    if_debug_enabled(auto ret =)
-      addr_to_objid.erase(AddrRange(addr));
-    assert(ret == 1);
+    bool rc = do_free_addr(addr);
+    if (rc) {
+      // Do ret failed?
+      std::cerr << "Do ret failed to erase address: " << addr << std::endl;
+      assert(0 && "do_ret failed");
+    }
   }
   // Pop ptsto frame from stack
   stack_allocs.pop_back();
@@ -221,9 +491,8 @@ void __DynPtsto_do_longjmp(int32_t id, void *addr) {
   for (size_t i = stack_allocs.size()-1; i > jump_pr.first; --i) {
     const std::vector<void *> &cur_frame = stack_allocs[i];
     for (auto addr : cur_frame) {
-      // std::cout << "popping: " << addr << std::endl;
-      auto ret = addr_to_objid.erase(AddrRange(addr));
-      if (ret != 1) {
+      auto ret = do_free_addr(addr);
+      if (ret) {
         std::cerr << "do_longjmp failed at return erase\n";
         std::cerr << "do_longjmp id: " << id << "\n";
         std::cerr << "frame: " << stack_allocs.size()-1 << "\n";
@@ -252,8 +521,8 @@ void __DynPtsto_do_longjmp(int32_t id, void *addr) {
     void *addr = vec[i];
     // std::cout << "popping: " << addr << std::endl;
     if_debug_enabled(auto ret =)
-      addr_to_objid.erase(AddrRange(addr));
-    assert(ret == 1);
+      do_free_addr(addr);
+    assert(!ret);
     vec.pop_back();
   }
 
@@ -262,8 +531,13 @@ void __DynPtsto_do_longjmp(int32_t id, void *addr) {
 
 void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
     void *addr) {
+  std::cout << "do_malloc: " << obj_id << ", " << size << ", " <<
+    addr << std::endl;
   // Size is in bits...
   size /= 8;
+
+  std::cout << "do_malloc (bytes): " << obj_id << ", " << size << ", " <<
+    addr << std::endl;
 
   // Add ptsto to map
   /*
@@ -279,9 +553,12 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
   AddrRange cur_range(addr, size);
 
   auto ret = addr_to_objid.emplace(cur_range,
-      std::vector<int32_t>());
+      AddressValue());
+  std::cout << "  do_malloc range: " << cur_range << std::endl;
 
   // If we overlap, but are not equal
+  // XXX:  Should only happen for globals, so I'm ignoring this in base_loc
+  // calcualtions
   while (!ret.second && ret.first->first.overlaps(cur_range)) {
     if (addr == nullptr) {
       return;
@@ -302,7 +579,9 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
     ret = addr_to_objid.emplace(new_range, std::move(vec));
   }
 
-  ret.first->second.push_back(obj_id);
+  base_locs.emplace(addr, &ret.first->first);
+
+  ret.first->second.addId(obj_id);
   assert(ret.second);
 }
 
@@ -311,15 +590,21 @@ void __DynPtsto_do_free(void *addr) {
   // std::cout << "freeing: " << addr << std::endl;
   // We shouldn't have double allocated anything except globals, which are never
   //   freed
-  assert(addr_to_objid.at(AddrRange(addr)).size() == 1);
-  addr_to_objid.erase(AddrRange(addr));
+  do_free_addr(addr);
 }
 
 void __DynPtsto_do_visit(int32_t val_id, void *addr) {
+  if (val_id == 6251) {
+    std::cout << "Visit on: " << val_id << " : " << addr << std::endl;
+  }
   // Record that this val_id pts to this addr
   auto it = addr_to_objid.find(AddrRange(addr));
   if (it != std::end(addr_to_objid)) {
     for (int32_t obj_id : it->second) {
+      if (val_id == 6251) {
+        std::cout << "   got id: " << obj_id << " at: " <<
+          it->first << std::endl;
+      }
       valid_to_objids[val_id].insert(obj_id);
     }
   } else {

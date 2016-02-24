@@ -142,6 +142,8 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
   // -- This is required for the llvm AliasAnalysis interface
   InitializeAliasAnalysis(this);
 
+  dynPts_ = &getAnalysis<DynPtstoLoader>();
+
   if (do_spec) {
     llvm::dbgs() << "do-spec is true!\n";
   } else {
@@ -613,7 +615,7 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
       if (set_obj_id != ObjectMap::NullValue) {
         for (auto obj_id : dyn_pts_set) {
           // Ensure that this element is in the static set
-          if (st_pts_set.test(obj_id) == false) {
+          if (!st_pts_set.test(obj_id)) {
             if (!set_id_found) {
               const llvm::Function *fcn = nullptr;
               const llvm::BasicBlock *bb = nullptr;
@@ -858,7 +860,7 @@ llvm::AliasAnalysis::AliasResult SpecAnders::alias(const Location &L1,
   // Check to see if the two pointers are known to not alias.  They don't alias
   // if their points-to sets do not intersect.
   if (!pts1.intersectsIgnoring(pts2,
-        ObjectMap::NullObjectValue)) {
+        ObjectMap::NullValue)) {
     return NoAlias;
   }
 

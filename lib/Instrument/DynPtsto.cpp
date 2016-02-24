@@ -46,6 +46,12 @@ static llvm::cl::opt<std::string>
       llvm::cl::value_desc("filename"),
       llvm::cl::desc("Ptsto file saved/loaded by DynPtsto analysis"));
 
+static llvm::cl::opt<bool>
+  dyn_ptsto_no_gep("dyn-ptsto-no-gep", llvm::cl::init(false),
+      llvm::cl::value_desc("bool"),
+      llvm::cl::desc("If set the dynamic information will be gathered without "
+        "structure field information"));
+
 // First and last functions called
 static const std::string InitInstName = "__DynPtsto_do_init";
 static const std::string FinishInstName = "__DynPtsto_do_finish";
@@ -64,6 +70,9 @@ static const std::string FreeInstName = "__DynPtsto_do_free";
 // setjump/longjmp *sigh*
 static const std::string SetjmpInstName = "__DynPtsto_do_setjmp";
 static const std::string LongjmpInstName = "__DynPtsto_do_longjmp";
+
+// For GEPs
+static const std::string GEPInstName = "__DynPtsto_do_gep";
 
 // Called on ptr returnin fcn
 static const std::string VisitInstName = "__DynPtsto_do_visit";
@@ -169,6 +178,7 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
       std::vector<llvm::Instruction *> free_list;
       std::vector<llvm::Instruction *> setjmp_list;
       std::vector<llvm::Instruction *> jmp_list;
+      std::vector<llvm::GetElementPtrInst *> gep_list;
 
       // Also create list for all pointer values
       std::vector<llvm::Instruction *> pointer_list;
@@ -216,6 +226,10 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
           } else {
             pointer_list.push_back(&inst);
           }
+        }
+
+        if (auto gep = dyn_cast<llvm::GetElementPtrInst>(&inst)) {
+          gep_list.push_back(gep);
         }
       }
 
@@ -424,7 +438,65 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
           malloc_inst_call->insertAfter(after);
         }
       }
+
+      // GEPs!
+      if (!dyn_ptsto_no_gep) {
+        auto gep_fcn = m.getFunction(GEPInstName);
+        for (auto &pgep : gep_list) {
+          auto &gep = *pgep;
+
+          auto offs = LLVMHelper::getGEPOffs(omap, gep);
+          if (offs > 0 || LLVMHelper::gepIsArrayAccess(gep)) {
+            // Okay, add the gep instruction call....
+            llvm::Instruction *i8_ptr_val = pgep;
+
+            std::vector<llvm::Value *> args;
+            // First, get the gep offset...
+            args.push_back(llvm::ConstantInt::get(i32_type,
+                  LLVMHelper::getGEPOffs(omap, gep)));
+
+            // The base pointer
+            auto base_ptr = gep.getOperand(0);
+            llvm::Instruction *insert_pos = pgep;
+
+            std::vector<llvm::Value *> indicies;
+            for (auto it = gep.idx_begin(), en = gep.idx_end();
+                it != en; ++it) {
+              indicies.push_back(*it);
+            }
+            indicies.pop_back();
+            indicies.push_back(llvm::ConstantInt::get(i32_type, 0));
+            base_ptr =
+              llvm::GetElementPtrInst::Create(base_ptr, indicies, "", pgep);
+
+            if (base_ptr->getType() != i8_ptr_type) {
+              base_ptr = new llvm::BitCastInst(base_ptr, i8_ptr_type);
+              cast<llvm::Instruction>(base_ptr)->insertAfter(insert_pos);
+              insert_pos = cast<llvm::Instruction>(base_ptr);
+            }
+            args.push_back(base_ptr);
+
+            if (gep.getType() != i8_ptr_type) {
+              i8_ptr_val = new llvm::BitCastInst(pgep, i8_ptr_type);
+              i8_ptr_val->insertAfter(insert_pos);
+              insert_pos = cast<llvm::Instruction>(i8_ptr_val);
+            }
+            // Then, the i8_ptr_val
+            args.push_back(i8_ptr_val);
+
+            // Finally, the field size...
+            auto type_size_ce = LLVMHelper::calcTypeOffset(m,
+                LLVMHelper::getLowestType(pgep->getType()), insert_pos);
+            args.push_back(type_size_ce);
+
+            auto gep_inst_call = llvm::CallInst::Create(
+                gep_fcn, args);
+            gep_inst_call->insertAfter(insert_pos);
+          }
+        }
+      }
     }
+
 
     // If we have one or more allocs, we need a call and ret pair
     if (fcn_num_allocas > 0) {
@@ -674,6 +746,25 @@ void InstrDynPtsto::addExternalFunctions(llvm::Module &m) {
     llvm::Function::Create(longjmp_fcn_type,
         llvm::GlobalValue::ExternalLinkage,
         LongjmpInstName, &m);
+  }
+
+  // GEPInst(int32_t field_offs, i8 *ptr, int32_t size)
+  {
+    // Create the args
+    std::vector<llvm::Type *> gep_fcn_type_args;
+    gep_fcn_type_args.push_back(i32_type);
+    gep_fcn_type_args.push_back(i8_ptr_type);
+    gep_fcn_type_args.push_back(i8_ptr_type);
+    gep_fcn_type_args.push_back(i64_type);
+    // Create the function type
+    auto gep_fcn_type = llvm::FunctionType::get(
+        void_type,
+        gep_fcn_type_args,
+        false);
+    // Create the function
+    llvm::Function::Create(gep_fcn_type,
+        llvm::GlobalValue::ExternalLinkage,
+        GEPInstName, &m);
   }
 
   // VisitInst(i32 val_id, i8 *ptr)
@@ -1018,9 +1109,15 @@ llvm::AliasAnalysis::AliasResult DynPtstoAA::alias(
     return NoAlias;
   }
 
-  if (!pts1.intersectsIgnoring(pts2, ObjectMap::NullObjectValue)) {
+  if (!pts1.intersectsIgnoring(pts2, ObjectMap::NullValue)) {
     return NoAlias;
   }
+
+  /*
+  llvm::dbgs() << "alias? pts:\n";
+  llvm::dbgs() << "  " << pts1 << "\n";
+  llvm::dbgs() << "  " << pts2 << "\n";
+  */
 
   return AliasAnalysis::alias(L1, L2);
 }

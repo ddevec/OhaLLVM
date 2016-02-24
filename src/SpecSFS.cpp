@@ -71,6 +71,11 @@ static llvm::cl::opt<std::string>
       llvm::cl::desc("if set specsfs will print the ptsto set for this global"
         " at the end of execution"));
 
+static llvm::cl::list<int32_t> //  NOLINT
+  id_print("specsfs-print-id",
+      llvm::cl::desc("Specifies IDs to print the nodes of before andersens "
+        "runs"));
+
 // Error handling functions {{{
 // Don't warn about this (if it is an) unused function... I'm being sloppy
 [[ gnu::unused ]]
@@ -288,6 +293,32 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     //}}}
   }
 
+  for (auto pid : id_print) {
+    // DEBUG {{{
+    llvm::dbgs() << "Print ptsto for value: " << pid << "\n";
+    ObjectMap::ObjID id(pid);
+    auto rep_id = omap.getRep(id);
+
+    auto &pts_set_vec = pts_top_.atVec(rep_id);
+
+
+    llvm::dbgs() << "pts_top[" << rep_id << "]: " << ValPrint(rep_id) <<
+      "\n";
+
+    for (uint32_t i = 0; i < pts_set_vec.size(); i++) {
+      llvm::dbgs() << "  Offset: " << i << "\n";
+
+      auto &ptsto = pts_set_vec[i];
+
+      std::for_each(ptsto.cbegin(), ptsto.cend(),
+          [&omap] (const ObjectMap::ObjID obj_id) {
+        llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
+            << "\n";
+      });
+    }
+    //}}}
+  }
+
   if (fcn_name != "") {
     // DEBUG {{{
     auto fcn = m.getFunction(fcn_name);
@@ -297,7 +328,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     std::for_each(fcn->arg_begin(), fcn->arg_end(),
         [this, &omap] (const llvm::Argument &arg) {
       if (llvm::isa<llvm::PointerType>(arg.getType())) {
-        auto val_id = omap.getValue(&arg);
+        auto val_id = omap.getValueRep(&arg);
         auto &pts_set_vec = pts_top_.atVec(val_id);
 
         llvm::dbgs() << "pts_top[" << val_id << "]: " << ValPrint(val_id) <<
@@ -321,16 +352,11 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     std::for_each(inst_begin(fcn), inst_end(fcn),
         [this, &omap] (llvm::Instruction &inst) {
       if (llvm::isa<llvm::PointerType>(inst.getType())) {
-        auto val_id = omap.getValue(&inst);
+        auto val_id = omap.getValueRep(&inst);
         auto &pts_set_vec = pts_top_.atVec(val_id);
 
         llvm::dbgs() << "pts_top[" << val_id << "]: " << inst <<
           "\n";
-
-        if (omap.valueAtID(val_id) != &inst) {
-          llvm::dbgs() << "--have value remap: " << inst << " -> " <<
-              *omap.valueAtID(val_id) << "\n";
-        }
 
         for (uint32_t i = 0; i < pts_set_vec.size(); i++) {
           llvm::dbgs() << "  Offset: " << i << "\n";
@@ -660,7 +686,7 @@ llvm::AliasAnalysis::AliasResult SpecSFS::alias(const Location &L1,
   // Check to see if the two pointers are known to not alias.  They don't alias
   // if their points-to sets do not intersect.
   if (!pts1.front().intersectsIgnoring(pts2.front(),
-        ObjectMap::NullObjectValue)) {
+        ObjectMap::NullValue)) {
     return NoAlias;
   }
 
