@@ -2656,7 +2656,7 @@ bool addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
         // FIXME: Should add assert that the if should only be skipped in
         //   instances of DCE
         if (cfg.hasFunctionStart(fcn_id)) {
-          llvm::dbgs() << "Adding cfg edge!\n";
+          // llvm::dbgs() << "Adding cfg edge!\n";
           auto fcn_start_id = cfg.getFunctionStart(fcn_id);
           cfg.addPred(fcn_start_id, call_id);
 

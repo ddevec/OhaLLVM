@@ -151,6 +151,9 @@ SpecSFS::addDynPtstoInfo(llvm::Module &m, DUG &,
                   if (ca.costIsLow(approx_deps)) {
                     auto &dyn_bmp = top_level_constraints[val_id];
                     for (auto cons : ptsto) {
+                      // NOTE: The dyn ptsto is now field sensitive, so we're
+                      //   good here
+                      /*
                       auto pr = omap.findObjAliases(cons);
 
                       if (pr.first) {
@@ -158,6 +161,7 @@ SpecSFS::addDynPtstoInfo(llvm::Module &m, DUG &,
                           dyn_bmp.set(field.val());
                         }
                       }
+                      */
 
                       dyn_bmp.set(cons.val());
                     }

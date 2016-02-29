@@ -65,6 +65,13 @@ static llvm::cl::opt<bool>
         "Verifies the calculated points-to set is a superset of the dynamic "
         "points-to to"));
 
+static llvm::cl::opt<bool>
+  do_spec_alias_check("specsfs-do-alias-test", llvm::cl::init(false),
+      llvm::cl::value_desc("bool"),
+      llvm::cl::desc(
+        "finds missing alias information between specsfs and the dynamic "
+        "points-to"));
+
 static llvm::cl::opt<std::string>
   glbl_name("specsfs-debug-glbl", llvm::cl::init(""),
       llvm::cl::value_desc("string"),
@@ -447,6 +454,69 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     for (int i = 0; i < 10; i++) {
       llvm::dbgs() << "  [" << i << "]:  " << num_objects[i] << "\n";
     }
+    //}}}
+  }
+
+  // Determine what aliases
+  if (do_spec_alias_check) {
+    // DEBUG {{{
+    auto &dyn_ptsto = getAnalysis<DynPtstoLoader>();
+
+    size_t num_checks = 0;
+    size_t num_alias = 0;
+
+    // Randomly select an id from the objid pool
+    std::mt19937 rng;
+    // rng.seed(std::random_device()());
+    rng.seed(1);
+    std::uniform_int_distribution<std::mt19937::result_type>
+      dist(1, omap.size());
+
+    // Go for up to ~16mill checks
+    while (num_alias < 10 && num_checks < 1<<24) {
+      num_checks++;
+      ObjectMap::ObjID base_id(dist(rng));
+      base_id = omap.getRep(base_id);
+      if (omap.valueAtID(base_id) == nullptr) {
+        continue;
+      }
+
+      // Then, randomly select another to see if it aliases
+
+      auto alias_id = base_id;
+
+      while (alias_id == base_id || omap.valueAtID(alias_id) == nullptr) {
+        alias_id = ObjectMap::ObjID(dist(rng));
+        alias_id = omap.getRep(alias_id);
+      }
+
+      auto v1 = omap.valueAtID(base_id);
+      auto v2 = omap.valueAtID(alias_id);
+      Location l1(v1, 1);
+      Location l2(v2, 1);
+      // If dyn-aa and SpecSFS disagree, report the disagreement
+      if (alias(l1, l2) != NoAlias && dyn_ptsto.noAlias(v1, v2)) {
+        num_alias++;
+        auto &sfs_v1_ptsto = pts_top_.at(base_id);
+        auto &sfs_v2_ptsto = pts_top_.at(alias_id);;
+
+        auto &dyn_v1_ptsto = dyn_ptsto.getPtsto(v1);
+        auto &dyn_v2_ptsto = dyn_ptsto.getPtsto(v2);
+
+        llvm::dbgs() << "Found alias inaccuracy between:\n";
+        llvm::dbgs() << "  " << FullValPrint(base_id) << "\n";
+        llvm::dbgs() << "    sfs: " << sfs_v1_ptsto << "\n";
+        llvm::dbgs() << "    dyn: " << dyn_v1_ptsto << "\n";
+        llvm::dbgs() << "  " << FullValPrint(alias_id) << "\n";
+        llvm::dbgs() << "    sfs: " << sfs_v2_ptsto << "\n";
+        llvm::dbgs() << "    dyn: " << dyn_v2_ptsto << "\n";
+        // Then the intersection of the specsfs sets
+        llvm::dbgs() << "  SFS INTERSECTION:\n";
+        llvm::dbgs() << "  " << (sfs_v1_ptsto & sfs_v2_ptsto) << "\n";
+      }
+    }
+
+    llvm::dbgs() << "num_aliases found: " << num_alias << "\n";
     //}}}
   }
 

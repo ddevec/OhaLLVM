@@ -2,7 +2,7 @@
  * Copyright (C) 2015 David Devecsery
  */
 
-#define SPECSFS_DEBUG
+// #define SPECSFS_DEBUG
 // #define SPECANDERS_DEBUG
 // #define SPECSFS_LOGDEBUG
 

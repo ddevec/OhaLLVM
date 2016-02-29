@@ -36,6 +36,12 @@ class AddrRange {
         end_(reinterpret_cast<intptr_t>(addr)+size),
         baseAddr_(addr) { }
 
+    AddrRange(const AddrRange &) = default;
+    AddrRange(AddrRange &&) = default;
+
+    AddrRange &operator=(AddrRange &&) = default;
+    AddrRange &operator=(const AddrRange &) = default;
+
     bool overlaps(const AddrRange &tmp) const {
       return (
           // -1 on end b/c it is exclusive
@@ -63,6 +69,14 @@ class AddrRange {
 
     void *base() const {
       return baseAddr_;
+    }
+
+    void *addr() const {
+      return reinterpret_cast<void *>(start_);
+    }
+
+    void *endAddr() const {
+      return reinterpret_cast<void *>(end_);
     }
 
     AddrRange split(intptr_t offs) {
@@ -97,9 +111,16 @@ class AddrRange {
 class AddressValue {
  public:
   AddressValue() = default;
-  explicit AddressValue(int32_t obj_id) : AddressValue(obj_id, false) { }
-  explicit AddressValue(int32_t obj_id, bool gep) : objs_(1, obj_id),
-        gep_(gep) { }
+  explicit AddressValue(int32_t &obj_id) :
+    AddressValue(std::vector<int32_t>(1, obj_id), 0, false) { }
+  explicit AddressValue(const std::vector<int32_t> &obj_ids) :
+    AddressValue(obj_ids, 0, false) { }
+  explicit AddressValue(const std::vector<int32_t> obj_ids,
+      int32_t offs, bool gep) :
+    objs_(obj_ids), gep_(gep) {
+      std::transform(std::begin(objs_), std::end(objs_), std::begin(objs_),
+          [offs] (int32_t id) { return id + offs; });
+    }
 
   void addId(int32_t id) {
     objs_.push_back(id);
@@ -109,24 +130,19 @@ class AddressValue {
     return gep_;
   }
 
-  void setGep(int32_t new_id, bool force_gep) {
+  void setGep(int32_t offs, bool force_gep) {
     assert(!gep_);
-    assert(size() == 1);
     gep_ = force_gep;
 
-    objs_[0] = new_id;
+    std::transform(std::begin(objs_), std::end(objs_), std::begin(objs_),
+        [offs] (int32_t id) { return id + offs; });
   }
 
   size_t size() const {
     return objs_.size();
   }
 
-  int32_t id() const {
-    assert(objs_.size() == 1);
-    return objs_[0];
-  }
-
-  const std::vector<int32_t> ids() const {
+  const std::vector<int32_t> &ids() const {
     return objs_;
   }
 
@@ -166,7 +182,7 @@ std::map<void *, std::pair<size_t, size_t>> longjmps;  // NOLINT
 
 // GEP support
 // static std::unordered_map<void *, std::vector<AddrRange *>> base_locs;
-static std::unordered_multimap<void *, const AddrRange *> base_locs;
+static std::unordered_multimap<void *, void *> base_locs;
 
 extern "C" {
 
@@ -214,11 +230,12 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
     void *addr);
 void __DynPtsto_main_init2(int32_t obj_id, int32_t argv_dest_id,
     int argc, char **argv) {
-  for (int i = 0; i < argc; i++) {
+  int i = 0;
+  for (i = 0; i < argc; i++) {
     __DynPtsto_do_malloc(argv_dest_id, (strlen(argv[i])+1)*8, argv[i]);
   }
 
-  __DynPtsto_do_malloc(obj_id, (sizeof(*argv)*argc+1)*8, argv);
+  __DynPtsto_do_malloc(obj_id, (sizeof(*argv)*(argc+1))*8, argv);
 }
 
 void __DynPtsto_main_init3(int32_t obj_id, int32_t argv_dest_id,
@@ -228,7 +245,10 @@ void __DynPtsto_main_init3(int32_t obj_id, int32_t argv_dest_id,
   for (i = 0; envp[i] != nullptr; i++) {
     __DynPtsto_do_malloc(argv_dest_id, (strlen(envp[i])+1)*8, envp[i]);
   }
-  __DynPtsto_do_malloc(obj_id, (sizeof(*envp)*i)*8, envp);
+  // Also do for the nullptr
+  __DynPtsto_do_malloc(argv_dest_id, (1)*8, envp[i]);
+
+  __DynPtsto_do_malloc(obj_id, (sizeof(*envp)*(i+1))*8, envp);
 
   // Do std init
   __DynPtsto_main_init2(obj_id, argv_dest_id, argc, argv);
@@ -242,19 +262,37 @@ void __DynPtsto_do_call() {
 
 void __DynPtsto_do_gep(int32_t offs, void *base_addr,
     void *res_addr, int64_t size) {
+  static uint64_t gep_count = 0;
+
+  gep_count++;
+
+  if (gep_count % 30000 == 0) {
+    std::cerr << "gep count: " << gep_count << std::endl;
+  }
+
   size /= 8;
   // Get the current field at the res_addr
+  /*
   std::cout << "gep: " << offs << ", " << res_addr << ", " <<
       size << std::endl;
+  */
   auto it = addr_to_objid.find(AddrRange(res_addr));
   if (it == std::end(addr_to_objid)) {
     std::cerr << "WARNING: gep addr not found: " << res_addr << "\n";
     return;
   }
   auto addr = it->first;
-  std::cout << "  addr: " << addr << std::endl;
+  // std::cout << "  addr: " << addr << std::endl;
 
-  auto base_id = addr_to_objid.at(AddrRange(base_addr)).id();
+  auto base_it = addr_to_objid.find(AddrRange(base_addr));
+
+  if (base_it == std::end(addr_to_objid)) {
+    std::cerr << "WARNING: BASE addr not found: " << base_addr << "\n";
+    std::cerr << "         gep addr: " << res_addr << "\n";
+    return;
+  }
+
+  auto base_ids = base_it->second.ids();
 
   bool force_gep = (offs != 0);
 
@@ -265,136 +303,125 @@ void __DynPtsto_do_gep(int32_t offs, void *base_addr,
   auto hint_it = it;
   ++hint_it;
 
-  // Split the address into 2 parts
-
-  // This happens if we're looking up an addr that already has a top-level ptsto
-  // In this instance, we don't do the first split, instead we assign second to
-  // be equal to addr;
-  if (reinterpret_cast<intptr_t>(res_addr) == addr.start()) {
-    if (!it->second.gep()) {
-      it->second.setGep(base_id + offs, force_gep);
-    }
-    // Check if we need a third
-    if (addr.end() != addr.start() + size) {
-      // it->second.setGep(offs);
-      // Update the id of the GEP range
-      assert(it->second.size() == 1);
-
-      auto new_addr = addr;
-      auto third = new_addr.split(
-          reinterpret_cast<intptr_t>(new_addr.start() + size));
-      assert(new_addr.base() == third.base());
-
-      std::cout << "  new_addr: " << new_addr << " -> " <<
-        base_id + offs << std::endl;
-      std::cout << "    new_addr range: " << it->first << std::endl;
-      std::cout << "  third: " << third << " -> " << base_id << std::endl;
-
-      // Second (res_addr, res_addr+size-1) is id + offs
-      assert(it->second.size() == 1);
-      addr_to_objid.erase(it);
-      addr_to_objid.emplace_hint(hint_it, new_addr,
-          AddressValue(base_id + offs, force_gep));
-      auto a1_it = addr_to_objid.emplace_hint(hint_it,
-          third, AddressValue(base_id));
-
-      // Update the free_map, add res_addr, and res_addr+size
-      base_locs.emplace_hint(base_hint, reinterpret_cast<void *>(third.base()),
-          &a1_it->first);
-    }
-  } else {
+  intptr_t pos = reinterpret_cast<intptr_t>(res_addr);
+  intptr_t max_pos = reinterpret_cast<intptr_t>(res_addr) + size;
+  // std::cout << "init pos: " << reinterpret_cast<void *>(pos) << std::endl;
+  // First, check if we have a lower half to split off
+  if (addr.start() < pos) {
     // First (base, res_addr-1) is old_id
     // Note, we've already taken care of this
     auto new_addr = addr;
-    auto second = new_addr.split(reinterpret_cast<intptr_t>(res_addr));
-    assert(new_addr.base() == second.base());
+    auto new_end_addr = new_addr.split(reinterpret_cast<intptr_t>(res_addr));
+    // assert(new_addr.base() == second.base());
 
-    assert(it->second.size() == 1);
+    // assert(it->second.size() == 1);
+    /*
+    std::cout << "pre: Replacing: " << it->first << " with " << new_addr <<
+      std::endl;
+    */
     addr_to_objid.erase(it);
     addr_to_objid.emplace_hint(hint_it, new_addr,
-        AddressValue(base_id));
+        AddressValue(base_ids));
 
-    // If we've already covered this address, we're done
-    if (second.start() != second.end()) {
-      std::cout << "  new addr: " << it->first << " -> " << it->second.id()
-        << std::endl;
+    // std::cout << "pre: Inserting: " << new_end_addr << std::endl;
+    auto new_addr_it = addr_to_objid.emplace_hint(hint_it, new_end_addr,
+        AddressValue(base_ids));
 
-      // Second (res_addr, res_addr+size-1) is id + offs
-      auto a1_it = addr_to_objid.emplace_hint(hint_it,
-          second, AddressValue(base_id + offs, force_gep));
-      assert(a1_it->first == second);
-      assert(a1_it->second.id() == base_id + offs);
+    /*
+    std::cout << "pre: base_locs: " << addr.base() << "gains: " <<
+      new_addr_it->first.addr() << std::endl;
+    */
+    base_locs.emplace_hint(base_hint,
+        reinterpret_cast<void *>(addr.base()),
+        new_addr_it->first.addr());
 
-      std::cout << "  new second: " << a1_it->first << " -> " <<
-        a1_it->second.id() << std::endl;
-      // Update the free_map, add res_addr, and res_addr+size
-      base_locs.emplace_hint(base_hint, reinterpret_cast<void *>(second.base()),
-          &a1_it->first);
+    pos = new_addr.end();
+    /*
+    std::cout << "before pos: " << reinterpret_cast<void *>(pos) << std::endl;
+    */
+  }
 
-      if (second.start() + size != second.end()) {
-        auto new_second = a1_it->first;
-        auto third = new_second.split(second.start() + size);
-        assert(new_second.base() == third.base());
-        std::cout << "  second: " << new_second << " -> " << base_id + offs
-          << std::endl;
+  int itr = 0;
+  do {
+    assert(itr < 16);
+    itr++;
+    /*
+    std::cout << "int: find on: " << reinterpret_cast<void *>(pos) << std::endl;
+    */
+    auto addr_it = addr_to_objid.find(
+        AddrRange(reinterpret_cast<void *>(pos)));
 
-        std::cout << "  third: " << third << " -> " << base_id <<
-          std::endl;
-
-        // Third (res_addr+size, base_end) is old_id
-        addr_to_objid.erase(a1_it);
-        addr_to_objid.emplace_hint(hint_it,
-            new_second, AddressValue(base_id + offs, force_gep));
-
-        auto a2_it = addr_to_objid.emplace_hint(hint_it,
-            third, AddressValue(base_id));
-        base_locs.emplace_hint(base_hint,
-            reinterpret_cast<void *>(third.base()),
-            &a2_it->first);
-      } else {
-       std::cout << "  second: " << second << " -> " <<
-         (base_id + offs) << std::endl;
-      }
-    } else {
-      // std::cout << "  sanity addr: " << addr << std::endl;
+    // assert(addr_it != std::end(addr_to_objid));
+    if (addr_it == std::end(addr_to_objid)) {
+      std::cerr << "WARNING: Use of unmapped addr: " <<
+        reinterpret_cast<void *>(pos) << std::endl;
+      break;
     }
-  }
 
-  /*
-  intptr_t new_addr = reinterpret_cast<intptr_t>(res_addr) & (~(intptr_t)0xFFF);
-  new_addr |= 0x210;
+    // Split if too large
+    /*
+    std::cout << "start addr: " << addr_it->first << std::endl;
+    std::cout << "max_pos: " << reinterpret_cast<void *>(max_pos) << std::endl;
+    */
+    if (addr_it->first.end() > max_pos) {
+      auto new_addr = addr_it->first;
+      auto new_end_addr = new_addr.split(max_pos);
+      assert(new_addr.end() == max_pos);
 
-  auto new_it = addr_to_objid.find(
-      AddrRange(reinterpret_cast<void *>(new_addr)));
-  if (new_it != std::end(addr_to_objid)) {
-    std::cout << "  obj at new_addr: " <<
-      new_it->second.id() << std::endl;
+      /*
+      std::cout << "int: Replacing: " << addr_it->first << " with " <<
+        new_addr << std::endl;
+      std::cout << "int: Inserting: " << new_end_addr << std::endl;
+      */
+      assert(new_addr.end() == max_pos);
+      addr_to_objid.erase(addr_it);
+      auto pr_e = addr_to_objid.emplace(new_end_addr,
+          AddressValue(base_ids));
+      assert(pr_e.second);
+      auto new_addr_it = pr_e.first;
+      assert(new_addr_it != std::end(addr_to_objid));
 
-    std::cout << "  range at new_addr: " <<
-      new_it->first << std::endl;
-  }
-  */
+      /*
+      addr_it = addr_to_objid.emplace_hint(new_addr_it, new_addr,
+          AddressValue(base_ids));
+      */
+      auto pr = addr_to_objid.emplace(new_addr,
+          AddressValue(base_ids));
+      assert(pr.second);
+      addr_it = pr.first;
+      assert(addr_it != std::end(addr_to_objid));
+      assert(addr_it->first.end() == max_pos);
+      assert(addr_it->first == new_addr);
 
-  std::cout << "  obj at res_addr (" << res_addr << "): " <<
-    addr_to_objid.at(AddrRange(res_addr)).id() << std::endl;
+      assert(addr_to_objid.find(AddrRange(new_addr.addr())) !=
+          std::end(addr_to_objid));
 
-  std::cout << "  obj at base_addr(" << base_addr << "): " <<
-    addr_to_objid.at(AddrRange(base_addr)).id() << std::endl;
+      assert(new_addr.end() == max_pos);
+      /*
+      std::cout << "new addr end: " << new_addr.endAddr() << std::endl;
 
-  /*
-  if (addr_to_objid.at(AddrRange(res_addr)).front() !=
-      (addr_to_objid.at(AddrRange(base_addr)).front() + offs)) {
-    std::cout << "res_addr: " << res_addr << std::endl;
-    std::cout << "obj at res_addr: " <<
-      addr_to_objid.at(AddrRange(res_addr)).front() << std::endl;
+      std::cout << "int: base_locs: " << new_end_addr.base() << " gains: " <<
+        new_end_addr.addr() << std::endl;
+      */
+      base_locs.emplace_hint(base_hint,
+          reinterpret_cast<void *>(new_end_addr.base()),
+          new_end_addr.addr());
+    }
 
-    std::cout << "base_addr: " << res_addr << std::endl;
-    std::cout << "obj at base_addr: " <<
-      addr_to_objid.at(AddrRange(base_addr)).front() << std::endl;
+    // do gep on addr_it
+    if (!addr_it->second.gep()) {
+      addr_it->second.setGep(offs, force_gep);
+    }
 
-    abort();
-  }
-  */
+    /*
+    std::cout << "old_pos: " << reinterpret_cast<void *>(pos) << std::endl;
+    std::cout << "addr_it->first.end(): " << addr_it->first.endAddr()
+      << std::endl;
+    */
+    pos = addr_it->first.end();
+    // Pos should not be greater than max pos at this point
+    assert(!(pos > max_pos));
+  } while (pos < max_pos);
 }
 
 
@@ -423,7 +450,8 @@ void __DynPtsto_do_alloca(int32_t obj_id, int64_t size,
     std::cerr << std::endl;
   }
 
-  base_locs.emplace(addr, &(ret.first->first));
+  // std::cout << "base_locs alloca: " << ret.first->first << std::endl;
+  base_locs.emplace(addr, ret.first->first.addr());
   assert(ret.second);
 }
 
@@ -432,12 +460,20 @@ static bool do_free_addr(void *addr) {
 
   bool ret = false;
 
+  int count = 0;
   std::for_each(pr.first, pr.second,
-      [&ret] (std::pair<void * const, const AddrRange *> &pr_it) {
-    auto &range = *pr_it.second;
+      [&ret, &count, &pr]
+      (std::pair<void * const, void *> &pr_it) {
+    count++;
+    auto free_addr = pr_it.second;
     // std::cout << "popping: " << addr << std::endl;
-    ret |=
-      (addr_to_objid.erase(range) != 1);
+    auto rc = (addr_to_objid.erase(AddrRange(free_addr)) != 1);
+    if (rc) {
+      std::cout << "do_free failed on: " << free_addr << std::endl;
+      std::cout << "   range is: " << count << " of " <<
+          std::distance(pr.first, pr.second) << std::endl;
+    }
+    ret |= rc;
   });
 
   base_locs.erase(pr.first, pr.second);
@@ -531,13 +567,17 @@ void __DynPtsto_do_longjmp(int32_t id, void *addr) {
 
 void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
     void *addr) {
+  /*
   std::cout << "do_malloc: " << obj_id << ", " << size << ", " <<
     addr << std::endl;
+  */
   // Size is in bits...
   size /= 8;
 
+  /*
   std::cout << "do_malloc (bytes): " << obj_id << ", " << size << ", " <<
     addr << std::endl;
+  */
 
   // Add ptsto to map
   /*
@@ -554,11 +594,12 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
 
   auto ret = addr_to_objid.emplace(cur_range,
       AddressValue());
-  std::cout << "  do_malloc range: " << cur_range << std::endl;
+  // std::cout << "  do_malloc range: " << cur_range << std::endl;
 
   // If we overlap, but are not equal
   // XXX:  Should only happen for globals, so I'm ignoring this in base_loc
   // calcualtions
+  // bool glbl = false;
   while (!ret.second && ret.first->first.overlaps(cur_range)) {
     if (addr == nullptr) {
       return;
@@ -577,9 +618,18 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
     // std::cerr << "new range is: " << ret.first->first << std::endl;
     addr_to_objid.erase(ret.first);
     ret = addr_to_objid.emplace(new_range, std::move(vec));
+    // glbl = true;
   }
 
-  base_locs.emplace(addr, &ret.first->first);
+  /*
+  if (glbl) {
+    std::cout << "base_locs malloc (glbl): " << ret.first->first << std::endl;
+  } else {
+    std::cout << "base_locs malloc: (" << obj_id << ") " <<
+      ret.first->first << std::endl;
+  }
+  */
+  base_locs.emplace(addr, ret.first->first.addr());
 
   ret.first->second.addId(obj_id);
   assert(ret.second);
@@ -594,17 +644,21 @@ void __DynPtsto_do_free(void *addr) {
 }
 
 void __DynPtsto_do_visit(int32_t val_id, void *addr) {
+  /*
   if (val_id == 6251) {
     std::cout << "Visit on: " << val_id << " : " << addr << std::endl;
   }
+  */
   // Record that this val_id pts to this addr
   auto it = addr_to_objid.find(AddrRange(addr));
   if (it != std::end(addr_to_objid)) {
     for (int32_t obj_id : it->second) {
+      /*
       if (val_id == 6251) {
         std::cout << "   got id: " << obj_id << " at: " <<
           it->first << std::endl;
       }
+      */
       valid_to_objids[val_id].insert(obj_id);
     }
   } else {

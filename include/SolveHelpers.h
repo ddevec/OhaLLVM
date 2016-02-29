@@ -252,6 +252,18 @@ class PtstoSet {
       return ptsto_ != rhs.ptsto_;
     }
 
+    bool operator&=(const PtstoSet &rhs) {
+      return ptsto_ &= rhs.ptsto_;
+    }
+
+    PtstoSet operator&(const PtstoSet &rhs) const {
+      PtstoSet ret(*this);
+
+      ret &= rhs;
+
+      return ret;
+    }
+
     bool operator|=(const PtstoSet &rhs) {
       bool ch = ptsto_.orWithIntersect(rhs.ptsto_, dynPtsto_.get());
 
