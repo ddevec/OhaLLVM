@@ -178,6 +178,7 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
       std::vector<llvm::Instruction *> free_list;
       std::vector<llvm::Instruction *> setjmp_list;
       std::vector<llvm::Instruction *> jmp_list;
+      std::vector<llvm::CallInst *> call_list;
       std::vector<llvm::GetElementPtrInst *> gep_list;
 
       // Also create list for all pointer values
@@ -212,6 +213,9 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
                 fcn->getName() == "siglongjmp") {
               jmp_list.push_back(&inst);
             }
+          // If fcn is unknown:
+          } else {
+            call_list.push_back(ci);
           }
         // Add stack deallocation
         } else if (llvm::isa<llvm::ReturnInst>(&inst)) {
@@ -281,8 +285,11 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
         auto val_id = omap.getValue(val);
 
         // Make the call
-        auto i8_ptr_val = new llvm::BitCastInst(val, i8_ptr_type);
-        i8_ptr_val->insertAfter(val);
+        auto i8_ptr_val = val;
+        if (val->getType() != i8_ptr_type) {
+          i8_ptr_val = new llvm::BitCastInst(val, i8_ptr_type);
+          i8_ptr_val->insertAfter(val);
+        }
 
         std::vector<llvm::Value *> args;
         args.push_back(llvm::ConstantInt::get(i32_type, val_id.val()));
@@ -436,6 +443,38 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
           malloc_inst_call->insertAfter(i8_ptr_val);
         } else {
           malloc_inst_call->insertAfter(after);
+        }
+      }
+
+      // We need to add objid updates to call instructions with constant
+      // expression arguments -- they may define new nodes which could be
+      // queries
+      // Cannonical example:
+      //    %call = call %(constexpr gep GLOBAL_FCN_TABLE 0 8) (args)
+      // Call instructions
+      for (auto ci : call_list) {
+        llvm::CallSite cs(ci);
+        if (auto c = dyn_cast<llvm::Constant>(cs.getCalledValue())) {
+          auto cons_pr = omap.getConstValue(c);
+          // Add call if needed:
+          if (cons_pr.first) {
+            auto val = c;
+            auto val_id = cons_pr.second;
+
+            // Make the call
+            auto i8_ptr_val = val;
+            if (val->getType() != i8_ptr_type) {
+              i8_ptr_val = llvm::ConstantExpr::getBitCast(val, i8_ptr_type);
+            }
+
+            std::vector<llvm::Value *> args;
+            args.push_back(llvm::ConstantInt::get(i32_type, val_id.val()));
+            args.push_back(i8_ptr_val);
+
+            // Create the call inst, we do before CI as the constexpr exists
+            //   here
+            llvm::CallInst::Create(visit_fcn, args, "", ci);
+          }
         }
       }
 

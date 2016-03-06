@@ -457,6 +457,84 @@ class ObjectMap {
     return ret;
   }
 
+  ObjID getConstRep(const llvm::Constant *c) {
+    auto nextId = getNextID();
+    auto ret_pr = consToID_.emplace(c, nextId);
+
+    // If the element didn't exist in our map, update the mappings
+    if (ret_pr.second) {
+      llvm::dbgs() << "Creating Mapping: " << *c << " -> " << nextId << "\n";
+      createMapping(c, nextId);
+    }
+
+    // Return either the emplaced value, or the value that used to live there
+    return getRep(ret_pr.first->second);
+  }
+
+  // Returns pair<bool, objid>
+  //   bool - If have meaningful constant value (ex gep)
+  //   objid - constant id
+  std::pair<bool, ObjectMap::ObjID>
+  getConstValue(const llvm::Constant *c) {
+    if (llvm::isa<const llvm::ConstantPointerNull>(c) ||
+        llvm::isa<const llvm::UndefValue>(c)) {
+      return std::make_pair(false, ObjectMap::NullValue);
+    } else if (auto gv = dyn_cast<llvm::GlobalValue>(c)) {
+      return std::make_pair(false, getValueRep(gv));
+    } else if (auto ce = dyn_cast<llvm::ConstantExpr>(c)) {
+      switch (ce->getOpcode()) {
+        case llvm::Instruction::GetElementPtr:
+          {
+            // Need to calc offset here...
+            // But this encounters obj vs value issues...
+
+            auto obj_id = getConstRep(c);
+
+            return std::make_pair(false, obj_id);
+
+            /*
+            return ObjectMap::getOffsID(obj_id, offs);
+            */
+          }
+        case llvm::Instruction::IntToPtr:
+          // assert(0);
+          // llvm::dbgs() << "getConstValue returns IntValue\n";
+          return std::make_pair(false, ObjectMap::IntValue);
+        case llvm::Instruction::PtrToInt:
+          llvm::dbgs() << __LINE__ << ": getConstValue returns IntValue\n";
+          assert(0);
+          return std::make_pair(false, ObjectMap::IntValue);
+        case llvm::Instruction::BitCast:
+          {
+            auto base_pr = getConstValue(ce->getOperand(0));
+            // Now, if we cast from a struct to a non-struct, we need to merge
+            //   nodes...
+
+            return std::make_pair(false, base_pr.second);
+          }
+        default:
+          llvm::errs() << "Const Expr not yet handled: " << *ce << "\n";
+          llvm_unreachable(0);
+      }
+    } else if (llvm::isa<llvm::ConstantInt>(c)) {
+      // llvm::dbgs() << __LINE__ << ": getConstValue returns IntValue\n";
+      // assert(0);
+      return std::make_pair(false, ObjectMap::IntValue);
+    } else {
+      llvm::errs() << "Const Expr not yet handled: " << *c << "\n";
+      llvm_unreachable("Unknown constant expr ptr");
+    }
+  }
+
+  ObjID getValOrConstRep(const llvm::Value *v) {
+    if (auto c = dyn_cast<llvm::Constant>(v)) {
+      auto c_pr = getConstValue(c);
+      return getRep(c_pr.second);
+    }
+
+    return getValueRep(v);
+  }
+
   // Return for a function
   ObjID getValueReturn(const llvm::Value *val) const {
     return __do_get(val, retToID_);
@@ -516,17 +594,6 @@ class ObjectMap {
     auto ret = getRep(id);
     return ret;
   }
-
-  // ddevec -- FIXME: Does this really belong here?
-  /*
-  ObjID getConstValue(const llvm::Constant *C) {
-    return __const_node_helper(C, &ObjectMap::getValue, NullValue);
-  }
-
-  ObjID getConstValueTarget(const llvm::Constant *C) {
-    return __const_node_helper(C, &ObjectMap::getObject, NullObjectValue);
-  }
-  */
 
   std::pair<Type, const llvm::Value *>
   getValueInfo(ObjID id) const;
@@ -796,6 +863,7 @@ class ObjectMap {
   std::unordered_map<const llvm::Value *, ObjID> objToID_;
   std::unordered_map<const llvm::Value *, ObjID> retToID_;
   std::unordered_map<const llvm::Value *, ObjID> vargToID_;
+  std::unordered_map<const llvm::Value *, ObjID> consToID_;
 
   util::SparseBitmap<ObjID> objSet_;
   ObjID maxObj_ = ObjID::invalid();
@@ -849,6 +917,7 @@ class ObjectMap {
     __remap_valToID(remap, objToID_);
     __remap_valToID(remap, retToID_);
     __remap_valToID(remap, vargToID_);
+    __remap_valToID(remap, consToID_);
 
     // Now the idToVal_ mappings
     __remap_idToVal(remap, idToVal_);
@@ -917,6 +986,11 @@ class ObjectMap {
 
   ObjID createMapping(const llvm::Value *val) {
     ObjID ret = getNextID();
+    return createMapping(val, ret);
+  }
+
+  ObjID createMapping(const llvm::Value *val, ObjID id) {
+    ObjID ret = id;
     mapping_.emplace_back(val);
     if_debug_enabled(auto rep_id =)
       reps_.add();

@@ -841,8 +841,12 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
 
 llvm::AliasAnalysis::AliasResult SpecAnders::alias(const Location &L1,
                                             const Location &L2) {
-  auto obj_id1 = omap_.getValueRep(L1.Ptr);
-  auto obj_id2 = omap_.getValueRep(L2.Ptr);
+  auto v1 = L1.Ptr;
+  auto v2 = L2.Ptr;
+
+  ObjectMap::ObjID obj_id1 = omap_.getValOrConstRep(v1);
+  ObjectMap::ObjID obj_id2 = omap_.getValOrConstRep(v2);
+  // llvm::dbgs() << "v2: " << *v2 << " obj_id2: " << obj_id2 << "\n";
 
   auto &node1 = graph_.getNode(obj_id1);
   auto &node2 = graph_.getNode(obj_id2);

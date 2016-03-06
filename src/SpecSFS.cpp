@@ -718,22 +718,18 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     //}}}
   }
 
-  /*
-  if (alias(Location(nullptr), Location(nullptr)) != MayAlias) {
-    llvm::dbgs() << "?\n";
-  }
-  */
-
   // We do not modify code, ever!
   return false;
 }
 
 llvm::AliasAnalysis::AliasResult SpecSFS::alias(const Location &L1,
                                             const Location &L2) {
-  auto obj_id1 = omap_.getValue(L1.Ptr);
-  auto obj_id2 = omap_.getValue(L2.Ptr);
-  auto rep_id1 = omap_.getRep(obj_id1);
-  auto rep_id2 = omap_.getRep(obj_id2);
+  auto v1 = L1.Ptr;
+  auto v2 = L2.Ptr;
+
+  auto rep_id1 = omap_.getValOrConstRep(v1);
+  auto rep_id2 = omap_.getValOrConstRep(v2);
+
   auto pts1_it = pts_top_.find(rep_id1);
   auto pts2_it = pts_top_.find(rep_id2);
 

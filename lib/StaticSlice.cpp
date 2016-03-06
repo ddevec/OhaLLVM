@@ -13,7 +13,6 @@
 #include "include/DUG.h"
 #include "include/InstLabeler.h"
 #include "include/ObjectMap.h"
-#include "include/SpecSFS.h"
 #include "include/lib/UnusedFunctions.h"
 #include "include/lib/IndirFcnTarget.h"
 #include "include/lib/DynPtsto.h"
@@ -28,6 +27,7 @@
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/ProfileInfo.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/CFG.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/GetElementPtrTypeIterator.h"
@@ -50,14 +50,14 @@ static llvm::cl::opt<bool>
       llvm::cl::desc("Creates slices of \"main\""));
 
 static llvm::cl::opt<bool>
-  do_dyn_pts("slice-do-dyn", llvm::cl::init(false),
-      llvm::cl::value_desc("bool"),
-      llvm::cl::desc("Uses dynamic points-to for slicing"));
-
-static llvm::cl::opt<bool>
   do_rand_slice("slice-do-random", llvm::cl::init(false),
       llvm::cl::value_desc("bool"),
       llvm::cl::desc("Creates random slices"));
+
+static llvm::cl::opt<bool>
+  do_control_flow("slice-no-control-flow", llvm::cl::init(true),
+      llvm::cl::value_desc("bool"),
+      llvm::cl::desc("Disables control-flow tracking for slices"));
 
 static llvm::cl::opt<std::string>
   rand_slice_count_str("slice-random-count", llvm::cl::init("10"),
@@ -75,7 +75,7 @@ class StaticSlice : public llvm::ModulePass {
   StaticSlice() : llvm::ModulePass(ID) { }
 
   void getAnalysisUsage(llvm::AnalysisUsage &usage) const {
-    usage.addRequired<SpecSFS>();
+    usage.addRequired<llvm::AliasAnalysis>();
     usage.addRequired<UnusedFunctions>();
     usage.addRequired<DynPtstoLoader>();
     usage.addRequired<llvm::DominatorTree>();
@@ -83,9 +83,8 @@ class StaticSlice : public llvm::ModulePass {
   }
 
   bool runOnModule(llvm::Module &m) override {
-    auto &sfs = getAnalysis<SpecSFS>();
+    auto &alias = getAnalysis<llvm::AliasAnalysis>();
     dynInfo_ = &getAnalysis<UnusedFunctions>();
-    auto &dyn_pts = getAnalysis<DynPtstoLoader>();
 
     // Create nearest inverse dominator list?
     // The nearest inverse dominator of a bb is its parent in the dom tree
@@ -111,76 +110,132 @@ class StaticSlice : public llvm::ModulePass {
     // First, we need CFG info, calc the callsites for each function here
     // Now, calculate which stores provide each load here:
     // That should be all of our indirection....
-    std::map<ObjectMap::ObjID, std::set<const llvm::Value *>> objid_to_store;
-    std::map<ObjectMap::ObjID, std::set<const llvm::Function *>> objid_to_fcn;
+    std::unordered_map<llvm::Value *, std::set<const llvm::Value *>>
+      load_src_to_store_dest;
+    std::unordered_map<llvm::Value *, std::set<const llvm::Function *>>
+      call_dest_to_fcn;
 
+    // For each store, find all loads which may alias with it
+    // For each load, find all functions which may alias with it
+    std::vector<llvm::Value *> store_dests;
+    std::vector<llvm::Value *> load_srcs;
+    std::vector<llvm::Function *> fcns;
+    std::vector<llvm::Value *> call_dests;
+
+    llvm::dbgs() << "Scanning for instructions\n";
     for (auto &fcn : m) {
-      // We need to fill fcnToCallsite_ and loadToStores_
-
+        if (!dynInfo_->isUsed(fcn)) {
+          continue;
+        }
       // Need to find which fcns an id corresponds to
-      auto fcn_id = sfs.getObjectMap().getObject(&fcn);
-      objid_to_fcn[fcn_id].insert(&fcn);
+      fcns.push_back(&fcn);
 
       // Need to find the ids stored by each store
+      // Need both the indirect function call list, and the list of ids stored
+      //   by each load
       for (auto &bb : fcn) {
+        if (!dynInfo_->isUsed(bb)) {
+          continue;
+        }
         for (auto &inst : bb) {
           if (auto si = dyn_cast<llvm::StoreInst>(&inst)) {
-            auto dest = si->getOperand(1);
-
-
-            if (do_dyn_pts) {
-              auto &ptsto = dyn_pts.getPtsto(dest);
-
-              for (auto pts_id : ptsto) {
-                // Thing to insert...
-                objid_to_store[pts_id].insert(si);
-              }
-            } else {
-              auto &ptsto = sfs.getPtstoSet(dest);
-
-              for (auto pts_id : ptsto) {
-                // Thing to insert...
-                objid_to_store[pts_id].insert(si);
+            // We only care about stores of pointers...
+            if (llvm::isa<llvm::PointerType>(si->getOperand(0)->getType())) {
+              store_dests.push_back(si);
+            // OR if we just cast a ptr to an int...
+            } else if (llvm::ConstantExpr *ce =
+                dyn_cast<llvm::ConstantExpr>(si->getOperand(0))) {
+              if (ce->getOpcode() == llvm::Instruction::PtrToInt) {
+                llvm::dbgs() << "FIXME: unsupported constexpr cast to int"
+                  " then store\n";
               }
             }
-
           } else if (llvm::isa<llvm::ReturnInst>(&inst)) {
             retsOfFunc_[&fcn].insert(&inst);
+          } else if (auto li = dyn_cast<llvm::LoadInst>(&inst)) {
+            load_srcs.push_back(li);
+          } else if (auto ci = dyn_cast<llvm::CallInst>(&inst)) {
+            // Functions without known callsites -- track their args
+            if (LLVMHelper::getFcnFromCall(ci) == nullptr) {
+              llvm::CallSite cs(ci);
+
+              call_dests.push_back(cs.getCalledValue());
+            }
           }
         }
       }
+    }
 
-      // For each inst in fcn:
+    // Now make mappings
+    llvm::dbgs() << "Making load mappings\n";
+    int32_t count = 0;
+    for (auto i : load_srcs) {
+      auto li = cast<llvm::LoadInst>(i);
+      if ((count % 1000) == 0) {
+        llvm::dbgs() << "  count: " << count << " of " <<
+          load_srcs.size() << "\n";
+      }
+      /*
+      if (count == 268) {
+        llvm::dbgs() << "  Load is: " <<
+          li->getParent()->getParent()->getName() << ": " <<
+          li->getParent()->getName() << " - " <<
+          *li << "\n";
+      }
+      */
+      auto load = li->getOperand(0);
+      count++;
+      auto &load_set = load_src_to_store_dest[load];
+      int32_t st_count = 0;
+      for (auto i : store_dests) {
+        auto si = cast<llvm::StoreInst>(i);
+        /*
+        llvm::dbgs() << "    st_count: " << st_count << " of " <<
+          store_dests.size() << "\n";
+        if (st_count == 530) {
+          llvm::dbgs() << "    Store is: " <<
+            si->getParent()->getParent()->getName() << ": " <<
+            si->getParent()->getName() << " - " <<
+            *si << "\n";
+        }
+        */
+
+        auto store = si->getOperand(1);
+        st_count++;
+        if (alias.alias(llvm::AliasAnalysis::Location(load, 1),
+              llvm::AliasAnalysis::Location(store, 1)) !=
+              llvm::AliasAnalysis::NoAlias) {
+          load_set.insert(store);
+        }
+      }
+    }
+
+    count = 0;
+    llvm::dbgs() << "Handling indirect calls\n";
+    for (auto &call : call_dests) {
+      if ((count++ % 1000) == 0) {
+        llvm::dbgs() << "  count: " << count << " of " <<
+          call_dests.size() << "\n";
+      }
+      auto &call_fcn = call_dest_to_fcn[call];
+      for (auto &fcn : fcns) {
+        if (alias.alias(llvm::AliasAnalysis::Location(call, 1),
+              llvm::AliasAnalysis::Location(fcn, 1)) !=
+              llvm::AliasAnalysis::NoAlias) {
+          call_fcn.insert(fcn);
+        }
+      }
+    }
+
+    // For each inst in fcn:
+    llvm::dbgs() << "Setting up internal structures\n";
+    for (auto &fcn : m) {
       for (auto &bb : fcn) {
         for (auto &inst : bb) {
           if (llvm::isa<llvm::LoadInst>(&inst)) {
             // get ptsto of loaded addr
-
-            if (do_dyn_pts) {
-              auto &ptsto = dyn_pts.getPtsto(inst.getOperand(0));
-
-              // for each ptsto
-              for (auto obj_id : ptsto) {
-                // Get the stores associated with this objid (dest)
-                auto &stores = objid_to_store[obj_id];
-                // add those to loadToStores_
-                for (auto st : stores) {
-                  loadToStores_[&inst].insert(st);
-                }
-              }
-            } else {
-              auto &ptsto = sfs.getPtstoSet(inst.getOperand(0));
-
-              // for each ptsto
-              for (auto obj_id : ptsto) {
-                // Get the stores associated with this objid (dest)
-                auto &stores = objid_to_store[obj_id];
-                // add those to loadToStores_
-                for (auto st : stores) {
-                  loadToStores_[&inst].insert(st);
-                }
-              }
-            }
+            loadToStores_[&inst] =
+              load_src_to_store_dest[inst.getOperand(0)];
           }
           // For each call inst, if its indirect, look up what functions it may
           //   point to
@@ -209,64 +264,28 @@ class StaticSlice : public llvm::ModulePass {
               }
               callsiteToFcns_[ci].insert(fcn);
             } else {
-              // Get the set of pointed to ids
-              if (do_dyn_pts) {
-                auto &objs = dyn_pts.getPtsto(cs.getCalledValue());
-
-                for (auto obj_id : objs) {
-                  // Get the functions associated with those ids
-                  for (auto fcn : objid_to_fcn[obj_id]) {
-                    if (!fcn->isDeclaration()) {
-                      auto cs_argi = cs.arg_begin();
-                      auto cs_arge = cs.arg_end();
-                      auto argi = fcn->arg_begin();
-                      auto arge = fcn->arg_end();
-                      // Fill out the argument mappings
-                      for (; cs_argi != cs_arge; ++cs_argi) {
-                        if (argi == arge) {
-                          // llvm::dbgs() << "numoperands != arg count?\n";
-                          break;
-                        }
-                        auto operand = cs_argi->get();
-                        auto &arg = *argi;
-                        ++argi;
-
-                        // Copy operand into argi
-                        fcnToCallsite_[&arg].insert(operand);
-                      }
-
-                      callsiteToFcns_[ci].insert(fcn);
+              // Get the functions associated with those ids
+              for (auto &fcn : call_dest_to_fcn[cs.getCalledValue()]) {
+                if (!fcn->isDeclaration()) {
+                  auto cs_argi = cs.arg_begin();
+                  auto cs_arge = cs.arg_end();
+                  auto argi = fcn->arg_begin();
+                  auto arge = fcn->arg_end();
+                  // Fill out the argument mappings
+                  for (; cs_argi != cs_arge; ++cs_argi) {
+                    if (argi == arge) {
+                      // llvm::dbgs() << "numoperands != arg count?\n";
+                      break;
                     }
+                    auto operand = cs_argi->get();
+                    auto &arg = *argi;
+                    ++argi;
+
+                    // Copy operand into argi
+                    fcnToCallsite_[&arg].insert(operand);
                   }
-                }
-              } else {
-                auto &objs = sfs.getPtstoSet(cs.getCalledValue());
 
-                for (auto obj_id : objs) {
-                  // Get the functions associated with those ids
-                  for (auto fcn : objid_to_fcn[obj_id]) {
-                    if (!fcn->isDeclaration()) {
-                      auto cs_argi = cs.arg_begin();
-                      auto cs_arge = cs.arg_end();
-                      auto argi = fcn->arg_begin();
-                      auto arge = fcn->arg_end();
-                      // Fill out the argument mappings
-                      for (; cs_argi != cs_arge; ++cs_argi) {
-                        if (argi == arge) {
-                          // llvm::dbgs() << "numoperands != arg count?\n";
-                          break;
-                        }
-                        auto operand = cs_argi->get();
-                        auto &arg = *argi;
-                        ++argi;
-
-                        // Copy operand into argi
-                        fcnToCallsite_[&arg].insert(operand);
-                      }
-
-                      callsiteToFcns_[ci].insert(fcn);
-                    }
-                  }
+                  callsiteToFcns_[ci].insert(fcn);
                 }
               }
             }
@@ -275,6 +294,7 @@ class StaticSlice : public llvm::ModulePass {
       }
     }
 
+    llvm::dbgs() << "SLICING\n";
     if (do_rand_slice) {
       InstLabeler lblr(m, dynInfo_);
 
@@ -469,11 +489,13 @@ class StaticSlice : public llvm::ModulePass {
       }
 
       // Also deal w/ control flow info:
-      auto it = dom_.find(pinst->getParent());
-      if (it != std::end(dom_)) {
-        auto dom = it->second;
+      if (do_control_flow) {
+        auto it = dom_.find(pinst->getParent());
+        if (it != std::end(dom_)) {
+          auto dom = it->second;
 
-        ret.push_back(dom->getTerminator());
+          ret.push_back(dom->getTerminator());
+        }
       }
       // If its not an instruction it must be an Argument... (i hope)
     } else if (auto cons = dyn_cast<llvm::Constant>(v)) {

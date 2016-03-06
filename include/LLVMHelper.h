@@ -22,6 +22,9 @@
 
 class LLVMHelper {
  public:
+  // No constructor -- static only
+  LLVMHelper() = delete;
+
   static llvm::Function *getFcnFromCall(llvm::CallInst *ci) {
     llvm::CallSite cs(ci);
 

@@ -61,17 +61,13 @@ ObjectMap::ObjID getConstValue(ConstraintGraph &cg, ObjectMap &omap,
           auto obj_id = getConstValue(cg, omap, ce->getOperand(0));
 
           // Now we need to get a gep to convert this value to the gep'd offset:
-          auto gep_id = omap.createPhonyID(nullptr);
+          auto gep_id = omap.getConstRep(c);
           cg.add(ConstraintType::Copy,
               gep_id,
               obj_id,
               offs);
 
           return gep_id;
-
-          /*
-          return ObjectMap::getOffsID(obj_id, offs);
-          */
         }
       case llvm::Instruction::IntToPtr:
         // assert(0);
@@ -1630,11 +1626,13 @@ static void idLoadInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
     const llvm::Instruction &inst, CFG::CFGid next_id) {
   auto &ld = cast<const llvm::LoadInst>(inst);
 
+  auto dest_id = getValue(cg, omap, ld.getOperand(0));
+
   if (llvm::isa<llvm::PointerType>(ld.getType())) {
     auto ld_id = getValue(cg, omap, &ld);
 
     if_debug(auto cons_id =) cg.add(ConstraintType::Load, ld_id,
-        getValue(cg, omap, ld.getOperand(0)),
+        dest_id,
         ld_id);
 
     dout("Adding load (" << ld_id << ") " << inst << " to cons: " <<
@@ -1652,23 +1650,11 @@ static void idLoadInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
 
       llvm::dbgs() << __LINE__ << ": Load int into pointer\n";
       cg.add(ConstraintType::Load, ld_id,
-          getValue(cg, omap, ld.getOperand(0)),
+          dest_id,
           ObjectMap::IntValue);
 
       addCFGLoad(cfg, next_id, ld_id);
     }
-  /*
-  } else if (llvm::isa<llvm::PointerType>(ld.getOperand(0)->getType()) &&
-      llvm::isa<llvm::IntegerType>(ld.getType())) {
-    // Ld is an int value... those will alias.  So we instead create a phony id
-    auto ld_id = omap.getValue(&ld);
-
-    cg.add(ConstraintType::Load, ld_id,
-        omap.getValue(ld.getOperand(0)),
-        ObjectMap::IntValue);
-
-    addCFGLoad(cfg, next_id, ld_id);
-  */
   } else if (llvm::isa<llvm::StructType>(ld.getType())) {
     llvm::errs() << "FIXME: Unhandled struct load!\n";
   }

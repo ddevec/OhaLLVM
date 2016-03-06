@@ -68,7 +68,8 @@ class DynPtstoLoader : public llvm::ModulePass {
   }
 
   PtstoSet &getPtsto(const llvm::Value *val) {
-    auto val_id = omap_.getValueRep(val);
+    ObjectMap::ObjID val_id = omap_.getValOrConstRep(val);
+
     assert(hasInfo_);
     static PtstoSet empty_set;
     auto it = valToObjs_.find(val_id);
