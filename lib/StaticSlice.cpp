@@ -522,8 +522,22 @@ class ContextCache {
   //}}}
 };
 
-// To do context sensitive processing we need to 
+// Generate a pred-graph of the function calls
+//   Populate each of the function calls w/ used BBs
 
+// Then, compress sccs
+
+// Then, preform a bottom-up traversal, merging callees with callers
+
+// Those are blocks visited by /that/ scc (function set)
+
+// Local function info
+class FunctionGraph {
+};
+
+// Caller info
+
+// To do context sensitive processing we need to 
 class Position {
   //{{{
  public:
@@ -941,20 +955,6 @@ class StaticSlice : public llvm::ModulePass {
         }
 
         if (!do_skip) {
-          /*
-           * FIXME(ddevec): Shouldn't have to add args, those should be managed
-           *   by the internal tracing of the function..
-          // Add any args to our op list
-          llvm::CallSite cs(const_cast<llvm::CallInst *>(ci));
-
-          auto argi = cs.arg_begin();
-          auto arge = cs.arg_end();
-          for (; argi != arge; ++argi) {
-            // llvm::dbgs() << "Have operand: " << *argi->get() << "\n";
-            ret.push_back(argi->get());
-          }
-          */
-
           // For a call we add a frame to our stack...
           llvm::dbgs() << "Getting callsite: " << *ci << "\n";
           // How to detect recursion?
@@ -963,16 +963,26 @@ class StaticSlice : public llvm::ModulePass {
           if (it != std::end(callsite_to_fcn)) {
             auto &fcns = it->second;
             for (auto fcn : fcns) {
-              for (auto &rinst : ret_to_fcn.at(fcn)) {
-                auto ret_inst = cast<llvm::ReturnInst>(rinst);
-                auto new_stack = stackCache_.getChild(stack, ret_inst);
-                ret.emplace_back(ret_inst, new_stack, omap_, stackCache_,
-                    callInfo_);
-                // Don't explore the ret pos if their bb list is equivalent to
-                //   our own -- This solve problems w/ recursion
-                if (ret.back().predBBs() == pos.predBBs()) {
-                  llvm::dbgs() << "  Popping predBB from stack\n";
-                  ret.pop_back();
+              if (cast<llvm::Function>(fcn)->isDeclaration()) {
+                llvm::CallSite cs(ci);
+                auto argi = cs.arg_begin();
+                auto arge = cs.arg_end();
+                for (; argi != arge; ++argi) {
+                  // llvm::dbgs() << "Have operand: " << *argi->get() << "\n";
+                  ret.push_back(argi->get());
+                }
+              } else {
+                for (auto &rinst : ret_to_fcn.at(fcn)) {
+                  auto ret_inst = cast<llvm::ReturnInst>(rinst);
+                  auto new_stack = stackCache_.getChild(stack, ret_inst);
+                  ret.emplace_back(ret_inst, new_stack, omap_, stackCache_,
+                      callInfo_);
+                  // Don't explore the ret pos if their bb list is equivalent to
+                  //   our own -- This solve problems w/ recursion
+                  if (ret.back().predBBs() == pos.predBBs()) {
+                    llvm::dbgs() << "  Popping predBB from stack\n";
+                    ret.pop_back();
+                  }
                 }
               }
             }
