@@ -19,7 +19,6 @@
 #include <vector>
 
 #include "include/Debug.h"
-
 #include "llvm/Support/Debug.h"
 
 #ifdef SPECSFS_NOTIMERS
@@ -422,7 +421,7 @@ class ID {
  public:
     typedef impl base_type;
     static constexpr impl invalidValue = invalid_value;
-    static ID invalid() { return ID(); }
+    static constexpr ID invalid() { return ID(); }
 
     struct hasher {
       std::size_t operator()(const ID &id) const {
@@ -445,7 +444,7 @@ class ID {
     // Explicit conversion to get back the impl:
     explicit operator impl() const { return val_; }
 
-    // To work with container types
+    // Explicit conversion to size_t (for some container stuffs I use)
     explicit operator size_t() const { return val_; }
 
     constexpr impl val() const { return val_; }
@@ -482,6 +481,14 @@ class ID {
       return *this;
     }
 
+    ID operator-(ID rhs) const {
+      return ID(val() - rhs.val());
+    }
+
+    ID operator+(ID rhs) const {
+      return ID(val() + rhs.val());
+    }
+
     friend bool operator==(ID a, ID b) { return a.val_ == b.val_; }
     friend bool operator!=(ID a, ID b) { return a.val_ != b.val_; }
 
@@ -516,7 +523,7 @@ class IDGenerator {
       return val == invalid();
     }
 
-    void check(const id_type &val) {
+    void check(const id_type &val) const {
       assert(val < val_);
     }
 
@@ -573,7 +580,6 @@ class ObjectRemap {
   std::vector<id_type> remap_;
 };
 //}}}
-
 
 // Union Find {{{
 // id_type must be construtable from a size_t, have the
@@ -725,6 +731,7 @@ class UnionFindNoRank {
 };
 //}}}
 
+// Allocators {{{
 // Stack Alloc {{{
 template <typename T>
 class StackAlloc : public std::allocator<T> {
@@ -775,6 +782,89 @@ std::vector<T *> StackAlloc<T>::st_(StackAlloc<T>::StackSize, nullptr);
 
 template <typename T>
 size_t StackAlloc<T>::pos_(0);
+//}}}
+
+// Slab alloc {{{
+// 4MB chunks?
+template <size_t slab_size = 1<<22>
+class Slab {
+ public:
+  Slab() : nextChunk_(std::end(chunks_)) { }
+
+  void *allocate(size_t size, void *) {
+    assert(size < slab_size);
+
+    if (chunkPos_ + size > slab_size || curSlab_ == 0) {
+      // Get new slab
+      if (nextChunk_ == std::end(chunks_)) {
+        static_assert(sizeof(uint8_t) == 1,
+            "Need to allocate array of size 1...");
+        chunks_.emplace_back(new uint8_t[slab_size]);
+        curSlab_ = reinterpret_cast<intptr_t>(chunks_.back().get());
+      } else {
+        curSlab_ = *nextChunk_;
+        ++nextChunk_;
+      }
+      chunkPos_ = 0;
+    }
+
+    void *ret = reinterpret_cast<void *>(curSlab_ + chunkPos_);
+    chunkPos_ += size;
+
+    return ret;
+  }
+
+  void resetChunks() {
+    chunkPos_ = 0;
+    curSlab_ = 0;
+    nextChunk_ = std::begin(chunks_);
+  }
+
+ private:
+  std::list<std::unique_ptr<uint8_t[]>> chunks_;
+
+  size_t chunkPos_ = 0;
+  std::list<std::unique_ptr<uint8_t[]>>::iterator nextChunk_;
+  intptr_t curSlab_ = 0;
+};
+
+template <typename slab_type, typename T>
+class SlabAlloc : std::allocator<T> {
+ public:
+  typedef size_t size_type;
+  typedef T* pointer;
+  typedef const T* const_pointer;
+
+  static const size_t StackSize = 10000;
+
+  template <typename nT>
+  struct rebind {
+    typedef StackAlloc<nT> other;
+  };
+
+  SlabAlloc() = delete;
+
+  explicit SlabAlloc(const slab_type &slab) : std::allocator<T>(),
+        slab_(slab) { }
+
+  template <typename nT>
+  SlabAlloc(const SlabAlloc<slab_type, nT> &nt) : std::allocator<T>(nt),
+        slab_(nt.slab_) { }
+
+  pointer allocate(size_type n, const void *hint = 0) {
+    auto ret = std::allocator<T>::allocate(n, hint);
+    // auto ret = slab_.allocate<T>(n * sizeof(T), hint);
+    return ret;
+  }
+
+  void deallocate(pointer p, size_type n) {
+    // slab doesn't deallocate LOL
+  }
+
+ private:
+  slab_type &slab_;
+};
+//}}}
 //}}}
 
 // Sparse BitMap {{{
@@ -836,6 +926,24 @@ class BitmapNode {
     }
 
     return ch;
+  }
+
+  BitmapNode operator-(const BitmapNode &rhs) {
+    assert(rhs.index() == index());
+    BitmapNode ret = *this;
+
+    auto rhs_it = std::begin(rhs.bitmap_);
+    for (auto &bs : ret.bitmap_) {
+      bs &= ~(*rhs_it);
+
+      ++rhs_it;
+    }
+
+    return std::move(ret);
+  }
+
+  bool bitmapEqual(const BitmapNode &rhs) const {
+    return bitmap_ == rhs.bitmap_;
   }
 
   bool orWithIntersect(const BitmapNode &rhs,
@@ -936,10 +1044,12 @@ class BitmapNode {
   size_t hash() const {
     static_assert(sizeof(size_t) == sizeof(unsigned long),  // NOLINT
         "hash assumes sizeof size_t == sizeof ulong");
-    size_t ret = 0;
+    size_t ret = index() << 11 ^ index();
     for (auto &elm : bitmap_) {
-      // ret ^= elm.to_ulong();
-      ret ^= std::hash<std::bitset<BitsPerSet>>()(elm);
+      // Mix ret
+      ret ^= (ret << 11);
+      ret ^= std::hash<unsigned long>()(elm.to_ulong());  // NOLINT
+      // ret ^= std::hash<std::bitset<BitsPerSet>>()(elm);
     }
     return ret;
   }
@@ -1188,15 +1298,52 @@ class SparseBitmap {
 
     return ch;
   }
+
+  SparseBitmap operator-(const SparseBitmap &rhs) const {
+    SparseBitmap ret;
+
+    // Now, iterate lhs, and subtract any nodes in lhs also in rhs
+    // If they are empty nothing changes...
+    if (rhs.empty()) {
+      return *this;
+    }
+
+    auto it1 = std::begin(elms_);
+    auto it2 = std::begin(rhs.elms_);
+
+    while (it1 != std::end(elms_)) {
+      while (it2 != std::end(rhs.elms_) &&
+          it2->index() < it1->index()) {
+        ++it2;
+      }
+
+      // std::cout << "it1->idx: " << it1->index() << std::endl;
+      // std::cout << "it2->idx: " << it2->index() << std::endl;
+      if (it1->index() == it2->index()) {
+        ret.elms_.push_back(*it1 - *it2);
+      } else {
+        ret.elms_.push_back(*it1);
+      }
+      ++it1;
+    }
+
+
+    return std::move(ret);
+  }
   //}}}
 
   // Operators {{{
   bool operator==(const SparseBitmap &rhs) const {
+    numEq_++;
     auto it1 = std::begin(elms_);
     auto it2 = std::begin(rhs.elms_);
 
-    for (; it1 != std::end(elms_) && it1 != std::end(rhs.elms_); ++it1, ++it2) {
-      if (*it1 != *it2) {
+    for (; it1 != std::end(elms_) && it2 != std::end(rhs.elms_); ++it1, ++it2) {
+      if (it1->index() != it2->index()) {
+        return false;
+      }
+
+      if (!it1->bitmapEqual(*it2)) {
         return false;
       }
     }
@@ -1289,6 +1436,8 @@ class SparseBitmap {
   struct hasher {
     size_t operator()(const SparseBitmap &map) const {
       size_t ret = 0;
+
+      numHash_++;
 
       for (auto &elm : map.elms_) {
         ret ^= elm.hash();
@@ -1489,6 +1638,14 @@ class SparseBitmap {
     os << " }";
     return os;
   }
+
+  static size_t numEq() {
+    return numEq_;
+  }
+
+  static size_t numHash() {
+    return numHash_;
+  }
   //}}}
 
  private:
@@ -1534,12 +1691,339 @@ class SparseBitmap {
 
   mutable bitmap_list elms_;
 
+  static size_t numEq_;
+  static size_t numHash_;
+
   // We make lastElm_ mutable as it does not modify the interface to the class,
   // so we can change it in const accessors while they still appear const to the
   // outside world
   mutable typename bitmap_list::iterator curElm_;
 };
+
+template <typename id_type, size_t bits_per_field,
+         typename alloc>
+size_t SparseBitmap<id_type, bits_per_field, alloc>::numEq_ = 0;
+
+template <typename id_type, size_t bits_per_field,
+         typename alloc>
+size_t SparseBitmap<id_type, bits_per_field, alloc>::numHash_ = 0;
+
+//}}}
+
+// Paged Bitmap {{{
+template<size_t max_size = std::numeric_limits<uint32_t>::max(),
+  uint32_t page_size_bits = 4096,
+  typename alloc = std::allocator<
+      std::array<std::bitset<8*sizeof(unsigned long)>,  // NOLINT
+        page_size_bits/(8*sizeof(unsigned long))>>>  // NOLINT
+class PagedBitmap {
+ public:
+  // Internal Constants {{{
+  // Number of pages in the top-level page map
+  static const uint32_t NumPages =
+    static_cast<uint32_t>((max_size+1) / page_size_bits);
+
+  // The number of bits in a bitmap entry (machine word size)
+  static const uint32_t BitsetSize = 8*sizeof(unsigned long);  // NOLINT
+
+  // Internal junk
+  static const uint32_t BitsetsPerBitmap =
+    div_round_up(page_size_bits, BitsetSize);
+  // }}}
+
+  // Static checking for inefficiencies (wish there was a static_warning)
+  static_assert(is_divisible_by(page_size_bits, BitsetSize),
+      "page_size_bits should be divisible by BitsetSize "
+      "(8*sizeof(unsigned long)), or you'll "
+      "waste memory.  If your sure that's okay, remove this comment "
+      "and the code /should/ compile and work as normal");
+
+
+  // Typedefs and helper structs {{{
+  // The actual "pages" of the paged bitmap
+  typedef std::array<std::bitset<BitsetSize>, BitsetsPerBitmap> Bitmap;
+
+  static_assert(sizeof(typename alloc::value_type) == sizeof(Bitmap),
+      "alloc should allocate bitmaps");
+
+  // Type of the top-level page map
+  // NOTE: I must use a Bitmap * because I don't want to embed information about
+  //   the deallocator in the array pointer... it would waste space for each
+  //   pointer, and mess up a block allocator
+  typedef std::array<Bitmap*, NumPages> Pagemap;
+  //}}}
+
+  // Constructor(s)/Destructor {{{
+  explicit PagedBitmap(const alloc &a = alloc()) : size_(0), alloc_(a) { }
+
+  ~PagedBitmap() {
+    for (auto &pmap : pages_) {
+      if (pmap != nullptr) {
+        alloc_.destruct(pmap);
+        alloc_.deallocate(pmap);
+      }
+    }
+  }
+  //}}}
+
+  // Modifiers {{{
+  void set(uint32_t bit) {
+      testAndSet(bit);
+  }
+
+  void reset(uint32_t bit) {
+    // Should just be shift after opt
+    uint32_t page_num = bit / page_size_bits;
+
+    auto &pmap = pages_[page_num];
+
+    // If there is no page, the bits are all 0, reset is done
+    if (pmap == nullptr) {
+      return;
+    }
+
+    uint32_t bitset_num = bitset_in_bitmap(bit);
+    uint32_t bit_num = bit_in_bitset(bit);
+    auto &bitset = (*pmap)[bitset_num];
+
+    size_ -= bitset.test(bit_num);
+    bitset.reset(bit_num);
+  }
+
+  // Returns true if set operation successful
+  bool testAndSet(uint32_t bit) {
+    uint32_t page_num = bit / page_size_bits;
+    auto &pmap = pages_[page_num];
+
+    if (pmap == nullptr) {
+      auto mem = alloc_.allocate(1, nullptr);
+      alloc_.construct(mem);
+      pmap = mem;
+    }
+
+    uint32_t bitset_num = bitset_in_bitmap(bit);
+    uint32_t bit_num = bit_in_bitset(bit);
+    auto &bitset = (*pmap)[bitset_num];
+
+    bool ret = bitset.test(bit_num);
+    bitset.set(bit_num);
+
+    size_ += !ret;
+
+    return !ret;
+  }
+  //}}}
+
+  // Accessors {{{
+  bool test(uint32_t bit) const {
+    uint32_t page_num = bit / page_size_bits;
+    auto &pmap = pages_[page_num];
+
+    if (pmap == nullptr) {
+      return nullptr;
+    }
+
+    uint32_t bitset_num = bitset_in_bitmap(bit);
+    uint32_t bit_num = bit_in_bitset(bit);
+
+    return (*pmap)[bitset_num].test(bit_num);
+  }
+
+  uint32_t size() const {
+      return size_;
+  }
+  //}}}
+
+  // Iteration {{{
+  // Ugh this is nasty stuff
+  class iterator : public std::iterator<std::forward_iterator_tag, uint32_t> {
+   public:
+    int32_t BitsPerShift = 8*sizeof(unsigned long);  // NOLINT
+
+    explicit iterator(const Pagemap &bl, bool end) :
+        bl_(bl), it_(std::begin(bl)), end_(end) {
+      getFirstBit();
+    }
+
+    explicit iterator(const Pagemap &bl) : bl_(bl), it_(std::begin(bl)) {
+      getFirstBit();
+    }
+
+    iterator operator++(int) {
+      auto tmp = *this;
+      advanceBit();
+      return tmp;
+    }
+
+    iterator &operator++() {
+      advanceBit();
+      return *this;
+    }
+
+    uint32_t operator*() const {
+      // -1 b/c the bsPos_ is 1 indexed
+      auto ret = uint32_t(bsPos_-1 + (bsShift_ * BitsetSize) +
+          (std::distance(std::begin(bl_), it_) * page_size_bits));
+
+      // std::cerr << "Returning: " << ret << std::endl;
+
+      return ret;
+    }
+
+    bool operator==(const iterator &it) const {
+      return end_ == it.end_ ||
+        (it_ == it.it_ &&
+        bsPos_ == it.bsPos_ &&
+        bsShift_ == it.bsShift_);
+    }
+
+    bool operator!=(const iterator &it) const {
+      return !(*this == it);
+    }
+
+   private:
+    void getBsVal() {
+      bsVal_ = ((*(*it_))[bsShift_]).to_ulong();
+    }
+
+    void advanceBs() {
+      bsShift_ += 1;
+    }
+
+    void nextBsVal() {
+      advanceBs();
+      getBsVal();
+    }
+
+    void nextBsPos() {
+      int val = __builtin_ffsl(bsVal_);
+      assert(val != 0);
+      if (val == BitsPerShift) {
+        bsVal_ = 0;
+      } else {
+        bsVal_ >>= val;
+      }
+      bsPos_ += val;
+    }
+
+    void getFirstBit() {
+      if (end_) {
+        return;
+      }
+
+      it_ = std::begin(bl_);
+
+      // Advance past nullptr
+      while (*it_ == nullptr && it_ != std::end(bl_)) {
+        ++it_;
+      }
+
+      // Initialize bsVal_;
+      getBsVal();
+
+      // Go until we get a non-0 bs
+      while (bsVal_ == 0) {
+        nextBsVal();
+      }
+
+      // Okay, now find the first bit
+      bsPos_ = 0;
+      nextBsPos();
+    }
+
+    void advanceBit() {
+      if (end_) {
+        return;
+      }
+
+      // std::cerr << "advanceBit, bsVal_: " << bsVal_ << std::endl;
+      while (bsVal_ == 0) {
+        // std::cerr << "while, bsShift: " << bsShift_ << std::endl;
+        bsPos_ = 0;
+        if (bsShift_ == BitsetsPerBitmap-1) {
+          // std::cerr << "++it" << std::endl;
+          ++it_;
+          // Advance past nullptr
+          while (*it_ == nullptr && it_ != std::end(bl_)) {
+            ++it_;
+          }
+
+          if (it_ == std::end(bl_)) {
+            end_ = true;
+            return;
+          }
+
+          bsShift_ = 0;
+          getBsVal();
+          // std::cerr << "end bsVal_: " << bsVal_ << std::endl;
+          // std::cerr << "end bsShift_: " << bsShift_ << std::endl;
+        } else {
+          nextBsVal();
+          // std::cerr << "next bsVal_: " << bsVal_ << std::endl;
+        }
+      }
+
+      nextBsPos();
+      // std::cerr << "next nextBsPos pos: " << bsPos_ << std::endl;
+      // std::cerr << "next nextBsPos val: " << bsVal_ << std::endl;
+    }
+
+    const Pagemap &bl_;
+    typename Pagemap::const_iterator it_;
+
+    bool end_ = false;
+    uint32_t bsPos_ = 0;
+    unsigned long bsVal_;  // NOLINT
+    uint32_t bsShift_ = 0;
+  };
+
+  typedef iterator const_iterator;
+
+  iterator begin() {
+    return iterator(pages_);
+  }
+
+  iterator end() {
+    return iterator(pages_, true);
+  }
+
+  const_iterator begin() const {
+    return const_iterator(pages_);
+  }
+
+  const_iterator end() const {
+    return const_iterator(pages_, true);
+  }
+  // }}}
+
+ private:
+  // Private helpers {{{
+  static uint32_t bitset_in_bitmap(uint32_t bit_num) {
+    return (bit_num / BitsetSize) % (page_size_bits / BitsetSize);
+  }
+
+  static uint32_t bit_in_bitset(uint32_t bit_num) {
+    return bit_num % BitsetSize;
+  }
+  // }}}
+
+  // Private Variables {{{
+  Pagemap pages_;
+  uint32_t size_;
+  alloc alloc_;
+  //}}}
+};
 //}}}
 }  // namespace util
+
+// Hash function for SparseBitmap:
+namespace std {
+template<>
+struct hash<util::SparseBitmap<>> {
+  std::size_t operator()(const util::SparseBitmap<> &map) const {
+    return util::SparseBitmap<>::hasher()(map);
+  }
+};
+}  // namespace std
 
 #endif  // INCLUDE_UTIL_H_

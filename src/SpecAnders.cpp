@@ -9,6 +9,8 @@
 
 #include "include/SpecAnders.h"
 
+#include <google/profiler.h>
+
 #include <execinfo.h>
 
 #include <algorithm>
@@ -212,6 +214,7 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
     llvm::dbgs() << "  num_store: " << num_store << "\n";
   }
 
+  ProfilerStart("anders_opt.prof");
   {
     util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "HVN");
     int32_t removed = HVN(cg, omap);
@@ -234,6 +237,9 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
     util::PerfTimerPrinter hru_timer(llvm::dbgs(), "HRU");
     HRU(cg, omap, 100);
   }
+  ProfilerStop();
+  llvm::dbgs() << "SparseBitmap =='s: " << Bitmap::numEq() << "\n";
+  llvm::dbgs() << "SparseBitmap hash's: " << Bitmap::numHash() << "\n";
 
   for (auto &id_val : id_print) {
     llvm::dbgs() << "Printing node for id: " << id_val << "\n";

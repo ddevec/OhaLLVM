@@ -2151,6 +2151,13 @@ bool ConstraintPass::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
     omap.addObject(&fcn);
   });
 
+  // Make a value for each BB
+  for (auto &fcn : M) {
+    for (auto &bb : fcn) {
+      omap.addValue(&bb);
+    }
+  }
+
   // Now add nodes for the functions, and all the operations within
   for (auto &fcn : M) {
     omap.addValueFunction(&fcn);

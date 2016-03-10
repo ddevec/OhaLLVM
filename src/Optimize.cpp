@@ -432,11 +432,10 @@ bool SFSHU(ConstraintGraph &graph, CFG &cfg,
       ptsto.set(HUCalc::PENonPtr);
     }
 
-    auto it = pts_to_pe.find(ptsto);
+    auto ret = pts_to_pe.emplace(ptsto, node.id());
 
-    if (it == std::end(pts_to_pe)) {
-      pts_to_pe.emplace(ptsto, node.id());
-    } else {
+    if (!ret.second) {
+      auto it = ret.first;
       auto &rep_node = hu_graph.getNode<HUNode>(it->second);
 
       rep_node.unite(hu_graph, node);
@@ -1294,40 +1293,12 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
 
     // auto rc = pts_to_pe.emplace(ptsto, node.id());
 
-    auto it = pts_to_pe.find(ptsto);
-    if (it == std::end(pts_to_pe)) {
-      pts_to_pe.emplace(ptsto, node.id());
-    } else {
-    /*
-    if (!rc.second) {
-      auto &it = rc.first;
-      */
+    auto ret = pts_to_pe.emplace(ptsto, node.id());
+    if (!ret.second) {
+      auto it = ret.first;
+
       auto &rep_node = hvn_graph.getNode<HVNNode>(it->second);
 
-      /*
-      if (rep_node.id() == SEG::NodeID(4957) ||
-          node.id() == SEG::NodeID(4957)) {
-        llvm::dbgs() << "  merge " << node.id() << " with " <<
-          rep_node.id() << "\n";
-      }
-
-      if (rep_node.id() == SEG::NodeID(3441) ||
-          node.id() == SEG::NodeID(3441)) {
-        llvm::dbgs() << "  merge " << node.id() << " with " <<
-          rep_node.id() << "\n";
-      }
-
-      if (rep_node.id() == SEG::NodeID(3440) ||
-          node.id() == SEG::NodeID(3440)) {
-        llvm::dbgs() << "  merge " << node.id() << " with " <<
-          rep_node.id() << "\n";
-      }
-      if (rep_node.id() == SEG::NodeID(6509) ||
-          node.id() == SEG::NodeID(6509)) {
-        llvm::dbgs() << "  merge " << node.id() << " with " <<
-          rep_node.id() << "\n";
-      }
-      */
       rep_node.unite(hvn_graph, node);
     }
   }
@@ -1617,11 +1588,10 @@ int32_t HU(ConstraintGraph &cg, ObjectMap &omap) {
       continue;
     }
 
-    auto it = pts_to_pe.find(ptsto);
+    auto ret = pts_to_pe.emplace(ptsto, node.id());
 
-    if (it == std::end(pts_to_pe)) {
-      pts_to_pe.emplace(ptsto, node.id());
-    } else {
+    if (!ret.second) {
+      auto it = ret.first;
       auto &rep_node = hu_graph.getNode<AndersHUNode>(it->second);
 
       /*

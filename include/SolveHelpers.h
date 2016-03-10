@@ -63,13 +63,15 @@ struct BitmapHash {
 
 struct BitmapHash {
   size_t operator() (const Bitmap &b1) const {
+    /*
     size_t ret = 0;
     for (auto elm : b1) {
       ret ^= std::hash<int32_t>()(elm);
       ret <<= 1;
     }
-
     return ret;
+    */
+    return Bitmap::hasher()(b1);
   }
 };
 //}}}

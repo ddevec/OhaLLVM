@@ -121,8 +121,8 @@ class SEG {
     // Typedefs {{{
     struct node_id { };
     typedef util::ID<node_id, int32_t, -1> NodeID;
-
     //}}}
+
     // Constructors {{{
     // Copy/move {{{
     SEG(const SEG &) = delete;
@@ -131,7 +131,6 @@ class SEG {
     SEG &operator=(const SEG &) = delete;
     SEG &operator=(SEG &&) = default;
     //}}}
-    //
     //}}}
 
     // Node class {{{
