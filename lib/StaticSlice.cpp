@@ -427,17 +427,20 @@ class StaticSlice : public llvm::ModulePass {
           // Add any args to our op list
           llvm::CallSite cs(const_cast<llvm::CallInst *>(ci));
 
-          auto argi = cs.arg_begin();
-          auto arge = cs.arg_end();
-          for (; argi != arge; ++argi) {
-            // llvm::dbgs() << "Have operand: " << *argi->get() << "\n";
-            ret.push_back(argi->get());
-          }
 
           auto &fcns = callsiteToFcns_[ci];
           for (auto fcn : fcns) {
-            for (auto &ret_inst : retsOfFunc_[fcn]) {
-              ret.push_back(ret_inst);
+            if (cast<llvm::Function>(fcn)->isDeclaration()) {
+              auto argi = cs.arg_begin();
+              auto arge = cs.arg_end();
+              for (; argi != arge; ++argi) {
+                // llvm::dbgs() << "Have operand: " << *argi->get() << "\n";
+                ret.push_back(argi->get());
+              }
+            } else {
+              for (auto &ret_inst : retsOfFunc_[fcn]) {
+                ret.push_back(ret_inst);
+              }
             }
           }
         }
