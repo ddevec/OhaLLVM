@@ -1271,8 +1271,8 @@ int32_t HVN(ConstraintGraph &cg, ObjectMap &omap) {
 
   // hvn_graph.printDotFile("HVNStart.dot", *g_omap);
   // Finally run Tarjan's:
-  RunTarjans<decltype(should_visit_default), decltype(traverse_pe)>
-    (hvn_graph, should_visit_default, traverse_pe);
+  RunTarjans<should_visit_default, decltype(traverse_pe)>
+    (hvn_graph, should_visit_default(), traverse_pe);
 
   // hvn_graph.printDotFile("HVNDone.dot", *g_omap);
 
@@ -1568,8 +1568,8 @@ int32_t HU(ConstraintGraph &cg, ObjectMap &omap) {
 
   // hu_graph.printDotFile("HUStart.dot", *g_omap);
   // Finally run Tarjan's:
-  RunTarjans<decltype(should_visit_default), decltype(traverse_pe)>
-    (hu_graph, should_visit_default, traverse_pe);
+  RunTarjans<should_visit_default, decltype(traverse_pe)>
+    (hu_graph, should_visit_default(), traverse_pe);
 
   // hu_graph.printDotFile("HUDone.dot", *g_omap);
 
@@ -1945,8 +1945,8 @@ void SpecAnders::HCD(ConstraintGraph &graph, ObjectMap &omap) {
   // hcd_graph.printDotFile("HCDStart.dot", *g_omap);
 
   // Use Tarjans to detect SCCs
-  RunTarjans<decltype(should_visit_default), decltype(scc_visit_default)>
-    (hcd_graph, should_visit_default, scc_visit_default);
+  RunTarjans<should_visit_default, scc_visit_default>
+    (hcd_graph, should_visit_default(), scc_visit_default());
 
   // Update our HCD data structure
   // And update our constraints/cg for any merged node ids...

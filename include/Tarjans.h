@@ -8,25 +8,30 @@
 
 #include "include/SEG.h"
 
-[[ gnu::unused ]]
-static auto should_visit_default = [] (const SEG::Node &) -> bool {
-  return true;
+class should_visit_default {
+ public:
+  bool operator()(const SEG::Node &) const {
+    return true;
+  }
 };
 
-[[ gnu::unused ]]
-static auto scc_visit_default = [] (const SEG::Node &) { };
+class scc_visit_default {
+ public:
+  void operator()(const SEG::Node &) const {
+  }
+};
 
 // NOTE: a topo order can be achieved by visiting each node on post_unite
-template<typename should_visit = decltype(should_visit_default),
-  typename scc_visit = decltype(scc_visit_default)>
+template<typename should_visit = should_visit_default,
+  typename scc_visit = scc_visit_default>
 class RunTarjans {
 //{{{
  public:
   static const int32_t IndexInvalid = -1;
 
   explicit RunTarjans(SEG &G,
-      should_visit do_visit = should_visit_default,
-      scc_visit do_scc_visit = scc_visit_default) :
+      should_visit do_visit = should_visit_default(),
+      scc_visit do_scc_visit = scc_visit_default()) :
       should_visit_(do_visit), scc_visit_(do_scc_visit),
       seg_(G), nodeData_(G.getNumNodes()) {
     for (auto &pnode : G) {

@@ -17,6 +17,7 @@
 #include "include/InstLabeler.h"
 #include "include/LLVMHelper.h"
 #include "include/ObjectMap.h"
+#include "include/Tarjans.h"
 #include "include/lib/UnusedFunctions.h"
 #include "include/lib/IndirFcnTarget.h"
 #include "include/lib/DynPtsto.h"
@@ -59,7 +60,7 @@ static llvm::cl::opt<bool>
       llvm::cl::desc("Creates random slices"));
 
 static llvm::cl::opt<bool>
-  do_control_flow("slice-no-control-flow", llvm::cl::init(true),
+  no_control_flow("slice-no-control-flow", llvm::cl::init(false),
       llvm::cl::value_desc("bool"),
       llvm::cl::desc("Disables control-flow tracking for slices"));
 
@@ -79,15 +80,15 @@ class FunctionCallInfo {
   typedef std::map<const llvm::Value *, std::set<const llvm::Value *>>
     FcnMap;
 
-  typedef std::map<const void *, std::set<const llvm::Value *>>
-    VFcnMap;
   FunctionCallInfo() = default;
-  FunctionCallInfo(FcnMap callsite_to_fcn, VFcnMap fcn_to_callsite,
-          FcnMap arg_to_callsite, FcnMap rets_of_fcn) :
+  FunctionCallInfo(FcnMap callsite_to_fcn, FcnMap fcn_to_callsite,
+          FcnMap arg_to_callsite, FcnMap rets_of_fcn,
+          const UnusedFunctions *dyn_info) :
         callsiteToFcns_(std::move(callsite_to_fcn)),
         fcnToCallsite_(std::move(fcn_to_callsite)),
         argToCallsite_(std::move(arg_to_callsite)),
-        retsOfFunc_(std::move(rets_of_fcn)) { }
+        retsOfFunc_(std::move(rets_of_fcn)),
+        dynInfo_(dyn_info) { }
 
   FunctionCallInfo &operator=(FunctionCallInfo &&) = default;
 
@@ -95,7 +96,7 @@ class FunctionCallInfo {
     return callsiteToFcns_;
   }
 
-  const VFcnMap &getFcnToCallsite() const {
+  const FcnMap &getFcnToCallsite() const {
     return fcnToCallsite_;
   }
 
@@ -107,13 +108,321 @@ class FunctionCallInfo {
     return retsOfFunc_;
   }
 
+  const UnusedFunctions *getDynInfo() const {
+    return dynInfo_;
+  }
+
  private:
   FcnMap callsiteToFcns_;
-  VFcnMap fcnToCallsite_;
+  FcnMap fcnToCallsite_;
   FcnMap argToCallsite_;
   FcnMap retsOfFunc_;
+
+  const UnusedFunctions *dynInfo_;
   //}}}
 };
+
+typedef std::unordered_map<const llvm::Function *, SEG::NodeID>
+    NodeMap;
+
+class FunctionNode : public SEG::Node {
+  //{{{
+ public:
+  explicit FunctionNode(SEG::NodeID node_id,
+      const llvm::Function *fcn,
+      ObjectMap &omap) :
+        SEG::Node(NodeKind::HUNode, node_id),
+        func_(fcn) {
+    // Populate my predBBs_ LOCALLY (locally visited basic blocks)
+    for (auto &bb : *fcn) {
+      predBBs_.set(omap.getValue(&bb));
+
+      // Update my CALLEES set
+      for (auto &inst : bb) {
+        if (auto ci = dyn_cast<llvm::CallInst>(&inst)) {
+          callees_.insert(ci);
+        }
+      }
+    }
+  }
+
+  void addNodePreds(SEG &seg,
+      const NodeMap &nmap,
+      const FunctionCallInfo &call_info) {
+    auto &callsite_to_fcn = call_info.getCallsiteToFcn();
+    // For each callee in this function, add a pred to the SEG
+    for (auto pci : callees_) {
+      auto fcn_it = callsite_to_fcn.find(pci);
+      if (fcn_it != std::end(callsite_to_fcn)) {
+        for (auto vfcn : fcn_it->second) {
+          auto fcn = cast<llvm::Function>(vfcn);
+          // No edges for external functions :(
+          if (!fcn->isDeclaration()) {
+            // Add a pred from them to me
+            seg.addPred(nmap.at(fcn), SEG::Node::id());
+            /*
+            llvm::dbgs() << "adding edge: " << func_->getName() <<
+              " -> " << fcn->getName() << "\n";
+            */
+          }
+        }
+      }
+    }
+  }
+
+  // Do our bottom up traversal to fill in callee bbs
+  void addCalleePreds(SEG &seg,
+      const NodeMap &nmap,
+      ObjectMap &omap,
+      const FunctionCallInfo &call_info) {
+    // Don't process ourself twice
+    if (haveCalleeBBs_) {
+      return;
+    }
+
+    auto &callsite_to_fcn = call_info.getCallsiteToFcn();
+
+    // Get all of our pred callees
+    for (auto ci : callees_) {
+      /*
+      llvm::dbgs() << "fcn is: " <<
+        cast<llvm::Function>(omap.valueAtID(callee_oid))->getName() << "\n";
+      */
+
+      auto dest_it = callsite_to_fcn.find(ci);
+      if (dest_it != std::end(callsite_to_fcn)) {
+        for (auto fcn : dest_it->second) {
+          auto callee_id =
+            nmap.at(cast<llvm::Function>(fcn));
+          auto &pred = seg.getNode<FunctionNode>(callee_id);
+
+          // Don't need to merge ourself
+          if (pred.id() == SEG::Node::id()) {
+            continue;
+          }
+
+          /*
+          llvm::dbgs() << "Checking pred_node: " << pred.func_->getName()
+            << "\n";
+          */
+
+          // Now, merge the callee's BBs
+          predBBs_ |= pred.getPredBBs(seg, nmap, omap, call_info);
+        }
+      }
+    }
+
+    haveCalleeBBs_ = true;
+  }
+
+  void unite(SEG &seg, SEG::Node &n) override {
+    auto &node = cast<FunctionNode>(n);
+
+    // Unite the BB sets
+    predBBs_ |= node.predBBs_;
+    // Unite the visited sets
+    callees_.insert(std::begin(node.callees_), std::end(node.callees_));
+
+    node.callees_.clear();
+    node.predBBs_.clear();
+
+    SEG::Node::unite(seg, n);
+  }
+
+  const util::SparseBitmap<ObjectMap::ObjID> &getPredBBs(SEG &seg,
+      const NodeMap &nmap,
+      ObjectMap &omap,
+      const FunctionCallInfo &call_info) {
+    if (!haveCalleeBBs_) {
+      addCalleePreds(seg, nmap, omap, call_info);
+    }
+
+    assert(haveCalleeBBs_);
+    return predBBs_;
+  }
+
+ private:
+  const llvm::Function *func_;
+  util::SparseBitmap<ObjectMap::ObjID> predBBs_;
+
+  // Set of call instructions within this function
+  std::set<const llvm::CallInst *> callees_;
+  bool haveCalleeBBs_ = false;
+  //}}}
+};
+
+// Helpers to actuall manage getting the predecessor basic blocks given a
+// partial stack
+//{{{
+// Generate a pred-graph of the function calls
+//   Populate each of the function calls w/ used BBs
+//   Happens on construction of node
+
+// Then, compress sccs
+//   TarjanSCC
+
+// Then, preform a bottom-up traversal, merging callees with callers
+//   Handled by addCalleePreds()
+
+// Those are blocks visited by /that/ scc (function set)
+// Use this to get pred info -- callers are pred edges (unless stack is given),
+//   callees are taken care of by this algorithm
+static std::pair<std::vector<const llvm::CallInst *>,
+  util::SparseBitmap<ObjectMap::ObjID>>
+getFcnPreds(const llvm::BasicBlock *init_bb, ObjectMap &omap,
+    const UnusedFunctions *dyn_info) {
+  util::SparseBitmap<ObjectMap::ObjID> bb_list;
+  std::vector<const llvm::CallInst *> ci_vec;
+
+  std::vector<const llvm::BasicBlock *> worklist;
+  std::vector<const llvm::BasicBlock *> worklist_new;
+
+  worklist.push_back(init_bb);
+
+  while (!worklist.empty()) {
+    for (auto bb : worklist) {
+      auto bb_id = omap.getValue(bb);
+
+      // If we haven't visited this bb yet
+      //   (NOTE: implicitly inserts into bb_list)
+      if (bb_list.test_and_set(bb_id)) {
+        // Insert its preds into our worklist
+        for (auto it = pred_begin(bb), en = pred_end(bb);
+            it != en; ++it) {
+          if (!dyn_info->isUsed(*it)) {
+            continue;
+          }
+          worklist_new.push_back(*it);
+        }
+
+        // Also, check for call insts
+        for (auto &inst : *bb) {
+          if (auto ci = dyn_cast<llvm::CallInst>(&inst)) {
+            ci_vec.push_back(ci);
+          }
+        }
+      }
+    }
+
+    worklist.swap(worklist_new);
+    worklist_new.clear();
+  }
+
+  return std::make_pair(std::move(ci_vec), std::move(bb_list));
+}
+
+// ALGORITHM for getting pred bbs:
+static util::SparseBitmap<ObjectMap::ObjID> getPredBBs(ObjectMap::ObjID bb_id,
+    const std::vector<const llvm::Instruction *> &partial_stack,
+    SEG &function_graph,
+    const NodeMap &nmap,
+    const FunctionCallInfo &call_info,
+    ObjectMap &omap) {
+  // NOTE: function_graph is a DAG (because of SCC collapsing), so it is
+  //   impossible that a caller is also a callee (pred != succ)
+  std::unordered_set<SEG::NodeID, SEG::NodeID::hasher> caller_visited;
+  auto my_bb = cast<llvm::BasicBlock>(omap.valueAtID(bb_id));
+  auto my_fcn = my_bb->getParent();
+  // llvm::dbgs() << "my_fcn is: " << my_fcn->getName() << "\n";
+  auto my_node_id = nmap.at(my_fcn);
+  auto &my_node =
+    function_graph.getNode<FunctionNode>(my_node_id);
+  my_node_id = my_node.id();
+  caller_visited.emplace(my_node_id);
+
+  auto &callsite_to_fcn = call_info.getCallsiteToFcn();
+
+  // First, get all pred BBs in the function
+  // Returns pair<vector<callinst>(callees), util::SparseBitmap<>(bb)>
+  auto pred_pr = getFcnPreds(my_bb, omap, call_info.getDynInfo());
+  auto bb_set = std::move(pred_pr.second);
+
+  auto next_node_id = my_node_id;
+  // **This deals with pred callees
+  for (auto call_inst : pred_pr.first) {
+    // Iterate through all the functons of that call inst
+    // If they haven't been visited (caller_visited), add their bbsets to our
+    //   list
+    auto dest_it = callsite_to_fcn.find(call_inst);
+    // NOTE: calls to declaration functions (those without callsite_to_fcn
+    //    values) can be safely ignored
+    if (dest_it != std::end(callsite_to_fcn)) {
+      for (auto &fcn : dest_it->second) {
+        auto &call_node = function_graph.getNode<FunctionNode>(nmap.at(
+              cast<llvm::Function>(fcn)));
+        auto fcn_id = call_node.id();
+        if (caller_visited.emplace(fcn_id).second) {
+          bb_set |= call_node.getPredBBs(function_graph, nmap, omap, call_info);
+        }
+      }
+    }
+  }
+
+  // Now, deal w/ the partial stack.  Ignore the node's preds, and just do the
+  //   stacked functions
+  for (auto pinst : partial_stack) {
+    // NOTE: We don't add the bb's function to the caller_visited list, because
+    //   we are not exploring the whole function
+    auto bb = pinst->getParent();
+
+    auto caller_pred_pr = getFcnPreds(my_bb, omap, call_info.getDynInfo());
+
+    for (auto call_inst : caller_pred_pr.first) {
+      auto dest_it = callsite_to_fcn.find(call_inst);
+      // NOTE: calls to declaration functions (those without callsite_to_fcn
+      //    values) can be safely ignored
+      if (dest_it != std::end(callsite_to_fcn)) {
+        for (auto &fcn : dest_it->second) {
+          auto &call_node = function_graph.getNode<FunctionNode>(nmap.at(
+                cast<llvm::Function>(fcn)));
+          auto fcn_id = call_node.id();
+          if (caller_visited.emplace(fcn_id).second) {
+            bb_set |= call_node.getPredBBs(function_graph, nmap, omap,
+                call_info);
+          }
+        }
+      }
+    }
+
+    bb_set |= caller_pred_pr.second;
+
+    next_node_id = function_graph.getNode(nmap.at(bb->getParent())).id();
+  }
+
+  // Now, handle callers
+  // -- Including calls (use seg to handle calls)
+  // iterate through preds of my_node
+  std::vector<SEG::NodeID> worklist;
+  std::vector<SEG::NodeID> worklist_new;
+  worklist.emplace_back(next_node_id);
+
+  while (!worklist.empty()) {
+    for (auto work_id : worklist) {
+      auto &work_node = function_graph.getNode<FunctionNode>(work_id);
+
+      for (auto pred_ref_id : work_node.preds()) {
+        auto &pred_node = function_graph.getNode<FunctionNode>(pred_ref_id);
+        auto pred_id = pred_node.id();
+        auto rc = caller_visited.emplace(pred_id);
+
+        if (rc.second) {
+          // Add the predBBs from pred_node to my bb_set
+          bb_set |= pred_node.getPredBBs(function_graph, nmap, omap, call_info);
+
+          // Also, add the pred_id to my worklist
+          worklist_new.emplace_back(pred_id);
+        }
+      }
+    }
+
+    worklist.swap(worklist_new);
+    worklist_new.clear();
+  }
+
+  // Return my bb_set
+  return std::move(bb_set);
+}
+//}}}
 
 class StackCache {
   //{{{
@@ -152,6 +461,8 @@ class StackCache {
         auto &st = stack();
         if (st.empty()) {
           parentId_ = id();
+        } else if (st.size() == 1) {
+          parentId_ = StackCache::EmptyStack();
         } else {
           auto parent_stack = st;
           parent_stack.pop_back();
@@ -206,44 +517,67 @@ class StackCache {
   }
 
   StackID getStack(const std::vector<const llvm::Instruction *> &stack) {
+    /*
     llvm::dbgs() << "emplace stack: " << stack.size() << " to id: " <<
       stacks_.size() << "\n";
+    */
     auto rc = infoMap_.emplace(stack, stacks_.size());
 
     if (rc.second) {
       stacks_.emplace_back(stack, StackID(rc.first->second));
     }
 
-    assert(stacks_.size() < rc.first->second);
-
     assert(rc.first->second < stacks_.size());
     return StackID(rc.first->second);
   }
 
-  StackID getChild(StackID st_id, const llvm::Instruction *child_site) {
+  // now with -- /Recursion Support/
+  StackID getChild(StackID st_id, const llvm::Instruction *child_site,
+      const NodeMap &nmap,
+      SEG &function_graph) {
     auto &inf = getStack(st_id);
+    auto &oldstack = inf.stack();
+    if (!oldstack.empty()) {
+      auto old_fcn = oldstack.back()->getParent()->getParent();
+      auto new_fcn = child_site->getParent()->getParent();
+
+      auto old_id = function_graph.getNode(nmap.at(old_fcn)).id();
+      auto new_id = function_graph.getNode(nmap.at(new_fcn)).id();
+
+      // If recursive call, return the same stack!
+      if (old_id == new_id) {
+        return st_id;
+      }
+      // Otherwise, actually parse out the new stack
+    }
     std::vector<const llvm::Instruction *> newstack(inf.stack());
     newstack.push_back(child_site);
 
+    /*
     llvm::dbgs() << "GetChild!\n";
     llvm::dbgs() << "newstack: {";
     for (auto id : newstack) {
       llvm::dbgs() << " " << id;
     }
     llvm::dbgs() << " }\n";
+    */
 
     auto rc = infoMap_.emplace(newstack, stacks_.size());
 
-    llvm::dbgs() << "rc.second: " << rc.second << "\n";
+    // llvm::dbgs() << "rc.second: " << rc.second << "\n";
 
     if (rc.second) {
+      /*
       llvm::dbgs() << "Creating stack in stacks_\n";
       llvm::dbgs() << "  id: " << rc.first->second << "\n";
+      */
       stacks_.emplace_back(newstack, StackID(rc.first->second));
     }
 
+    /*
     llvm::dbgs() << "stacks_.size(): " << stacks_.size() << "\n";
     llvm::dbgs() << "rc.first->second: " << rc.first->second << "\n";
+    */
 
     assert(rc.first->second < stacks_.size());
     return StackID(rc.first->second);
@@ -286,74 +620,12 @@ class ContextCache {
     typedef StackCache::StackID StackID;
     Context() = delete;
     Context(StackID si, ObjectMap::ObjID bb, ObjectMap &omap,
-        const StackCache &stacks, const FunctionCallInfo &call_info) :
-          stack_(si), curBB_(bb) {
-      // Now, populate predBBs_ appropriately? -- NOTE: this is based only off
-      //   of a stack and bb -- (both of which are constant time to compare)
-      // NOTE: stack is an array of callinsts, any arguments come from that
-      //   position
-
-      // Time to calculate predBBs_, iterate through all preds of bb, adding
-      // them to our predBBs_ set.  If we encounter a new bb, repeat this
-      // process for them
-
-      std::vector<const llvm::BasicBlock *> worklist;
-      std::vector<const llvm::BasicBlock *> worklist_new;
-
-      std::set<const llvm::Value *> visited;
-
-      auto trace_val = cast<llvm::BasicBlock>(omap.valueAtID(bb));
-      auto &stack = stacks.getStack(si).stack();
-      traceToEntry(trace_val, omap, call_info);
-      visited.insert(trace_val);
-
-      for (int i = stack.size()-1; i >= 0; --i) {
-        // And then handle our rets...
-        llvm::dbgs() << "value is: " << *stack[i] << "\n";
-        trace_val = stack[i]->getParent();
-        visited.insert(trace_val);
-
-        // Okay, now, we iterate this bb back to its entry:
-        traceToEntry(cast<llvm::BasicBlock>(trace_val), omap, call_info);
-      }
-
-      auto &fcnToCallsites = call_info.getFcnToCallsite();
-
-      // Now trace behind this value... ugh
-
-      /*
-      llvm::dbgs() << "have fcnToCallsites keys:\n";
-      for (auto &pr : fcnToCallsites) {
-        llvm::dbgs() << "  " << pr.first << "\n";
-      }
-      */
-      auto pfcn = trace_val->getParent();
-      auto vpfcn = reinterpret_cast<const void *>(pfcn);
-      for (auto call_val : fcnToCallsites.at(vpfcn)) {
-        auto &call_ins = *cast<llvm::Instruction>(call_val);
-
-        worklist.push_back(call_ins.getParent());
-      }
-
-      while (!worklist.empty()) {
-        for (auto bb : worklist) {
-          // If we hadn't explored this function before, do so now
-          if (traceToEntry(bb, omap, call_info)) {
-            auto it = fcnToCallsites.find(bb->getParent());
-            if (it != std::end(fcnToCallsites)) {
-              for (auto call_val : it->second) {
-                auto &call_ins = *cast<llvm::Instruction>(call_val);
-
-                worklist_new.push_back(call_ins.getParent());
-              }
-            }
-          }
-        }
-
-        worklist.swap(worklist_new);
-        worklist_new.clear();
-      }
-    }
+        const StackCache &stacks, const FunctionCallInfo &call_info,
+        const NodeMap &nmap,
+        SEG &function_graph) :
+          stack_(si), curBB_(bb),
+          predBBs_(getPredBBs(bb, stacks.getStack(si).stack(),
+                function_graph, nmap, call_info, omap)) { }
 
     struct hasher {
       size_t operator()(const Context &c) {
@@ -382,96 +654,9 @@ class ContextCache {
     }
 
    private:
-    bool traceToEntry(const llvm::BasicBlock *bb, ObjectMap &omap,
-        const FunctionCallInfo &call_info) {
-      std::vector<const llvm::BasicBlock *> worklist;
-      std::vector<const llvm::BasicBlock *> worklist_new;
-
-      /*
-      llvm::dbgs() << "inital bb is: " <<
-          bb->getParent()->getName() << ": " << bb->getName() << "\n";
-      */
-
-      worklist.push_back(bb);
-      if (!predBBs_.test_and_set(omap.getValue(bb))) {
-        return false;
-      }
-      auto &callsiteToFcns = call_info.getCallsiteToFcn();
-      auto &retsOfFunc = call_info.getRetsOfFunc();
-
-      while (!worklist.empty()) {
-        // llvm::dbgs() << "size is: " << worklist.size() << "\n";
-        size_t count = 0;
-        for (auto bb : worklist) {
-          count++;
-          // Get the preds of bb
-          /*
-          llvm::dbgs() << "Looking at bb: " << bb->getParent()->getName() <<
-              ": " <<bb->getName() << "\n";
-              */
-          for (auto pi = pred_begin(bb), en = pred_end(bb);
-                pi != en; ++pi) {
-            // Consider the preds of this bb
-            auto bb = *pi;
-
-            // Only do this if we have open bbs
-            if (predBBs_.test_and_set(omap.getValue(bb))) {
-              /*
-              llvm::dbgs() << "Adding bb to worklist: " <<
-                bb->getParent()->getName() << ": " << bb->getName() << "\n";
-                */
-              worklist_new.push_back(bb);
-
-              // Also, consider any calls within:
-              // Get each instruction in the BB, to handle calls...
-              for (auto &ins : *bb) {
-                if (auto ci = dyn_cast<llvm::CallInst>(&ins)) {
-                  // llvm::dbgs() << "have call inst: " << *ci << "\n";
-                  auto fcn_it = callsiteToFcns.find(ci);
-                  if (fcn_it != std::end(callsiteToFcns)) {
-                    for (auto fcn_val : callsiteToFcns.at(ci)) {
-                      // If the function target is unknown, look it up
-                      // In that case its a list
-                      /*
-                      llvm::dbgs() << "func_val is: " << fcn_val << "\n";
-                      llvm::dbgs() << "func_val is: " <<
-                        cast<llvm::Function>(fcn_val)->getName() << "\n";
-                      llvm::dbgs() << "retsOfFunc.size() is: " <<
-                        retsOfFunc.size() << "\n";
-                      */
-                      auto ret_it = retsOfFunc.find(fcn_val);
-                      if (ret_it != std::end(retsOfFunc)) {
-                        for (auto ret_val : ret_it->second) {
-                          // We ignore ret, as we're already guaranteed true
-                          //    here...
-                          traceToEntry(
-                              cast<llvm::Instruction>(ret_val)->getParent(),
-                              omap, call_info);
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        // llvm::dbgs() << "WORKLIST SWAP\n";
-        worklist.clear();
-        std::swap(worklist, worklist_new);
-        // llvm::dbgs() << "new size is: " << worklist.size() << "\n";
-        assert(worklist_new.size() == 0);
-      }
-
-      // llvm::dbgs() << "Returning\n";
-
-      return true;
-    }
-
-    util::SparseBitmap<ObjectMap::ObjID> predBBs_;
     StackID stack_;
     ObjectMap::ObjID curBB_;
+    util::SparseBitmap<ObjectMap::ObjID> predBBs_;
     //}}}
   };
 
@@ -479,21 +664,16 @@ class ContextCache {
 
   ContextID find(StackCache::StackID stack, ObjectMap::ObjID bb_id,
       ObjectMap &omap, const StackCache &stack_info,
-      const FunctionCallInfo &call_info) {
+      const FunctionCallInfo &call_info,
+      const NodeMap &nmap,
+      SEG &function_graph) {
     auto rc_pr = cache_.emplace(std::piecewise_construct,
         std::make_tuple(stack, bb_id),
         std::make_tuple(contexts_.size()));
 
     if (rc_pr.second) {
-      /*
-      llvm::dbgs() << "Creating context with stack: {";
-      for (auto elm : stack.stack()) {
-        llvm::dbgs() << " " << elm;
-      }
-      llvm::dbgs() << " }\n";
-      */
       contexts_.emplace_back(stack, bb_id, omap, stack_info,
-          call_info);
+          call_info, nmap, function_graph);
     }
 
     return ContextID(rc_pr.first->second);
@@ -522,22 +702,7 @@ class ContextCache {
   //}}}
 };
 
-// Generate a pred-graph of the function calls
-//   Populate each of the function calls w/ used BBs
-
-// Then, compress sccs
-
-// Then, preform a bottom-up traversal, merging callees with callers
-
-// Those are blocks visited by /that/ scc (function set)
-
-// Local function info
-class FunctionGraph {
-};
-
-// Caller info
-
-// To do context sensitive processing we need to 
+// To do context sensitive processing we need to
 class Position {
   //{{{
  public:
@@ -550,14 +715,18 @@ class Position {
 
   Position(const llvm::Value *val,
            ObjectMap &omap, const StackCache &stack_cache,
-           const FunctionCallInfo &call_info) :
+           const FunctionCallInfo &call_info,
+           const NodeMap &nmap,
+           SEG &function_graph) :
         Position(val, StackCache::EmptyStack(),
-            omap, stack_cache, call_info) { }
+            omap, stack_cache, call_info, nmap, function_graph) { }
 
   Position(const llvm::Value *val,
            Context::StackID stack,
            ObjectMap &omap, const StackCache &stack_cache,
-           const FunctionCallInfo &call_info) :
+           const FunctionCallInfo &call_info,
+           const NodeMap &nmap,
+           SEG &function_graph) :
        val_(val) {
     // Now, calculate the context given this value and stack
     if (auto ins = dyn_cast<llvm::Instruction>(val_)) {
@@ -565,7 +734,7 @@ class Position {
       //   current instruction
       // llvm::dbgs() << "Context cache find on : " << *val << "\n";
       context_ = contextCache_.find(stack, omap.getValue(ins->getParent()),
-          omap, stack_cache, call_info);
+          omap, stack_cache, call_info, nmap, function_graph);
       // llvm::dbgs() << "resulting stack: " << context_->stack() << "\n";
     } else if (dyn_cast<llvm::Constant>(val_)) {
       // Ummm, just ignore this sucker?
@@ -573,10 +742,10 @@ class Position {
     } else if (auto arg = dyn_cast<llvm::Argument>(val_)) {
       // Arguments are pulled directly from their potential callsites...
       //   magic callsite remappings here...
-      llvm::dbgs() << "Context cache find on (arg) : " << *val << "\n";
+      // llvm::dbgs() << "Context cache find on (arg) : " << *val << "\n";
       context_ = contextCache_.find(stack,
           omap.getValue(&arg->getParent()->getEntryBlock()),
-          omap, stack_cache, call_info);
+          omap, stack_cache, call_info, nmap, function_graph);
     } else {
       llvm::dbgs() << "position constructor on: " << *val_ << "\n";
       llvm_unreachable("unsupported value?");
@@ -607,7 +776,6 @@ class Position {
   static ContextCache contextCache_;
   //}}}
 };
-
 ContextCache Position::contextCache_;
 
 class StaticSlice : public llvm::ModulePass {
@@ -664,11 +832,12 @@ class StaticSlice : public llvm::ModulePass {
     std::vector<llvm::Function *> fcns;
     std::vector<llvm::Value *> call_dests;
 
-    FunctionCallInfo::VFcnMap fcn_to_callsite;
+    FunctionCallInfo::FcnMap fcn_to_callsite;
     FunctionCallInfo::FcnMap arg_to_callsite;
     FunctionCallInfo::FcnMap callsite_to_fcn;
     FunctionCallInfo::FcnMap rets_of_fcn;
 
+    // Prep function callsites {{{
     llvm::dbgs() << "Scanning for instructions\n";
     for (auto &fcn : m) {
         if (!dynInfo_->isUsed(fcn)) {
@@ -685,20 +854,6 @@ class StaticSlice : public llvm::ModulePass {
           continue;
         }
         for (auto &inst : bb) {
-          /*
-          if (auto si = dyn_cast<llvm::StoreInst>(&inst)) {
-            // We only care about stores of pointers...
-            if (llvm::isa<llvm::PointerType>(si->getOperand(0)->getType())) {
-              store_dests.push_back(si);
-            // OR if we just cast a ptr to an int...
-            } else if (llvm::ConstantExpr *ce =
-                dyn_cast<llvm::ConstantExpr>(si->getOperand(0))) {
-              if (ce->getOpcode() == llvm::Instruction::PtrToInt) {
-                llvm::dbgs() << "FIXME: unsupported constexpr cast to int"
-                  " then store\n";
-              }
-            }
-          } else */
           if (llvm::isa<llvm::ReturnInst>(&inst)) {
             // llvm::dbgs() << "Adding ret for " << fcn.getName() << "\n";
             rets_of_fcn[&fcn].insert(&inst);
@@ -733,7 +888,13 @@ class StaticSlice : public llvm::ModulePass {
     // For each inst in fcn:
     llvm::dbgs() << "Setting up internal structures\n";
     for (auto &fcn : m) {
+      if (!dynInfo_->isUsed(fcn)) {
+        continue;
+      }
       for (auto &bb : fcn) {
+        if (!dynInfo_->isUsed(bb)) {
+          continue;
+        }
         for (auto &inst : bb) {
           // For each call inst, if its indirect, look up what functions it may
           //   point to
@@ -804,6 +965,7 @@ class StaticSlice : public llvm::ModulePass {
         }
       }
     }
+    //}}}
 
     llvm::dbgs() << "Making FunctionCallInfo with fcn_to_callsite size:  " <<
       fcn_to_callsite.size() << "\n";
@@ -812,7 +974,34 @@ class StaticSlice : public llvm::ModulePass {
     callInfo_ = FunctionCallInfo(std::move(callsite_to_fcn),
         std::move(fcn_to_callsite),
         std::move(arg_to_callsite),
-        std::move(rets_of_fcn));
+        std::move(rets_of_fcn),
+        dynInfo_);
+
+    // Setup context information {{{
+    for (auto &fcn : m) {
+      if (!dynInfo_->isUsed(fcn)) {
+        continue;
+      }
+      auto node_id =
+        fcnGraph_.addNode<FunctionNode>(&fcn, omap_);
+      if_debug_enabled(auto ret = )
+        fcnToNode_.emplace(&fcn, node_id);
+      assert(ret.second);
+    }
+
+    // Now, add pred nodes
+    for (auto &pnode : fcnGraph_) {
+      auto &node = cast<FunctionNode>(*pnode);
+      node.addNodePreds(fcnGraph_, fcnToNode_, callInfo_);
+    }
+
+    // Now run Tarjan's for SCCs
+    {
+      RunTarjans<> X(fcnGraph_);
+    }
+
+    // Data can now be accessed (lazily populated) w/ node.getPredBBs()
+    // }}}
 
     llvm::dbgs() << "SLICING\n";
     if (do_rand_slice) {
@@ -843,7 +1032,7 @@ class StaticSlice : public llvm::ModulePass {
         // Create a slice of this instruction:
         llvm::dbgs() << "Slicing: " << inst << "\n";
         auto slice_set = getSlice(Position(&inst, omap_, stackCache_,
-              callInfo_));
+              callInfo_, fcnToNode_, fcnGraph_));
         int64_t slice_insts = 0;
         for (auto val : slice_set) {
           auto inst = dyn_cast<llvm::Instruction>(val);
@@ -879,7 +1068,7 @@ class StaticSlice : public llvm::ModulePass {
           // Create a slice of this instruction:
           llvm::dbgs() << "Slicing: " << inst << "\n";
           auto slice_set = getSlice(Position(&inst, omap_, stackCache_,
-                callInfo_));
+                callInfo_, fcnToNode_, fcnGraph_));
           llvm::dbgs() << "Have slice:\n";
           for (auto val : slice_set) {
             llvm::dbgs() << "  " << *val << "\n";
@@ -937,7 +1126,8 @@ class StaticSlice : public llvm::ModulePass {
       if (auto ri = dyn_cast<llvm::ReturnInst>(pinst)) {
         auto ret_val = ri->getReturnValue();
         if (ret_val != nullptr) {
-          ret.emplace_back(ret_val, stack, omap_, stackCache_, callInfo_);
+          ret.emplace_back(ret_val, stack, omap_, stackCache_, callInfo_,
+              fcnToNode_, fcnGraph_);
         }
       } else if (llvm::isa<llvm::InvokeInst>(pinst)) {
         // Add any args to our op list
@@ -956,7 +1146,7 @@ class StaticSlice : public llvm::ModulePass {
 
         if (!do_skip) {
           // For a call we add a frame to our stack...
-          llvm::dbgs() << "Getting callsite: " << *ci << "\n";
+          // llvm::dbgs() << "Getting callsite: " << *ci << "\n";
           // How to detect recursion?
           // -- don't need to explore ret if thier bb set is equivalent to ours
           auto it = callsite_to_fcn.find(ci);
@@ -964,25 +1154,27 @@ class StaticSlice : public llvm::ModulePass {
             auto &fcns = it->second;
             for (auto fcn : fcns) {
               if (cast<llvm::Function>(fcn)->isDeclaration()) {
-                llvm::CallSite cs(ci);
+                llvm::ImmutableCallSite cs(ci);
                 auto argi = cs.arg_begin();
                 auto arge = cs.arg_end();
                 for (; argi != arge; ++argi) {
                   // llvm::dbgs() << "Have operand: " << *argi->get() << "\n";
-                  ret.push_back(argi->get());
+                  ret.emplace_back(argi->get(), stack, omap_, stackCache_,
+                      callInfo_, fcnToNode_, fcnGraph_);
                 }
               } else {
+                auto ret_it = ret_to_fcn.find(fcn);
+                if (ret_it != std::end(ret_to_fcn)) {
                 for (auto &rinst : ret_to_fcn.at(fcn)) {
                   auto ret_inst = cast<llvm::ReturnInst>(rinst);
-                  auto new_stack = stackCache_.getChild(stack, ret_inst);
+                  auto new_stack = stackCache_.getChild(stack, ret_inst,
+                      fcnToNode_, fcnGraph_);
                   ret.emplace_back(ret_inst, new_stack, omap_, stackCache_,
-                      callInfo_);
-                  // Don't explore the ret pos if their bb list is equivalent to
-                  //   our own -- This solve problems w/ recursion
-                  if (ret.back().predBBs() == pos.predBBs()) {
-                    llvm::dbgs() << "  Popping predBB from stack\n";
-                    ret.pop_back();
-                  }
+                      callInfo_, fcnToNode_, fcnGraph_);
+                }
+                } else {
+                  llvm::dbgs() << "WARNING: Couldn't find return inst for fcn: "
+                    << cast<llvm::Function>(fcn)->getName() << "\n";
                 }
               }
             }
@@ -991,14 +1183,6 @@ class StaticSlice : public llvm::ModulePass {
       } else if (llvm::isa<llvm::AllocaInst>(pinst)) {
         // Don't have any sources for alloc insts, so ignore them
       } else if (llvm::isa<llvm::LoadInst>(pinst)) {
-        // FIXME: This is context dependent
-        // Add all sources which may supply this load...
-        // Add each source from our map
-        // Okay, we iterate the bbs in the context, and see if they alias with
-        //   the load...
-        // We only do so for the loads we haven't already considered for this
-        //   store though...
-        // Get bbs preceeding context:
         auto &bb_set = pos.predBBs();
         auto &visited_set = inst_to_checked_bbs[pinst];
         auto to_visit = bb_set - visited_set;
@@ -1012,7 +1196,6 @@ class StaticSlice : public llvm::ModulePass {
         for (auto bb_id : to_visit) {
           auto bb = cast<llvm::BasicBlock>(omap_.valueAtID(bb_id));
           for (auto &inst : *bb) {
-            // FIXME: exclude stores to non-ptrs
             if (llvm::isa<llvm::StoreInst>(inst)) {
               auto st_dest = inst.getOperand(1);
 
@@ -1023,7 +1206,8 @@ class StaticSlice : public llvm::ModulePass {
                       llvm::AliasAnalysis::NoAlias) {
                   // llvm::dbgs() << "Adding inst: " << inst << "\n";
                   // llvm::dbgs() << "  with stack: " << stack << "\n";  // NOLINT
-                  ret.emplace_back(&inst, stack, omap_, stackCache_, callInfo_);
+                  ret.emplace_back(&inst, StackCache::EmptyStack(), omap_,
+                      stackCache_, callInfo_, fcnToNode_, fcnGraph_);
                 }
               // OR if we just cast a ptr to an int...
               } else if (llvm::ConstantExpr *ce =
@@ -1043,53 +1227,53 @@ class StaticSlice : public llvm::ModulePass {
           " stack is: " << stack << "\n";;
         */
         ret.emplace_back(si->getOperand(0), stack, omap_, stackCache_,
-            callInfo_);
+            callInfo_, fcnToNode_, fcnGraph_);
         /*
         llvm::dbgs() << "Creating pos at: " << *si->getOperand(1) <<
           " stack is: " << stack << "\n";  // NOLINT
         */
         ret.emplace_back(si->getOperand(1), stack, omap_, stackCache_,
-            callInfo_);
+            callInfo_, fcnToNode_, fcnGraph_);
       } else if (auto gep = dyn_cast<llvm::GetElementPtrInst>(pinst)) {
         // Add the pointed to struct to our op list
         ret.emplace_back(gep->getOperand(0), stack, omap_, stackCache_,
-            callInfo_);
+            callInfo_, fcnToNode_, fcnGraph_);
       } else if (auto si = dyn_cast<llvm::SelectInst>(pinst)) {
         ret.emplace_back(si->getOperand(1), stack, omap_, stackCache_,
-            callInfo_);
+            callInfo_, fcnToNode_, fcnGraph_);
         ret.emplace_back(si->getOperand(2), stack, omap_, stackCache_,
-            callInfo_);
+            callInfo_, fcnToNode_, fcnGraph_);
       } else if (auto phi = dyn_cast<llvm::PHINode>(pinst)) {
         // Add each phi source to our op list
         int num_vals = phi->getNumIncomingValues();
         for (int i = 0; i < num_vals; i++) {
           ret.emplace_back(phi->getIncomingValue(i), stack, omap_, stackCache_,
-              callInfo_);
+              callInfo_, fcnToNode_, fcnGraph_);
         }
       } else if (auto ui = dyn_cast<llvm::UnaryInstruction>(pinst)) {
         ret.emplace_back(ui->getOperand(0), stack, omap_, stackCache_,
-            callInfo_);
+            callInfo_, fcnToNode_, fcnGraph_);
         // Add the op to our op list
       } else if (auto bi = dyn_cast<llvm::BinaryOperator>(pinst)) {
         ret.emplace_back(bi->getOperand(0), stack, omap_, stackCache_,
-            callInfo_);
+            callInfo_, fcnToNode_, fcnGraph_);
         ret.emplace_back(bi->getOperand(1), stack, omap_, stackCache_,
-            callInfo_);
+            callInfo_, fcnToNode_, fcnGraph_);
         // Add each op to our op list
       } else if (dyn_cast<llvm::FenceInst>(pinst)) {
         // Ignore fence
       } else if (auto ci = dyn_cast<llvm::CmpInst>(pinst)) {
         ret.emplace_back(ci->getOperand(0), stack, omap_, stackCache_,
-            callInfo_);
+            callInfo_, fcnToNode_, fcnGraph_);
         ret.emplace_back(ci->getOperand(1), stack, omap_, stackCache_,
-            callInfo_);
+            callInfo_, fcnToNode_, fcnGraph_);
       } else if (auto si = dyn_cast<llvm::SwitchInst>(pinst)) {
         ret.emplace_back(si->getCondition(), stack, omap_, stackCache_,
-            callInfo_);
+            callInfo_, fcnToNode_, fcnGraph_);
       } else if (auto bi = dyn_cast<llvm::BranchInst>(pinst)) {
         if (bi->isConditional()) {
           ret.emplace_back(bi->getCondition(), stack, omap_, stackCache_,
-              callInfo_);
+              callInfo_, fcnToNode_, fcnGraph_);
         }
       } else {
         llvm::dbgs() << "inst is: " << *pinst << "\n";
@@ -1097,13 +1281,13 @@ class StaticSlice : public llvm::ModulePass {
       }
 
       // Also deal w/ control flow info:
-      if (do_control_flow) {
+      if (!no_control_flow) {
         auto it = dom_.find(pinst->getParent());
         if (it != std::end(dom_)) {
           auto dom = it->second;
 
           ret.emplace_back(dom->getTerminator(), stack, omap_, stackCache_,
-              callInfo_);
+              callInfo_, fcnToNode_, fcnGraph_);
         }
       }
       // If its not an instruction it must be an Argument... (i hope)
@@ -1127,11 +1311,15 @@ class StaticSlice : public llvm::ModulePass {
     } else {
       auto arg = cast<llvm::Argument>(v);
 
-      llvm::dbgs() << "Arg is: " << arg->getParent()->getName() << ": " <<
-        *arg << "\n";
-      for (auto &val : arg_to_callsite.at(arg)) {
-        ret.emplace_back(val, stackCache_.getParent(pos.stack()),
-            omap_, stackCache_, callInfo_);
+      auto callsite_it = arg_to_callsite.find(arg);
+      if (callsite_it != std::end(arg_to_callsite)) {
+        for (auto &val : arg_to_callsite.at(arg)) {
+          ret.emplace_back(val, stackCache_.getParent(pos.stack()),
+              omap_, stackCache_, callInfo_, fcnToNode_, fcnGraph_);
+        }
+      } else {
+        llvm::dbgs() << "WARNING:  couldn't find callsite for arg: "
+            << arg->getParent()->getName() << ": " << *arg << "\n";
       }
     }
 
@@ -1152,29 +1340,35 @@ class StaticSlice : public llvm::ModulePass {
     worklist.push_back(pos);
     ret.insert(pos.val());
 
-    llvm::dbgs() << "Initial stack is: " << pos.stack() << "\n";
+    // llvm::dbgs() << "Initial stack is: " << pos.stack() << "\n";
 
     bool ch = true;
     while (ch) {
       ch = false;
       // Now, go to town
       for (auto &dest_val : worklist) {
+        /*
         if (dest_val.hasContext()) {
           llvm::dbgs() << "worklist stack is: " << dest_val.stack() << "\n";
         }
+        */
         // Find sources for instruction
         // NOTE: Tricky pts are loads, and calls
         std::vector<Position> srcs = getSources(dest_val, inst_to_checked_bbs);
         // Add those sources to worklist
         for (auto src : srcs) {
+          /*
           if (src.val() == nullptr) {
             llvm::dbgs() << "dest_val is: " << *dest_val.val() << "\n";
           }
+          */
           assert(src.val() != nullptr);
           if (ret.find(src.val()) == std::end(ret)) {
+            /*
             if (src.hasContext()) {
               llvm::dbgs() << "src_stack is: " << src.stack() << "\n";
             }
+            */
             next_worklist.push_back(src);
             ret.insert(src.val());
             ch = true;
@@ -1195,6 +1389,9 @@ class StaticSlice : public llvm::ModulePass {
   ObjectMap omap_;
 
   llvm::AliasAnalysis *alias_;
+
+  NodeMap fcnToNode_;
+  SEG fcnGraph_;
 
   FunctionCallInfo callInfo_;
   StackCache stackCache_;
@@ -1220,7 +1417,6 @@ class StaticSlice : public llvm::ModulePass {
 //   pred_insts = findDirectPred(pos);
 //       Uses context to only search predBBs for sol
 //   NOTE:  Determine any stack updates here -- (for call or Ret insts)
-//   FIXME: Recursion?
 //    -- solve w/ some relation if the set of pred BB's doesn't change...
 //   if (pred_ins.bb != pos.ins.bb || stack_update)
 //     pred_con = getContext(pred_ins.bb, pos.con.stack);
