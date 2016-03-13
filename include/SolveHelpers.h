@@ -180,14 +180,14 @@ class Worklist {
 */
 
 // FIXME: ?BDDs?
-class PtstoSet {
+class SVPtstoSet {
   //{{{
  public:
-    PtstoSet() = default;
-    explicit PtstoSet(const Bitmap &dyn_pts) :
+    SVPtstoSet() = default;
+    explicit SVPtstoSet(const Bitmap &dyn_pts) :
         dynPtsto_(std::unique_ptr<Bitmap>(new Bitmap(dyn_pts))) { }
 
-    PtstoSet(const PtstoSet &rhs) {
+    SVPtstoSet(const SVPtstoSet &rhs) {
       ptsto_ = rhs.ptsto_;
       if (rhs.dynPtsto_ != nullptr) {
         dynPtsto_ = std::unique_ptr<Bitmap>(new Bitmap(*rhs.dynPtsto_));
@@ -195,9 +195,9 @@ class PtstoSet {
         dynPtsto_ = nullptr;
       }
     }
-    PtstoSet(PtstoSet &&) = default;
+    SVPtstoSet(SVPtstoSet &&) = default;
 
-    PtstoSet &operator=(const PtstoSet &rhs) {
+    SVPtstoSet &operator=(const SVPtstoSet &rhs) {
       ptsto_ = rhs.ptsto_;
       if (rhs.dynPtsto_ != nullptr) {
         dynPtsto_ = std::unique_ptr<Bitmap>(new Bitmap(*rhs.dynPtsto_));
@@ -206,7 +206,7 @@ class PtstoSet {
       }
       return *this;
     }
-    PtstoSet &operator=(PtstoSet &&) = default;
+    SVPtstoSet &operator=(SVPtstoSet &&) = default;
 
     typedef typename SEG::NodeID NodeID;
     bool set(ObjectMap::ObjID id) {
@@ -232,7 +232,7 @@ class PtstoSet {
       dynPtsto_ = std::unique_ptr<Bitmap>(new Bitmap(dyn_set));
     }
 
-    bool assign(const PtstoSet &rhs) {
+    bool assign(const SVPtstoSet &rhs) {
       Bitmap init = ptsto_;
       ptsto_.clear();
       ptsto_ |= rhs.ptsto_;
@@ -246,27 +246,27 @@ class PtstoSet {
       ptsto_.clear();
     }
 
-    bool operator==(const PtstoSet &rhs) const {
+    bool operator==(const SVPtstoSet &rhs) const {
       return ptsto_ == rhs.ptsto_;
     }
 
-    bool operator!=(const PtstoSet &rhs) const {
+    bool operator!=(const SVPtstoSet &rhs) const {
       return ptsto_ != rhs.ptsto_;
     }
 
-    bool operator&=(const PtstoSet &rhs) {
+    bool operator&=(const SVPtstoSet &rhs) {
       return ptsto_ &= rhs.ptsto_;
     }
 
-    PtstoSet operator&(const PtstoSet &rhs) const {
-      PtstoSet ret(*this);
+    SVPtstoSet operator&(const SVPtstoSet &rhs) const {
+      SVPtstoSet ret(*this);
 
       ret &= rhs;
 
       return ret;
     }
 
-    bool operator|=(const PtstoSet &rhs) {
+    bool operator|=(const SVPtstoSet &rhs) {
       bool ch = ptsto_.orWithIntersect(rhs.ptsto_, dynPtsto_.get());
 
       return ch;
@@ -281,7 +281,7 @@ class PtstoSet {
       return (init != ptsto_);
     }
 
-    bool orOffs(const PtstoSet &rhs, int32_t offs,
+    bool orOffs(const SVPtstoSet &rhs, int32_t offs,
         const ObjectMap::StructMap &struct_set) {
       if (offs == 0) {
         return operator|=(rhs);
@@ -330,7 +330,7 @@ class PtstoSet {
       return ptsto_.test(obj_id.val());
     }
 
-    bool intersectsIgnoring(PtstoSet &rhs, ObjectMap::ObjID ignore) {
+    bool intersectsIgnoring(SVPtstoSet &rhs, ObjectMap::ObjID ignore) {
       bool ret = false;
 
       bool lhs_add = ptsto_.test(ignore.val());
@@ -493,7 +493,7 @@ class PtstoSet {
 
 #ifndef SPECSFS_IS_TEST
     friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
-        const PtstoSet &ps) {
+        const SVPtstoSet &ps) {
       os << "{";
       std::for_each(std::begin(ps), std::end(ps),
           [&os] (ObjectMap::ObjID id) {
@@ -520,6 +520,9 @@ class PtstoSet {
     std::unique_ptr<Bitmap> dynPtsto_ = nullptr;
   //}}}
 };
+
+
+typedef SVPtstoSet PtstoSet;
 
 class TopLevelPtsto {
   //{{{

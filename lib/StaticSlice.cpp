@@ -130,11 +130,15 @@ class FunctionNode : public SEG::Node {
  public:
   explicit FunctionNode(SEG::NodeID node_id,
       const llvm::Function *fcn,
+      const UnusedFunctions &dyn_info,
       ObjectMap &omap) :
         SEG::Node(NodeKind::HUNode, node_id),
         func_(fcn) {
     // Populate my predBBs_ LOCALLY (locally visited basic blocks)
     for (auto &bb : *fcn) {
+      if (!dyn_info.isUsed(bb)) {
+        continue;
+      }
       predBBs_.set(omap.getValue(&bb));
 
       // Update my CALLEES set
@@ -983,7 +987,7 @@ class StaticSlice : public llvm::ModulePass {
         continue;
       }
       auto node_id =
-        fcnGraph_.addNode<FunctionNode>(&fcn, omap_);
+        fcnGraph_.addNode<FunctionNode>(&fcn, *dynInfo_, omap_);
       if_debug_enabled(auto ret = )
         fcnToNode_.emplace(&fcn, node_id);
       assert(ret.second);
@@ -1110,9 +1114,12 @@ class StaticSlice : public llvm::ModulePass {
     // If its an instruction:
     if (auto pinst = dyn_cast<llvm::Instruction>(v)) {
       // If this is in an unused BB, ignore
+      /*
       if (!dynInfo_->isUsed(pinst->getParent())) {
         return ret;
       }
+      */
+      assert(dynInfo_->isUsed(pinst->getParent()));
 
       auto stack = pos.stack();
       /*
@@ -1191,10 +1198,17 @@ class StaticSlice : public llvm::ModulePass {
         visited_set |= to_visit;
 
         auto ld_src = pinst->getOperand(0);
+        /*
+        llvm::dbgs() << "ld isnt is: " <<
+          pinst->getParent()->getParent()->getName() << ": " <<
+          pinst->getParent()->getName() << " -- "
+          << *pinst << "\n";
+          */
 
         // Now visit all the bbs we need to
         for (auto bb_id : to_visit) {
           auto bb = cast<llvm::BasicBlock>(omap_.valueAtID(bb_id));
+          assert(dynInfo_->isUsed(bb));
           for (auto &inst : *bb) {
             if (llvm::isa<llvm::StoreInst>(inst)) {
               auto st_dest = inst.getOperand(1);
@@ -1220,6 +1234,8 @@ class StaticSlice : public llvm::ModulePass {
             }
           }
         }
+
+        // llvm::dbgs() << "END LD INST\n";
       } else if (auto si = dyn_cast<llvm::StoreInst>(pinst)) {
         // Add the operands (both?) to our op list
         /*
@@ -1247,6 +1263,12 @@ class StaticSlice : public llvm::ModulePass {
         // Add each phi source to our op list
         int num_vals = phi->getNumIncomingValues();
         for (int i = 0; i < num_vals; i++) {
+          auto phi_val = phi->getIncomingValue(i);
+          if (auto pinst = dyn_cast<llvm::Instruction>(phi_val)) {
+            if (!dynInfo_->isUsed(pinst->getParent())) {
+              continue;
+            }
+          }
           ret.emplace_back(phi->getIncomingValue(i), stack, omap_, stackCache_,
               callInfo_, fcnToNode_, fcnGraph_);
         }

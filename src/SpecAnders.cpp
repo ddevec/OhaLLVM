@@ -853,6 +853,7 @@ llvm::AliasAnalysis::AliasResult SpecAnders::alias(const Location &L1,
   ObjectMap::ObjID obj_id1 = omap_.getValOrConstRep(v1);
   ObjectMap::ObjID obj_id2 = omap_.getValOrConstRep(v2);
   // llvm::dbgs() << "v2: " << *v2 << " obj_id2: " << obj_id2 << "\n";
+  // llvm::dbgs() << "v1: " << *v1 << " obj_id1: " << obj_id1 << "\n";
 
   auto &node1 = graph_.getNode(obj_id1);
   auto &node2 = graph_.getNode(obj_id2);
