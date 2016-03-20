@@ -11,6 +11,7 @@
 #include <map>
 #include <string>
 #include <sstream>
+#include <tuple>
 #include <vector>
 
 #include "llvm/BasicBlock.h"
@@ -33,6 +34,7 @@
 #include "include/SpecSFS.h"
 #include "include/LLVMHelper.h"
 #include "include/AllocInfo.h"
+#include "include/ExtInfo.h"
 #include "include/lib/UnusedFunctions.h"
 
 static llvm::cl::opt<bool>
@@ -153,6 +155,8 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
   // Notify module of external functions
   addExternalFunctions(m);
 
+  int32_t gep_id = 0;
+
   // Iterate each instruction, keeping lists
   for (auto &fcn : m) {
     // Ignore functions without bodies
@@ -164,7 +168,6 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
     int32_t fcn_num_allocas = 0;
     std::vector<llvm::Instruction *> ret_list;
 
-
     // FIXME: Need to support context swap!  setcontext swapcontext and
     //    longjmp, siglongjmp...
     // Means I also need to associate contexts...
@@ -174,6 +177,7 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
       // Create list to hold all malloc/free Value*s that needs instrumenting
       // within this function
       std::vector<llvm::Instruction *> alloca_list;
+      std::vector<llvm::Instruction *> addr_list;
       std::vector<llvm::Instruction *> malloc_list;
       std::vector<llvm::Instruction *> free_list;
       std::vector<llvm::Instruction *> setjmp_list;
@@ -204,6 +208,12 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
             if (AllocInfo::fcnIsFree(fcn)) {
               free_list.push_back(&inst);
             }
+
+            // Functions which inherit a static memory space
+            auto ext_val = ExtInfo::returnsExtInfo(fcn);
+            if (ext_val != ObjectMap::NullValue) {
+              addr_list.push_back(&inst);
+            }
             // Also check for setjmp/longjmp
             if (fcn->getName() == "__sigsetjmp" ||
                 fcn->getName() == "__setjmp") {
@@ -233,6 +243,7 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
         }
 
         if (auto gep = dyn_cast<llvm::GetElementPtrInst>(&inst)) {
+          // Only add the gep if it is from a structure, and has a known type
           gep_list.push_back(gep);
         }
       }
@@ -446,6 +457,46 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
         }
       }
 
+      for (auto val : addr_list) {
+        auto ci = cast<llvm::CallInst>(val);
+
+        // Insert for static alloca's in the functions entry BB before the first
+        //    non-alloca inst
+        // llvm::Instruction *insert_pos = alloca_insert_start;
+        // If this isn't a static alloca, do instrumentation before it
+        // if (!ai->isStaticAlloca()) {
+        // }
+        // The address is returned from the alloc
+        // The size is gotten from the alloc...
+        //   sizeof(type) * arraysize
+
+        auto callee = LLVMHelper::getFcnFromCall(ci);
+
+        auto obj_id = ExtInfo::returnsExtInfo(callee);
+
+        auto res_tup = ExtInfo::getExtInfo(m, ci, ci, callee);
+        auto array_start = std::get<0>(res_tup);
+        auto insert_after = std::get<2>(res_tup);
+
+        // First, type, then type size
+        auto type_size = std::get<1>(res_tup);
+
+        // Add the mult inst?...
+        auto total_size_val = type_size;
+
+        auto i8_ptr_val = new llvm::BitCastInst(array_start, i8_ptr_type);
+        i8_ptr_val->insertAfter(insert_after);
+        // pass the final result to the function
+        // Make the call
+        std::vector<llvm::Value *> args;
+        args.push_back(llvm::ConstantInt::get(i32_type, obj_id.val()));
+        args.push_back(total_size_val);
+        args.push_back(i8_ptr_val);
+        auto call_insn = llvm::CallInst::Create(malloc_fcn, args);
+        call_insn->insertAfter(i8_ptr_val);
+      }
+
+
       // We need to add objid updates to call instructions with constant
       // expression arguments -- they may define new nodes which could be
       // queries
@@ -485,14 +536,15 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
           auto &gep = *pgep;
 
           auto offs = LLVMHelper::getGEPOffs(omap, gep);
-          if (offs > 0 || LLVMHelper::gepIsArrayAccess(gep)) {
+          // If the offset > 0 AND this ISN'T an array access!
+          if (offs > 0 && !LLVMHelper::gepIsArrayAccess(gep)) {
             // Okay, add the gep instruction call....
             llvm::Instruction *i8_ptr_val = pgep;
 
             std::vector<llvm::Value *> args;
             // First, get the gep offset...
             args.push_back(llvm::ConstantInt::get(i32_type,
-                  LLVMHelper::getGEPOffs(omap, gep)));
+                  offs));
 
             // The base pointer
             auto base_ptr = gep.getOperand(0);
@@ -527,6 +579,9 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
             auto type_size_ce = LLVMHelper::calcTypeOffset(m,
                 LLVMHelper::getLowestType(pgep->getType()), insert_pos);
             args.push_back(type_size_ce);
+            args.push_back(llvm::ConstantInt::get(i32_type, gep_id));
+            gep_id++;
+            // llvm::dbgs() << "gep_id is now: " << gep_id << "\n";
 
             auto gep_inst_call = llvm::CallInst::Create(
                 gep_fcn, args);
@@ -795,6 +850,7 @@ void InstrDynPtsto::addExternalFunctions(llvm::Module &m) {
     gep_fcn_type_args.push_back(i8_ptr_type);
     gep_fcn_type_args.push_back(i8_ptr_type);
     gep_fcn_type_args.push_back(i64_type);
+    gep_fcn_type_args.push_back(i32_type);
     // Create the function type
     auto gep_fcn_type = llvm::FunctionType::get(
         void_type,
@@ -830,6 +886,7 @@ void InstrDynPtsto::addExternalFunctions(llvm::Module &m) {
     main2_type_args.push_back(i32_type);
     main2_type_args.push_back(i32_type);
     main2_type_args.push_back(i32_type);
+    main2_type_args.push_back(i32_type);
     main2_type_args.push_back(i8_ptr_type->getPointerTo());
     // Create the function type
     auto main2_fcn_type = llvm::FunctionType::get(
@@ -842,10 +899,12 @@ void InstrDynPtsto::addExternalFunctions(llvm::Module &m) {
         MainInit2Name, &m);
   }
 
-  // InitMainArgs3(i32 argc, char **argv, char **envp)
+  // InitMainArgs3(i32 argv_id, i32 argv_obj_id, i32 envp_id,
+  //      char **argv, char **envp)
   {
     // Create the args
     std::vector<llvm::Type *> main3_type_args;
+    main3_type_args.push_back(i32_type);
     main3_type_args.push_back(i32_type);
     main3_type_args.push_back(i32_type);
     main3_type_args.push_back(i32_type);
@@ -910,6 +969,8 @@ void InstrDynPtsto::addInitializationCalls(llvm::Module &m) {
           ObjectMap::ArgvValueObject.val()));
     main_args.push_back(llvm::ConstantInt::get(i32_type,
           ObjectMap::ArgvObjectObject.val()));
+    main_args.push_back(llvm::ConstantInt::get(i32_type,
+          ObjectMap::EnvObject.val()));
 
     std::for_each(main_fcn->arg_begin(), main_fcn->arg_end(),
         [&main_args] (llvm::Argument &arg) {
@@ -920,11 +981,11 @@ void InstrDynPtsto::addInitializationCalls(llvm::Module &m) {
     if (main_args.size() != 2) {
       llvm::Function *main_init_fcn;
 
-      if (main_args.size() == 3) {
+      if (main_args.size() == 4) {
         llvm_unreachable("Main has 1 arg?");
-      } else if (main_args.size() == 4) {
-        main_init_fcn = m.getFunction(MainInit2Name);
       } else if (main_args.size() == 5) {
+        main_init_fcn = m.getFunction(MainInit2Name);
+      } else if (main_args.size() == 6) {
         main_init_fcn = m.getFunction(MainInit3Name);
       } else {
         llvm_unreachable("Main has more than 3 args?");

@@ -23,6 +23,7 @@
 #include "include/Andersens.h"
 #include "include/ConstraintGraph.h"
 #include "include/DUG.h"
+#include "include/ExtInfo.h"
 #include "include/ObjectMap.h"
 #include "include/SpecSFS.h"
 #include "include/lib/IndirFcnTarget.h"
@@ -830,31 +831,19 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
     }
   }
 
+  auto alloc_id = ExtInfo::returnsExtInfo(F);
+  if (alloc_id != ObjectMap::NullValue) {
+    cg.add(ConstraintType::AddressOf,
+        omap.getValue(CS.getInstruction()),
+        alloc_id);
+    return true;
+  }
+
   // Result = Arg3
   if (F->getName() == "gcvt") {
     cg.add(ConstraintType::Copy,
         omap.getValue(CS.getInstruction()),
         getValue(cg, omap, CS.getArgument(2)));
-    return true;
-  }
-  // term info stuffs...
-  if (F->getName() == "tigetstr" ||
-      F->getName() == "tparm") {
-    // Set the output to be terminfo static data
-    cg.add(ConstraintType::AddressOf,
-        omap.getValue(CS.getInstruction()),
-        ObjectMap::TermInfoObject);
-    return true;
-  }
-
-  // c stdlib returning fcns
-  if (F->getName() == "strerror" ||
-      F->getName() == "gmtime" ||
-      F->getName() == "readdir") {
-    // Set the output to be terminfo static data
-    cg.add(ConstraintType::AddressOf,
-        omap.getValue(CS.getInstruction()),
-        ObjectMap::CLibObject);
     return true;
   }
 
@@ -870,24 +859,6 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
     return true;
   }
 
-  // Locale functions
-  if (F->getName() == "getlocale" ||
-      F->getName() == "setlocale" ||
-      F->getName() == "nl_langinfo") {
-    cg.add(ConstraintType::AddressOf,
-        omap.getValue(CS.getInstruction()),
-        ObjectMap::LocaleObject);
-    return true;
-  }
-
-  // Errno
-  if (F->getName() == "__errno_location") {
-    cg.add(ConstraintType::AddressOf,
-        omap.getValue(CS.getInstruction()),
-        ObjectMap::ErrnoObject);
-    return true;
-  }
-
   // FIXME: Instead treat it as an alloc, unclear if this is best
   /*
   // getenv -- This is currently linked to argv...
@@ -898,20 +869,6 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
     return true;
   }
   */
-  if (F->getName() == "opendir") {
-    cg.add(ConstraintType::AddressOf,
-      omap.getValue(CS.getInstruction()),
-      ObjectMap::DirObject);
-    return true;
-  }
-
-  // CType Functions
-  if (F->getName() == "__ctype_b_loc") {
-    cg.add(ConstraintType::AddressOf,
-        omap.getValue(CS.getInstruction()),
-        ObjectMap::CTypeObject);
-    return true;
-  }
 
   if (F->getName() == "realpath") {
     const llvm::FunctionType *FTy = F->getFunctionType();
@@ -2400,7 +2357,7 @@ bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
               auto arg_id = omap.getValue(&arg);
               assert(arg_id != ObjectMap::NullValue);
               assert(arg_id != ObjectMap::NullObjectValue);
-              auto id = omap.createPhonyID();
+              auto id = omap.createPhonyObjectID(&arg);
 
               auto con_id = cg.add(ConstraintType::AddressOf, arg_id, id);
               assert(con_id != ConstraintGraph::ConsID::invalid());

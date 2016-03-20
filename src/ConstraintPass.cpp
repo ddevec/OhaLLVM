@@ -106,6 +106,12 @@ bool ConstraintPass::runOnModule(llvm::Module &m) {
     specAssumptions_.updateObjIDs(remap);
   }
 
+  // After objects are lowered they shouldn't be moved again, so we setup our
+  //   ptstoset info
+  llvm::dbgs() << "Ptsto init start\n";
+  PtstoSet::PtstoSetInit(omap_, cg_);
+  llvm::dbgs() << "Ptsto init end\n";
+
   // We don't change code.  Ever.
   return false;
 }

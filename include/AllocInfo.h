@@ -32,7 +32,7 @@ class AllocInfo {
         callee->getName() != "fdopen" &&
         callee->getName() != "fopen64" &&
         // callee->getName() != "opendir" &&
-        callee->getName() != "getenv" &&
+        // callee->getName() != "getenv" &&
         // callee->getName() != "Perl_safesysmalloc" &&
         // callee->getName() != "Perl_safesysrealloc" &&
         callee->getName() != "_Znwj" &&  // operator new(unsigned int)
@@ -47,8 +47,7 @@ class AllocInfo {
 
   static bool mallocNotStruct(const llvm::Function *callee) {
     // Allocates strings, not structures
-    if (callee->getName() == "getenv" ||
-        callee->getName() == "strdup") {
+    if (callee->getName() == "strdup") {
       return true;
     }
 
@@ -96,8 +95,7 @@ class AllocInfo {
     }
 
     // Freaking strdup...
-    if (callee->getName() == "strdup" ||
-        callee->getName() == "getenv") {
+    if (callee->getName() == "strdup") {
       // Now call strlen...
       auto strlen_fcn = m.getFunction("strlen");
       // I may have to create an external linkage for this in some instances...

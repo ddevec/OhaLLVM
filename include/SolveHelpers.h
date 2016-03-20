@@ -5,6 +5,10 @@
 #ifndef INCLUDE_SOLVEHELPERS_H_
 #define INCLUDE_SOLVEHELPERS_H_
 
+#include <bdd.h>
+#include <bvec.h>
+#include <fdd.h>
+
 #include <algorithm>
 #include <limits>
 #include <map>
@@ -15,6 +19,7 @@
 
 #include "llvm/ADT/SparseBitVector.h"
 
+#include "include/ConstraintGraph.h"
 #include "include/SEG.h"
 #include "include/ObjectMap.h"
 
@@ -180,6 +185,461 @@ class Worklist {
 */
 
 // FIXME: ?BDDs?
+class BddPtstoSet {
+  //{{{
+ public:
+    BddPtstoSet() {
+      assert(bddInitd());
+    }
+
+    explicit BddPtstoSet(const Bitmap &dyn_pts) :
+        dynPtsto_(bitmapToBdd(dyn_pts)) {
+      assert(bddInitd());
+    }
+
+    BddPtstoSet(const BddPtstoSet &rhs) {
+      ptsto_ = rhs.ptsto_;
+      if (rhs.dynPtsto_ != nullptr) {
+        dynPtsto_ = std::unique_ptr<bdd>(new bdd(*rhs.dynPtsto_));
+      } else {
+        dynPtsto_ = nullptr;
+      }
+    }
+    BddPtstoSet(BddPtstoSet &&) = default;
+
+    BddPtstoSet &operator=(const BddPtstoSet &rhs) {
+      ptsto_ = rhs.ptsto_;
+      if (rhs.dynPtsto_ != nullptr) {
+        dynPtsto_ = std::unique_ptr<bdd>(new bdd(*rhs.dynPtsto_));
+      } else {
+        dynPtsto_ = nullptr;
+      }
+      return *this;
+    }
+    BddPtstoSet &operator=(BddPtstoSet &&) = default;
+
+    static void PtstoSetInit(ObjectMap &omap, ConstraintGraph &cg) {
+      if (!bddInitd()) {
+        bddInit(omap, cg);
+      }
+    }
+
+    typedef typename SEG::NodeID NodeID;
+    bool set(ObjectMap::ObjID id) {
+      auto init = ptsto_;
+      ptsto_ |= getFddVar(id);
+      return (init != ptsto_);
+    }
+
+    void reset(ObjectMap::ObjID id) {
+      ptsto_ &= !getFddVar(id);
+    }
+
+    size_t getSizeNoStruct(ObjectMap &omap) const {
+      std::set<const llvm::Value *> pts_set;
+
+      for (auto obj_id : *this) {
+        auto val = omap.valueAtID(obj_id);
+        pts_set.insert(val);
+      }
+
+      return pts_set.size();
+    }
+
+    void setDynSet(const Bitmap &dyn_set) {
+      dynPtsto_ = bitmapToBdd(dyn_set);
+    }
+
+    bool assign(const BddPtstoSet &rhs) {
+      bdd init = ptsto_;
+      ptsto_ = rhs.ptsto_;
+
+      clearDynPtsto();
+
+      return (init != ptsto_);
+    }
+
+    void clear() {
+      ptsto_ = bddfalse;
+    }
+
+    bool operator==(const BddPtstoSet &rhs) const {
+      return ptsto_ == rhs.ptsto_;
+    }
+
+    bool operator!=(const BddPtstoSet &rhs) const {
+      return ptsto_ != rhs.ptsto_;
+    }
+
+    bool operator&=(const BddPtstoSet &rhs) {
+      auto init = ptsto_;
+      ptsto_ &= rhs.ptsto_;
+
+      return (init != ptsto_);
+    }
+
+    BddPtstoSet operator&(const BddPtstoSet &rhs) const {
+      BddPtstoSet ret(*this);
+
+      ret &= rhs;
+
+      return ret;
+    }
+
+    bool operator|=(const BddPtstoSet &rhs) {
+      auto init = ptsto_;
+
+      ptsto_ |= rhs.ptsto_;
+
+      if (init != ptsto_) {
+        clearDynPtsto();
+      }
+
+      return init != ptsto_;
+    }
+
+    bool operator|=(ObjectMap::ObjID &id) {
+      bdd init = ptsto_;
+      ptsto_ |= getFddVar(id);
+      if (ptsto_ != init) {
+        clearDynPtsto();
+      }
+      return (init != ptsto_);
+    }
+
+    bool orOffs(const BddPtstoSet &rhs, int32_t offs) {
+      if (offs == 0) {
+        return operator|=(rhs);
+      }
+
+      bdd init = ptsto_;
+
+      // Do an or offs
+      ptsto_ |= bdd_replace(bdd_relprod(rhs.ptsto_, geps_[offs], ptsDom_),
+          gepToPts_);
+
+      if (init != ptsto_) {
+        clearDynPtsto();
+      }
+
+      return (init != ptsto_);
+    }
+
+    bool intersectWith(const bdd &bmp) {
+      auto init = ptsto_;
+      ptsto_ &= bmp;
+      return (ptsto_ != init);
+    }
+
+    bool test(ObjectMap::ObjID obj_id) {
+      bdd ret = ptsto_ & getFddVar(obj_id);
+      return ret != bddfalse;
+    }
+
+    bool intersectsIgnoring(BddPtstoSet &rhs, ObjectMap::ObjID ignore) {
+      auto rhs_tmp = rhs.ptsto_;
+      auto lhs_tmp = ptsto_;
+
+      rhs_tmp &= getFddVar(ignore);
+      lhs_tmp &= getFddVar(ignore);
+
+      auto ret = ptsto_ & rhs.ptsto_;
+
+      return ret != bddfalse;
+    }
+
+    size_t count() const {
+      updateBddVec();
+      return bddVec_->size();
+    }
+
+    size_t singleton() const {
+      updateBddVec();
+      return bddVec_->size() == 1;
+    }
+
+    bool empty() const {
+      return ptsto_ == bddfalse;
+    }
+
+    class const_iterator {
+      //{{{
+     public:
+        typedef std::forward_iterator_tag iterator_category;
+        typedef ObjectMap::ObjID value_type;
+        typedef int32_t difference_type;
+        typedef ObjectMap::ObjID * pointer;
+        typedef ObjectMap::ObjID & reference;
+
+        // Constructor {{{
+        explicit const_iterator(std::vector<ObjectMap::ObjID>::iterator itr) :
+          itr_(itr) { }
+        //}}}
+
+        // Operators {{{
+        bool operator==(const const_iterator &it) const {
+          return (itr_ == it.itr_);
+        }
+
+        bool operator!=(const const_iterator &it) const {
+          return !operator==(it);
+        }
+
+        const value_type operator*() const {
+          return ObjectMap::ObjID(itr_.operator*());
+        }
+
+        /*
+        value_type operator->() const {
+          return ObjectMap::ObjID(itr_.operator->());
+        }
+        */
+
+        const_iterator &operator++() {
+          ++itr_;
+          return *this;
+        }
+
+        const_iterator operator++(int) {
+          const_iterator tmp(*this);
+          ++itr_;
+
+          return std::move(tmp);
+        }
+        //}}}
+
+     private:
+        // Private data {{{
+        std::vector<ObjectMap::ObjID>::iterator itr_;
+        //}}}
+      //}}}
+    };
+
+    const_iterator begin() const {
+      updateBddVec();
+      return const_iterator(std::begin(*bddVec_));
+    }
+
+    const_iterator end() const {
+      updateBddVec();
+      return const_iterator(std::end(*bddVec_));
+    }
+
+    const_iterator cbegin() const {
+      updateBddVec();
+      return const_iterator(std::begin(*bddVec_));
+    }
+
+    const_iterator cend() const {
+      updateBddVec();
+      return const_iterator(std::end(*bddVec_));
+    }
+
+#ifndef SPECSFS_IS_TEST
+    friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+        const BddPtstoSet &ps) {
+      os << "{";
+      std::for_each(std::begin(ps), std::end(ps),
+          [&os] (ObjectMap::ObjID id) {
+        os << " " << id;
+      });
+      os << " }";
+
+      return os;
+    }
+#endif
+
+ private:
+    std::unique_ptr<bdd> bitmapToBdd(const Bitmap &bm) {
+      auto ret = std::unique_ptr<bdd>(new bdd(bddfalse));
+
+      for (auto elm : bm) {
+        *ret |= getFddVar(elm);
+      }
+
+      return ret;
+    }
+
+    void clearDynPtsto() {
+      if (dynPtsto_ != nullptr) {
+        // llvm::dbgs() << "!!!!!CLEAR DYN PTSTO????\n";
+        ptsto_ &= *dynPtsto_;
+      }
+    }
+
+    void updateBddVec() const {
+      if (ptsto_ != iterBdd_ || iterBdd_ == bddfalse) {
+        bddVec_ = getBddVec(ptsto_);
+      }
+    }
+
+    // Bdd Static Functions {{{
+    // Setup geps! (ugh)
+    // For geps needs omap (for object size into)
+    //   and cg -- for (for used constraint offsets)
+    static void bddInit(ObjectMap &omap, const ConstraintGraph &cg);
+
+    static bool bddInitd() {
+      return bddInitd_;
+    }
+
+    // Get Fdds {{{
+    static bdd getFddVar(ObjectMap::ObjID elm) {
+      return getFddVar(elm.val());
+    }
+
+    // Cache fdd vars...
+    static bdd getFddVar(int32_t elm) {
+      if (fddCache_.size() <= static_cast<size_t>(elm)) {
+        fddCache_.resize(elm+1, bddfalse);
+      }
+
+      if (fddCache_[elm] == bddfalse) {
+        fddCache_[elm] = fdd_ithvar(0, elm);
+      }
+
+      return fddCache_[elm];
+    }
+    //}}}
+
+    // Vector cache {{{
+    // Cache on top of bdd to vector code
+    static std::shared_ptr<std::vector<ObjectMap::ObjID>> getBddVec(bdd pts) {
+      if (pts == bddfalse) {
+        static std::shared_ptr<std::vector<ObjectMap::ObjID>> bddfalse_vec
+          = std::make_shared<std::vector<ObjectMap::ObjID>>();
+        return bddfalse_vec;
+      }
+
+      auto id = pts.id();
+      auto it = vecCache_.find(id);
+      if (it != std::end(vecCache_)) {
+        it->second.first = true;
+        return it->second.second;
+      }
+
+      // Fill the vector...
+      // First check for overflow
+      while (vecCache_.size() >= MaxVecCacheSize) {
+        auto remove = std::end(vecCache_);
+        for (auto it = std::begin(vecCache_), en = std::end(vecCache_);
+            it != en; ++it) {
+          if (!it->second.first) {
+            remove = it;
+            break;
+          }
+
+          it->second.first = false;
+        }
+
+        if (remove != std::end(vecCache_)) {
+          vecCache_.erase(remove);
+        }
+      }
+
+      // Now fill the vector...
+      assert(uglyBddVec_.size() == 0);
+      bdd_allsat(pts, bddToVector);
+
+      assert(vecCache_.size() < MaxVecCacheSize);
+      auto rc = vecCache_.emplace(id,
+          std::make_pair(true,
+            std::make_shared<std::vector<ObjectMap::ObjID>>(
+              std::move(uglyBddVec_))));
+      assert(rc.second);
+      std::sort(std::begin(*rc.first->second.second),
+          std::end(*rc.first->second.second));
+
+      // Return our newly allocated vector
+      return rc.first->second.second;
+    }
+
+    static void bddToVector(char *varset, int) {
+      static int32_t fdd_bits = 0;
+      if (fdd_bits == 0) {
+        fdd_bits = fdd_varnum(0) * 2 - 1;
+      }
+
+      uint32_t dont_care[32];
+      uint32_t num_dont_care = 0;
+      uint32_t base = 0;
+
+      // odds represent fdd domain 1?
+      // Create don't care mask set for the bits in domain 0
+      for (uint32_t i = 0, m = 1; i < static_cast<uint32_t>(fdd_bits);
+          i += 2, m<<=1) {
+        switch (varset[i]) {
+          case -1:
+            dont_care[num_dont_care] = m;
+            num_dont_care++;
+            break;
+          case 1:
+            base |= m;
+            break;
+          default:
+            {
+              // do nothing
+            }
+        }
+      }
+
+      // Speed up handling of small don't care cases...
+      // Now, take the base value, and add on the appropriate don't care bits
+      switch (num_dont_care) {
+        case 2:
+          {
+            uint32_t x = base | dont_care[1];
+            uglyBddVec_.emplace_back(x);
+            uglyBddVec_.emplace_back(x | dont_care[0]);
+          }
+        case 1:
+          uglyBddVec_.emplace_back(base | dont_care[0]);
+        case 0:
+          uglyBddVec_.emplace_back(base);
+          break;
+        default:
+          assert(num_dont_care <= 25 && "More don't cares than expected");
+          for (uint32_t i = 0, ie = 1 << num_dont_care; i < ie; ++i) {
+            uint32_t x = base;
+            for (uint32_t j = 0, m = 1; j < num_dont_care; ++j, m <<= 1) {
+              if (i & m) {
+                x |= dont_care[j];
+              }
+            }
+            uglyBddVec_.emplace_back(x);
+          }
+      }
+    }
+    //}}}
+
+    // Bdd Static Vars {{{
+    static bool bddInitd_;
+
+    // GEPS
+    static std::vector<bdd> geps_;
+    static bddPair *gepToPts_;
+    static bdd ptsDom_;
+
+    static std::vector<bdd> fddCache_;
+
+    static std::vector<ObjectMap::ObjID> uglyBddVec_;
+
+    // Cache:  id -> pair<clock, ptsto>
+    static const size_t MaxVecCacheSize = 50000;
+    static std::map<uint32_t, std::pair<bool,
+      std::shared_ptr<std::vector<ObjectMap::ObjID>>>> vecCache_;
+    //}}}
+    // }}}
+
+    bdd ptsto_;
+    std::unique_ptr<bdd> dynPtsto_ = nullptr;
+
+    mutable bdd iterBdd_ = bddfalse;
+    mutable std::shared_ptr<std::vector<ObjectMap::ObjID>> bddVec_ = nullptr;
+
+  //}}}
+};
+
 class SVPtstoSet {
   //{{{
  public:
@@ -521,8 +981,9 @@ class SVPtstoSet {
   //}}}
 };
 
-
-typedef SVPtstoSet PtstoSet;
+// Switch between BddPtstoSet and SVPtstoSet
+// typedef SVPtstoSet PtstoSet;
+typedef BddPtstoSet PtstoSet;
 
 class TopLevelPtsto {
   //{{{

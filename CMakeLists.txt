@@ -83,8 +83,8 @@ find_package(LLVM REQUIRED CONFIG)
 include(AddLLVM)
 
 add_definitions(${LLVM_DEFINITOINS})
-include_directories(${LLVM_INCLUDE_DIRS})
-link_directories(${LLVM_LIBRARY_DIRS})
+include_directories(${LLVM_INCLUDE_DIRS} /home/ddevec/prefix/include)
+link_directories(${LLVM_LIBRARY_DIRS} /home/ddevec/prefix/lib)
 
 list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
 
@@ -124,6 +124,8 @@ set(SPECSFS_SOURCES
   src/ComputeSSA.cpp
   src/Partition.cpp
   src/Solve.cpp
+
+  src/SolveHelpers.cpp
 
   # Dynamic assumption stuff
   src/Assumptions.cpp
@@ -167,6 +169,7 @@ add_llvm_loadable_module(SpecSFS
   )
 
 target_link_libraries(SpecSFS
+  bdd
   profiler
   )
 

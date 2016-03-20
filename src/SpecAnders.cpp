@@ -9,7 +9,7 @@
 
 #include "include/SpecAnders.h"
 
-#include <google/profiler.h>
+#include <gperftools/profiler.h>
 
 #include <execinfo.h>
 
@@ -95,6 +95,13 @@ static llvm::cl::list<int32_t> //  NOLINT
   id_print("anders-print-id",
       llvm::cl::desc("Specifies IDs to print the nodes of before andersens "
         "runs"));
+
+llvm::cl::opt<bool>
+  anders_no_opt("anders-no-opt", llvm::cl::init(false),
+      llvm::cl::value_desc("bool"),
+      llvm::cl::desc(
+        "Disables all optimization passes Andersens analysis uses"));
+
 
 static llvm::cl::opt<bool>
   do_anders_print_result("anders-do-print-result", llvm::cl::init(false),
@@ -215,27 +222,18 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
   }
 
   ProfilerStart("anders_opt.prof");
-  {
-    util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "HVN");
-    int32_t removed = HVN(cg, omap);
-    llvm::dbgs() << "hvn removed: " << removed << " constraints\n";
-  }
+  if (!anders_no_opt) {
+    {
+      util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "HVN");
+      int32_t removed = HVN(cg, omap);
+      llvm::dbgs() << "hvn removed: " << removed << " constraints\n";
+    }
 
-  /*
-  // Now manage remap:
-  {
-    auto remap = omap.lowerObjects();
-
-    // Use the remapping to adjust the CG and CFG
-    cg.updateObjIDs(remap);
-    // specAssumptions_.updateObjIDs(remap);
-  }
-  */
-
-  // Then, do HRU
-  {
-    util::PerfTimerPrinter hru_timer(llvm::dbgs(), "HRU");
-    HRU(cg, omap, 100);
+    // Then, do HRU
+    {
+      util::PerfTimerPrinter hru_timer(llvm::dbgs(), "HRU");
+      HRU(cg, omap, 100);
+    }
   }
   ProfilerStop();
   llvm::dbgs() << "SparseBitmap =='s: " << Bitmap::numEq() << "\n";
@@ -309,23 +307,13 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
     llvm::dbgs() << "  num_nodes: " << nodes.count() << "\n";
   }
 
-  // Now manage remap: -- before HCD, as HCD fills some stuff in the
-  //   class...
-  /*
-  {
-    auto remap = omap.lowerObjects();
-
-    // Use the remapping to adjust the CG and CFG
-    cg.updateObjIDs(remap);
-    // specAssumptions_.updateObjIDs(remap);
-  }
-  */
-
   // Then, HCD
   {
-    util::PerfTimerPrinter hcd_timer(llvm::dbgs(), "HCD");
-    // Gather hybrid cycle info from our graph
-    HCD(cg, omap);
+    if (!anders_no_opt) {
+      util::PerfTimerPrinter hcd_timer(llvm::dbgs(), "HCD");
+      // Gather hybrid cycle info from our graph
+      HCD(cg, omap);
+    }
   }
 
   llvm::dbgs() << "Constraints after HCD: " << cg.getNumConstraints()
@@ -340,10 +328,12 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
   graph_.setStructInfo(omap.getIsStructSet());
 
   {
+    ProfilerStart("anders_solve.prof");
     util::PerfTimerPrinter solve_timer(llvm::dbgs(), "AndersSolve");
     if (solve()) {
       error("Solve failure!");
     }
+    ProfilerStop();
   }
 
   for (auto &id_val : id_debug) {
@@ -443,11 +433,13 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
 
         auto &ptsto = getPointsTo(rep_id);
 
-        std::for_each(std14::cbegin(ptsto), std14::cend(ptsto),
-            [&omap] (const ObjectMap::ObjID obj_id) {
+        llvm::dbgs() << "    ptsto prints as: " << ptsto << "\n";
+        /*
+        for (ObjectMap::ObjID obj_id : ptsto) {
           llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
               << "\n";
         });
+        */
       }
     });
 
@@ -473,11 +465,14 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
 
         auto &ptsto = getPointsTo(rep_id);
 
-        std::for_each(std14::cbegin(ptsto), std14::cend(ptsto),
-            [&omap] (const ObjectMap::ObjID obj_id) {
+        llvm::dbgs() << "    ptsto prints as: " << ptsto << "\n";
+
+        /*
+        for (auto obj_id : ptsto) {
           llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
               << "\n";
-        });
+        }
+        */
       }
     });
     //}}}
@@ -560,8 +555,13 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
       // Also, strip out structures to their base field
       if (!ObjectMap::isSpecial(new_id)) {
         auto val = omap.valueAtID(new_id);
+        // FIXME: Deal with constants...
         if (val != nullptr) {
-          new_id = omap.getValue(val);
+          if (auto c = dyn_cast<llvm::Constant>(val)) {
+            new_id = omap.getConstRep(c);
+          } else {
+            new_id = omap.getValue(val);
+          }
         }
         // assert(omap.isObject(new_id));
       }
@@ -601,6 +601,12 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
       llvm::dbgs() << "corrected_id: " << corrected_obj_id << ", obj_id: " <<
         obj_id << "\n";
       */
+      if (corrected_obj_id.val() == 240952) {
+        llvm::dbgs() << "corrected_obj_id: " << corrected_obj_id << "\n";
+        llvm::dbgs() << "orig obj_id: " << obj_id << "\n";
+        llvm::dbgs() << "about to crash with value: " <<
+          FullValPrint(corrected_obj_id) << "\n";
+      }
       auto st_pts_set = graph_.getNode(corrected_obj_id).ptsto();
 
       // We then add the base node of any struct fields in the static set
@@ -622,6 +628,16 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
         for (auto obj_id : dyn_pts_set) {
           // Ensure that this element is in the static set
           if (!st_pts_set.test(obj_id)) {
+            // Ignore global strings, as they are frequently overlapping in
+            // global memory, but not in program space
+            auto val = omap.valueAtID(obj_id);
+            if (auto g = dyn_cast_or_null<llvm::GlobalVariable>(val)) {
+              std::string prefix(".str");
+              if (!std::string(g->getName()).compare(
+                    0, prefix.size(), prefix)) {
+                continue;
+              }
+            }
             if (!set_id_found) {
               const llvm::Function *fcn = nullptr;
               const llvm::BasicBlock *bb = nullptr;
@@ -663,7 +679,12 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
               // Check if the ID given by the omap is equivalent to the ID given
               //   by our anaysis
               if (val != nullptr) {
-                auto new_set_id = omap.getValue(val);
+                ObjectMap::ObjID new_set_id;
+                if (auto c = dyn_cast<llvm::Constant>(val)) {
+                  new_set_id = omap.getConstRep(c);
+                } else {
+                  new_set_id = omap.getValue(val);
+                }
                 if (new_set_id != set_obj_id) {
                   llvm::dbgs() << "  !! Merged AWAY by cons_opt !!\n";
                   llvm::dbgs() << "  !! new id: " << new_set_id << " !!\n";
@@ -673,7 +694,6 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
 
               set_id_found = true;
             }
-            auto val = omap.valueAtID(obj_id);
             llvm::dbgs() << "  Found element in dyn set not in static set:\n";
             llvm::dbgs() << "    ";
             if (val == nullptr) {
@@ -785,7 +805,7 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
   for (auto &node : graph_) {
     // Gather num nodes
     num_nodes++;
-    if (!node.isRep()) {
+    if (!graph_.isRep(node)) {
       // Assert non-reps don't have succs or ptstos
       assert(node.ptsto().empty());
       assert(node.copySuccs().empty());

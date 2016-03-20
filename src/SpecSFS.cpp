@@ -9,7 +9,7 @@
 
 #include "include/SpecSFS.h"
 
-#include <google/profiler.h>
+#include <gperftools/profiler.h>
 
 #include <execinfo.h>
 

@@ -91,7 +91,6 @@ class LLVMHelper {
         gi != en; ++gi) {
       auto type = *gi;
       auto struct_type = dyn_cast<llvm::StructType>(type);
-      // If it isn't a struct field, don't add subfield offsets
       if (struct_type == nullptr) {
         continue;
       }

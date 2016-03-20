@@ -68,6 +68,7 @@ class ObjectMap {
     eStdIOValue = 15,
     eIoctlValue = 16,
     eDirObject = 17,
+    eEnvObject = 18,
     eNumDefaultObjs
   } DefaultObjs;
 
@@ -91,6 +92,7 @@ class ObjectMap {
   static const ObjID StdIOValue;
   static const ObjID IoctlValue;
   static const ObjID DirObject;
+  static const ObjID EnvObject;
   //}}}
 
   static constexpr ObjID getOffsID(ObjID id, int32_t offs) {
@@ -299,24 +301,27 @@ class ObjectMap {
       auto &struct_info = getStructInfo(st);
 
       int num_sizes = struct_info.size();
-      numObjs_ += num_sizes;
       assert(num_sizes > 0);
 
       int cur_size = 0;
 
       auto ret = createMapping(nullptr);
+
       objIsStruct_.emplace(ret, num_sizes);
 
       for (int i = 1; i < num_sizes; i++) {
         auto id = createMapping(nullptr);
 
+        objSet_.set(id);
         objIsStruct_.emplace(id, num_sizes - i);
         cur_size++;
       }
 
+      numObjs_ += num_sizes;
+      objSet_.set(ret);
       return ret;
     } else {
-      return createMapping(nullptr);
+      return createPhonyObjectID(nullptr);
     }
   }
 
@@ -324,7 +329,10 @@ class ObjectMap {
     auto ret = createMapping(val);
 
     numObjs_++;
-    idToObj_.emplace(ret, val);
+    objSet_.set(ret);
+    if (val != nullptr) {
+      idToObj_.emplace(ret, val);
+    }
 
     return ret;
   }
@@ -351,6 +359,8 @@ class ObjectMap {
 
       int num_sizes = struct_info.size();
       numObjs_ += num_sizes;
+    } else {
+      numObjs_++;
     }
 
     __do_add_struct(type, val, objToID_, idToObj_, nullptr, &objSet_);
@@ -420,6 +430,8 @@ class ObjectMap {
       o << "(argv)";
     } else if (id == ArgvObjectObject) {
       o << "(argv obj)";
+    } else if (id == EnvObject) {
+      o << "(env)";
     } else {
       llvm_unreachable("not special");
     }
@@ -463,7 +475,7 @@ class ObjectMap {
 
     // If the element didn't exist in our map, update the mappings
     if (ret_pr.second) {
-      llvm::dbgs() << "Creating Mapping: " << *c << " -> " << nextId << "\n";
+      // llvm::dbgs() << "Creating Mapping: " << *c << " -> " << nextId << "\n";
       createMapping(c, nextId);
     }
 
@@ -601,7 +613,8 @@ class ObjectMap {
 
   // Misc helpers {{{
   int64_t getNumObjs() const {
-    return numObjs_;
+    // return numObjs_;
+    return maxObj_.val();
   }
 
   size_t size() const {
@@ -787,7 +800,12 @@ class ObjectMap {
       remap_id++;
     }
 
+    llvm::dbgs() << "Setting maxObj_ to remap_id: " << remap_id << "\n";
     maxObj_ = remap_id;
+    /*
+    llvm::dbgs() << "Setting numObjs_ is: " << numObjs_ << "\n";
+    assert(remap_id.val() == numObjs_);
+    */
 
     // Now handle non-objects...
 
@@ -877,7 +895,7 @@ class ObjectMap {
   // Rep useage (for optimization merging)
   mutable util::UnionFind<ObjID> reps_;
 
-  int64_t numObjs_ = 0;
+  int64_t numObjs_ = static_cast<int32_t>(ObjEnum::eNumDefaultObjs);
 
   // Struct info
   std::map<const llvm::StructType *, StructInfo> structInfo_;
@@ -950,6 +968,10 @@ class ObjectMap {
     // Then objIsStruct
     StructMap new_obj_is_struct;
     for (auto &pr : objIsStruct_) {
+      if (remap[pr.first].val() == 48798) {
+        llvm::dbgs() << "remapping " << remap[pr.first] << " from: "
+          << pr.first << "\n";
+      }
       if_debug_enabled(auto rc =)
         new_obj_is_struct.emplace(remap[pr.first], pr.second);
       assert(rc.second);
@@ -1055,6 +1077,11 @@ class ObjectMap {
         }
 
 
+        if (id.val() == 218278) {
+          llvm::dbgs() << __LINE__ << ": adding value: " << *val <<
+            " to obj 218278\n";
+        }
+
         objIsStruct_.emplace(id, num_sizes - cur_size);
         cur_size++;
         // Denote which objects this structure field occupies
@@ -1074,6 +1101,10 @@ class ObjectMap {
     } else {
       assert(mp.find(val) == std::end(mp));
       ret_id = createMapping(val);
+
+      if (set != nullptr) {
+        set->set(ret_id);
+      }
 
       mp.emplace(val, ret_id);
       assert(pm.find(ret_id) == std::end(pm));

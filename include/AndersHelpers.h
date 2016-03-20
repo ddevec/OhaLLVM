@@ -166,7 +166,7 @@ class AndersNode {
   typedef ObjectMap::ObjID ObjID;
 
   // Constructors {{{
-  explicit AndersNode(ObjID id) : id_(id), rep_(id) { }
+  explicit AndersNode(ObjID id) : id_(id) { }
 
   AndersNode(const AndersNode &) = delete;
   AndersNode(AndersNode &&) = default;
@@ -176,14 +176,6 @@ class AndersNode {
   //}}}
 
   // Accessors {{{
-  bool isRep() const {
-    return rep_ == id();
-  }
-
-  ObjID rep() const {
-    return rep_;
-  }
-
   ObjID id() const {
     return id_;
   }
@@ -235,10 +227,6 @@ class AndersNode {
     return ret;
   }
 
-  void setRep(ObjID new_rep) {
-    rep_ = new_rep;
-  }
-
   void addCons(std::unique_ptr<AndersCons> cons) {
     constraints_.emplace_back(std::move(cons));
   }
@@ -253,9 +241,23 @@ class AndersNode {
   }
   //}}}
 
-  void merge(AndersNode &rhs) {
-    rhs.setRep(id());
+  // Remove any unneeded info, now that anders has finished
+  void cleanup() {
+    constraints_.clear();
+    copySuccs_.clear();
+    gepSuccs_.clear();
+    oldPtsto_.clear();
+  }
 
+  // And the visit function!
+  void visit(AndersGraph &graph, Worklist<AndersNode> &wl,
+      const std::vector<uint32_t> &prioirty);
+
+ private:
+  // Allows AndersGraph to call merge on a node
+  friend class AndersGraph;
+
+  void merge(AndersNode &rhs) {
     // Move their constraints to our constraints.
     std::move(std::begin(rhs.constraints_), std::end(rhs.constraints_),
         std::back_inserter(constraints_));
@@ -276,25 +278,8 @@ class AndersNode {
     rhs.gepSuccs_.clear();
   }
 
-  // Remove any unneeded info, now that anders has finished
-  void cleanup() {
-    constraints_.clear();
-    copySuccs_.clear();
-    gepSuccs_.clear();
-    oldPtsto_.clear();
-  }
-
-  // And the visit function!
-  void visit(AndersGraph &graph, Worklist<AndersNode> &wl,
-      const std::vector<uint32_t> &prioirty);
-
- private:
   // Private Data {{{
   const ObjID id_;
-
-  // Used for node representatives...
-  //   (for cycle removal)
-  ObjID rep_;
 
   std::vector<std::unique_ptr<AndersCons>> constraints_;
 
@@ -322,21 +307,16 @@ class AndersGraph {
   AndersGraph &operator=(const AndersGraph &) = delete;
   AndersGraph &operator=(AndersGraph &&) = delete;
 
+  bool isRep(const AndersNode &node) {
+    return isRep(node.id());
+  }
+
+  bool isRep(ObjID id) {
+    return reps_.find(id) == id;
+  }
+
   ObjID getRep(ObjID id) {
-    auto ret = id;
-    /*
-    llvm::dbgs() << "id is: " << id << "\n";
-    llvm::dbgs() << "nodes.size() is: " << nodes_.size() << "\n";
-    */
-    assert(static_cast<size_t>(id.val()) < nodes_.size());
-    auto &nd = nodes_[id.val()];
-
-    if (!nd.isRep()) {
-      ret = getRep(nd.rep());
-      nd.setRep(ret);
-    }
-
-    return ret;
+    return reps_.find(id);
   }
 
   AndersNode &getNode(ObjID id) {
@@ -422,9 +402,11 @@ class AndersGraph {
     }
 
     assert(nodes_.size() == 0);
+    nodes_.reserve(nodes_.size());
     for (ObjID i(0); i <= max_id; i++) {
       nodes_.emplace_back(ObjID(i));
     }
+    reps_ = util::UnionFind<ObjID>(max_id.val()+1);
 
     // Sanity check, there are no sources greater than max_id?
     if_debug_enabled(
@@ -483,6 +465,8 @@ class AndersGraph {
                 cons.src() << "\n";
             }
             auto &node = getNode(cons.dest());
+            // llvm::dbgs() << "Setting ptsto to: " << cons.src() << "\n";
+            assert(cons.src().val() < omap.getNumObjs());
             node.ptsto().set(cons.src());
             break;
           }
@@ -553,6 +537,22 @@ class AndersGraph {
     */
   }
 
+  void merge(AndersNode &n1, AndersNode &n2) {
+    assert(reps_.find(n1.id()) == n1.id() &&
+        reps_.find(n2.id()) == n2.id());
+    assert(n1.id() != n2.id());
+    reps_.merge(n1.id(), n2.id());
+
+    auto rep_id = reps_.find(n1.id());
+
+    if (rep_id == n1.id()) {
+      n1.merge(n2);
+    } else {
+      assert(rep_id == n2.id());
+      n2.merge(n1);
+    }
+  }
+
   // Removes any unneeded information after solve completes
   void cleanup() {
     for (auto &node : *this) {
@@ -601,6 +601,7 @@ class AndersGraph {
  private:
   // Nodes in the graph, one per object
   std::vector<AndersNode> nodes_;
+  util::UnionFind<ObjID> reps_;
 
   std::map<ObjID, std::pair<ObjID, std::vector<ObjID>>> fcns_;
   ObjectMap::StructMap structInfo_;

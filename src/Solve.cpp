@@ -35,6 +35,9 @@ static llvm::cl::opt<int32_t> //  NOLINT
       llvm::cl::value_desc("int"),
       llvm::cl::desc("Specifies IDs to trace in the anders-solve process"));
 
+extern llvm::cl::opt<bool> //  NOLINT
+  anders_no_opt;
+
 // Number of edges/number of processed nodes before we allow LCD to run
 #define LCD_SIZE 600
 #define LCD_PERIOD std::numeric_limits<int32_t>::max()
@@ -164,8 +167,7 @@ void DUG::CopyNode::process(DUG &dug, TopLevelPtsto &pts_top,
   logout("f " << offset() << "\n");
 
   // bool change = (dest_pts |= src_pts);
-  auto &struct_list = dug.getStructInfo();
-  bool change = dest_pts.orOffs(src_pts, offset(), struct_list);
+  bool change = dest_pts.orOffs(src_pts, offset());
 
   logout("D " << dest() << " " << dest_pts << "\n");
   dout("  pts_top[" << dest() << "] is now: " << dest_pts << "\n");
@@ -731,12 +733,15 @@ class RunNuutila {
     // For each candidate node, visit it if it hasn't been visited, and compute
     //   SCCs, as dicated by Nuutila's Tarjan variant
     nodeData_.resize(graph_.size());
+    // llvm::dbgs() << "START NUUTILA\n";
     for (auto pnode : nodes) {
+      // llvm::dbgs() << "  ITER NUUTILA: " << nodeStack_.size() <<  "\n";
       auto &node_data = getData(pnode->id());
-      if (pnode->isRep() && node_data.root == IndexInvalid) {
-        visit2(*pnode);
+      if (g.isRep(*pnode) && node_data.root == IndexInvalid) {
+        visit2(pnode->id());
       }
     }
+    // llvm::dbgs() << "END NUUTILA\n";
 
     assert(nodeStack_.empty());
   }
@@ -757,19 +762,20 @@ class RunNuutila {
     return getData(graph_.getRep(id));
   }
 
-  void visit2(AndersNode &node) {
-    assert(merged_.find(node.id()) == std::end(merged_));
-    assert(node.isRep());
-    auto &node_data = getRepData(node.id());
+  void visit2(AndersGraph::ObjID node_id) {
+    assert(merged_.find(node_id) == std::end(merged_));
+    assert(graph_.isRep(node_id));
+    auto &node_data = getRepData(node_id);
 
     /*
-    llvm::dbgs() << "Visit: " << node.id() << ": dfs = " << nextIndex_ << "\n";
+    llvm::dbgs() << "Visit: " << node_id << ": dfs = " << nextIndex_ << "\n";
     */
     node_data.root = nextIndex_;
     auto dfs_idx = nextIndex_;
     nextIndex_++;
 
-    for (auto succ_val : node.copySuccs()) {
+    auto &start_node = graph_.getNode(node_id);
+    for (auto succ_val : start_node.copySuccs()) {
       auto succ_id = ObjectMap::ObjID(succ_val);
 
       auto dest_id = graph_.getRep(succ_id);
@@ -780,10 +786,10 @@ class RunNuutila {
       // Ignore merged successors
       if (merged_.find(dest_id) == std::end(merged_)) {
         /*
-        llvm::dbgs() << "      " << node.id() << " succ: " << dest_id << "\n";
+        llvm::dbgs() << "      " << node_id << " succ: " << dest_id << "\n";
         */
         if (dest_data->root == IndexInvalid) {
-          visit2(graph_.getNode(dest_id));
+          visit2(graph_.getRep(dest_id));
 
           // Need to get new node_data, as we have have merged it in the prior
           //   loop
@@ -793,23 +799,22 @@ class RunNuutila {
 
         if (dest_data->root < node_data.root) {
           /*
-          llvm::dbgs() << "  node < dest: " << node.id()
+          llvm::dbgs() << "  node < dest: " << node_id
             << " (" << node_data.root << ") <= " << dest_id <<
             " (" << dest_data->root << ")\n";
-            */
+          */
           node_data.root = dest_data->root;
         }
       }
     }
 
     // FIXME: Finish edge cleanup here?
-
-    assert(node.isRep());
+    assert(graph_.isRep(node_id));
 
     /*
-    llvm::dbgs() << "    " << node.id() << " root: " << node_data.root <<
+    llvm::dbgs() << "    " << node_id << " root: " << node_data.root <<
       ", dfs: " << dfs_idx << "\n";
-      */
+    */
     if (node_data.root == dfs_idx) {
       bool ch = false;
 
@@ -822,31 +827,39 @@ class RunNuutila {
         // llvm::dbgs() << "  --Stack popping: " << next_id << "\n";
         nodeStack_.pop();
 
-        auto rep_next = graph_.getRep(next_id);
+        auto rep_next_id = graph_.getRep(next_id);
+        auto &node_rep = graph_.getNode(node_id);
 
         // If we weren't already merged (HCD can cause this)
-        if (rep_next != node.id()) {
+        if (rep_next_id != node_rep.id()) {
           lcd_merge_count++;
-          auto &nd = graph_.getNode(rep_next);
-          if (node.id() == ObjectMap::NullValue ||
+          auto &nd = graph_.getNode(rep_next_id);
+          /*
+          if (node_id == ObjectMap::NullValue ||
               nd.id() == ObjectMap::NullValue) {
-            llvm::dbgs() << "Nuutilia merge null: " << node.id() << " : " <<
+            llvm::dbgs() << "Nuutilia merge null: " << node_id << " : " <<
               nd.id() << "\n";
           }
-          node.merge(nd);
+          */
+          graph_.merge(node_rep, nd);
         }
 
         ch = true;
       }
 
-      merged_.insert(node.id());
+      auto node_rep_id = graph_.getRep(node_id);
+      // llvm::dbgs() << "  ~~merged_.insert(" << node_id << ")\n";
+      merged_.insert(node_rep_id);
 
       if (ch) {
-        wl_.push(&node, priority_[node.id().val()]);
+        auto &node = graph_.getNode(node_rep_id);
+        assert(node.id() == node_rep_id);
+        wl_.push(&node, priority_[node_rep_id.val()]);
       }
     } else {
-      // llvm::dbgs() << "  ++Stack pushing: " << node.id() << "\n";
-      nodeStack_.push(node.id());
+      // llvm::dbgs() << "  ++Stack pushing: " << node_id << "\n";
+      assert(graph_.isRep(node_id));
+      nodeStack_.push(node_id);
     }
   }
 
@@ -912,7 +925,7 @@ bool SpecAnders::solve() {
       continue;
     }
 
-    if (!pnd->isRep()) {
+    if (!graph_.isRep(*pnd)) {
       continue;
     }
 
@@ -936,7 +949,7 @@ bool SpecAnders::solve() {
 
     // If we're near the point of infinite loop:
     /*
-    if (lcd_check_count > 700000) {
+    if (lcd_check_count > 5000) {
       anders_do_debug = true;
     }
     */
@@ -945,12 +958,12 @@ bool SpecAnders::solve() {
     auto hcd_itr = hcdPairs_.find(pnd->id());
     if (hcd_itr != std::end(hcdPairs_)) {
       // For each ptsto in this node:
-      auto &rep_node = graph_.getNode(hcd_itr->second);
       bool did_merge = false;
       for (auto dest_id : pnd->ptsto()) {
         // Collapse (pointed-to-node, rep)
         // Add rep to worklist
         auto &dest_node = graph_.getNode(dest_id);
+        auto &rep_node = graph_.getNode(hcd_itr->second);
 
         // Don't merge w/ self, or with the int value or null value
         if (dest_node.id() != rep_node.id() &&
@@ -991,7 +1004,7 @@ bool SpecAnders::solve() {
               rep_node.id() << " <- " << dest_node.id() << "\n";
           }
 
-          rep_node.merge(dest_node);
+          graph_.merge(rep_node, dest_node);
           did_merge = true;
 
           hcd_merge_count++;
@@ -999,16 +1012,19 @@ bool SpecAnders::solve() {
       }
 
       if (did_merge) {
+        /*
         if (anders_do_debug) {
           llvm::dbgs() << "pnd: " << pnd->id() << ": hcd push: " <<
             rep_node.id() << "\n";
         }
+        */
+        auto &rep_node = graph_.getNode(hcd_itr->second);
         work.push(&rep_node, priority[rep_node.id().val()]);
       }
 
       // The merge may have caused us to no longer be a rep, in which case, we
       //   shouldn't analyze this node any further
-      if (!pnd->isRep()) {
+      if (!graph_.isRep(*pnd)) {
         continue;
       }
     }
@@ -1179,8 +1195,7 @@ bool SpecAnders::solve() {
         }
         */
 
-        bool ch = succ_pts.orOffs(pnd->ptsto(), succ_offs,
-            graph_.getStructInfo());
+        bool ch = succ_pts.orOffs(pnd->ptsto(), succ_offs);
 
         /*
         if (succ_pts.test(ObjectMap::ObjID(solve_debug_id)) && maybe_oroffs) {
@@ -1202,18 +1217,18 @@ bool SpecAnders::solve() {
 
 
 
-        /*
         auto edge = std::make_pair(pnd->id(), succ_node.id());
         // If we haven't run LCD on this edge before, the points-to sets are not
         //   empty, and the two points-to sets are equal
-        if (lcd_edges.find(edge) == std::end(lcd_edges) &&
-            !pnd->ptsto().empty() &&
-            pnd->ptsto() == succ_pts) {
-          lcd_check_count++;
-          lcd_nodes.insert(pnd);
-          lcd_edges.insert(edge);
+        if (!anders_no_opt) {
+          if (lcd_edges.find(edge) == std::end(lcd_edges) &&
+              !pnd->ptsto().empty() &&
+              pnd->ptsto() == succ_pts) {
+            lcd_check_count++;
+            lcd_nodes.insert(pnd);
+            lcd_edges.insert(edge);
+          }
         }
-        */
 
         if (ch) {
           if (anders_do_debug) {

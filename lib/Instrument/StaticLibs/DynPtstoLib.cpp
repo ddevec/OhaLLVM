@@ -229,6 +229,7 @@ void __DynPtsto_do_finish() {
 void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
     void *addr);
 void __DynPtsto_main_init2(int32_t obj_id, int32_t argv_dest_id,
+    int32_t /*envp_id*/,
     int argc, char **argv) {
   int i = 0;
   for (i = 0; i < argc; i++) {
@@ -239,19 +240,20 @@ void __DynPtsto_main_init2(int32_t obj_id, int32_t argv_dest_id,
 }
 
 void __DynPtsto_main_init3(int32_t obj_id, int32_t argv_dest_id,
+    int32_t envp_id,
     int argc, char **argv, char **envp) {
   // Init envp
   int i;
   for (i = 0; envp[i] != nullptr; i++) {
-    __DynPtsto_do_malloc(argv_dest_id, (strlen(envp[i])+1)*8, envp[i]);
+    __DynPtsto_do_malloc(envp_id, (strlen(envp[i])+1)*8, envp[i]);
   }
   // Also do for the nullptr
-  __DynPtsto_do_malloc(argv_dest_id, (1)*8, envp[i]);
+  __DynPtsto_do_malloc(envp_id, (1)*8, envp[i]);
 
-  __DynPtsto_do_malloc(obj_id, (sizeof(*envp)*(i+1))*8, envp);
+  __DynPtsto_do_malloc(envp_id, (sizeof(*envp)*(i+1))*8, envp);
 
   // Do std init
-  __DynPtsto_main_init2(obj_id, argv_dest_id, argc, argv);
+  __DynPtsto_main_init2(obj_id, argv_dest_id, envp_id, argc, argv);
 }
 
 void __DynPtsto_do_call() {
@@ -261,14 +263,16 @@ void __DynPtsto_do_call() {
 }
 
 void __DynPtsto_do_gep(int32_t offs, void *base_addr,
-    void *res_addr, int64_t size) {
+    void *res_addr, int64_t size, int32_t /*gep_id*/) {
   static uint64_t gep_count = 0;
 
   gep_count++;
 
+  /*
   if (gep_count % 30000 == 0) {
     std::cerr << "gep count: " << gep_count << std::endl;
   }
+  */
 
   size /= 8;
   // Get the current field at the res_addr
@@ -278,7 +282,13 @@ void __DynPtsto_do_gep(int32_t offs, void *base_addr,
   */
   auto it = addr_to_objid.find(AddrRange(res_addr));
   if (it == std::end(addr_to_objid)) {
-    std::cerr << "WARNING: gep addr not found: " << res_addr << "\n";
+    if (reinterpret_cast<uintptr_t>(res_addr) > 0x1000) {
+      /*
+      std::cerr << "WARNING: gep addr not found: " << res_addr << " gep_id: " <<
+        gep_id <<"\n";
+      abort();
+      */
+    }
     return;
   }
   auto addr = it->first;
@@ -433,10 +443,19 @@ void __DynPtsto_do_alloca(int32_t obj_id, int64_t size,
   }
   // Size is in bits...
   size /= 8;
+
   // Handle alloca
   // Add addresses to stack frame
   // std::cout << "stacking: (" << obj_id << ") " << addr << std::endl;
   stack_allocs.back().push_back(addr);
+
+  /*
+  if (obj_id == 42665) {
+    std::cerr << "Allocating " << obj_id << " at: " <<
+      AddrRange(addr, size) << "\n";
+  }
+  */
+
   // Add ptstos to ptsto map
   auto ret =
     addr_to_objid.emplace(AddrRange(addr, size),
@@ -567,6 +586,10 @@ void __DynPtsto_do_longjmp(int32_t id, void *addr) {
 
 void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
     void *addr) {
+  // Don't allocate nullptr
+  if (addr == nullptr) {
+    return;
+  }
   /*
   std::cout << "do_malloc: " << obj_id << ", " << size << ", " <<
     addr << std::endl;
@@ -592,6 +615,12 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
 
   AddrRange cur_range(addr, size);
 
+  /*
+  if (obj_id == 42665) {
+    std::cerr << "Allocating " << obj_id << " at: " << cur_range << "\n";
+  }
+  */
+
   auto ret = addr_to_objid.emplace(cur_range,
       AddressValue());
   // std::cout << "  do_malloc range: " << cur_range << std::endl;
@@ -601,6 +630,12 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
   // calcualtions
   // bool glbl = false;
   while (!ret.second && ret.first->first.overlaps(cur_range)) {
+    // Allocated multiple times... because its static and external to the
+    //    program
+    if (obj_id == 9) {
+      ret.second = true;
+      break;
+    }
     if (addr == nullptr) {
       return;
     }
@@ -645,7 +680,7 @@ void __DynPtsto_do_free(void *addr) {
 
 void __DynPtsto_do_visit(int32_t val_id, void *addr) {
   /*
-  if (val_id == 6251) {
+  if (val_id == 117258) {
     std::cout << "Visit on: " << val_id << " : " << addr << std::endl;
   }
   */
@@ -654,7 +689,7 @@ void __DynPtsto_do_visit(int32_t val_id, void *addr) {
   if (it != std::end(addr_to_objid)) {
     for (int32_t obj_id : it->second) {
       /*
-      if (val_id == 6251) {
+      if (val_id == 117258) {
         std::cout << "   got id: " << obj_id << " at: " <<
           it->first << std::endl;
       }

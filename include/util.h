@@ -184,6 +184,33 @@ class PerfTimerPrinter {
 };
 //}}}
 
+// Reverse Iteration {{{
+template <typename wrapper>
+class reverse_adapter {
+ public:
+  typedef typename wrapper::reverse_iterator iterator;
+
+  explicit reverse_adapter(wrapper &w) : w_(w) { }
+  reverse_adapter() = delete;
+
+  iterator begin() {
+    return w_.rbegin();
+  }
+
+  iterator end() {
+    return w_.rend();
+  }
+
+ private:
+  wrapper &w_;
+};
+
+template <typename type>
+reverse_adapter<type> reverse(type &t) {
+  return reverse_adapter<type>(t);
+}
+//}}}
+
 // map Key/Value iteration {{{
 // Value Iterators {{{
 template<class map_iterator>
