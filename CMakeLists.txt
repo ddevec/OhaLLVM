@@ -117,8 +117,6 @@ set(SPECSFS_SOURCES
   src/ObjectMap.cpp
   src/ControlFlowGraph.cpp
 
-  src/Andersens.cpp
-
   src/IdentifyObjects.cpp
   src/Optimize.cpp
   src/ComputeSSA.cpp
@@ -160,8 +158,6 @@ set(SPECSFS_HEADERS
 
   ObjectMap.h
   DUG.h
-
-  Andersens.h
   )
 
 add_llvm_loadable_module(SpecSFS

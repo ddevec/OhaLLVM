@@ -25,10 +25,10 @@ class LLVMHelper {
   // No constructor -- static only
   LLVMHelper() = delete;
 
-  static llvm::Function *getFcnFromCall(llvm::CallInst *ci) {
-    llvm::CallSite cs(ci);
+  static const llvm::Function *getFcnFromCall(const llvm::CallInst *ci) {
+    llvm::ImmutableCallSite cs(ci);
 
-    llvm::Function *fcn = cs.getCalledFunction();
+    const llvm::Function *fcn = cs.getCalledFunction();
 
     if (fcn == nullptr) {
       auto callee = cs.getCalledValue();

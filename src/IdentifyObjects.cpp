@@ -20,7 +20,6 @@
 #include "include/Debug.h"
 
 #include "include/AllocInfo.h"
-#include "include/Andersens.h"
 #include "include/ConstraintGraph.h"
 #include "include/DUG.h"
 #include "include/ExtInfo.h"
@@ -537,8 +536,12 @@ void addCFGCallsite(CFG &cfg, ObjectMap &omap,
 }
 //}}}
 
-static bool isMalloc(const llvm::Value *V) {
-  return Andersens::isMallocCall(V);
+static bool isMalloc(const llvm::CallInst *V) {
+  auto fcn = LLVMHelper::getFcnFromCall(V);
+  if (fcn == nullptr) {
+    return false;
+  }
+  return AllocInfo::fcnIsMalloc(fcn);
 }
 
 // NOTE: Copy/pasted shamelessly from Andersens.cpp
@@ -953,9 +956,9 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
       llvm::Value *ThrFunc = I->getOperand(2);
       llvm::Value *Arg = I->getOperand(3);
       cg.add(ConstraintType::Store, getValue(cg, omap, ThrFunc),
-          getValue(cg, omap, Arg), CallFirstArgPos);
+          getValue(cg, omap, Arg), 0);
       addCFGStore(cfg, next_id,
-          omap.getOffsID(getValue(cg, omap, Arg), CallFirstArgPos));
+          omap.getOffsID(getValue(cg, omap, Arg), 0));
       return true;
     }
   }
@@ -1521,7 +1524,7 @@ static bool idCallInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
   // Meh, Callsites don't take consts... bleh
   llvm::CallSite CS(const_cast<llvm::Instruction *>(&inst));
 
-  if (isMalloc(&inst)) {
+  if (isMalloc(cast<const llvm::CallInst>(&inst))) {
     /*
     llvm::dbgs() << "Have malloc call: " <<
       inst.getParent()->getParent()->getName() << ":" << inst << "\n";
@@ -2180,7 +2183,7 @@ bool ConstraintPass::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
         omap.addValue(st);
       }
 
-      if (isMalloc(&inst)) {
+      if (isMalloc(cast<const llvm::CallInst>(&inst))) {
         // Once again, add objectS
         auto inferred_type = findLargestType(omap, inst);
         if_debug(
@@ -2368,7 +2371,7 @@ bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
       }
 
       // If this function has a body
-      if (!fcn.isDeclaration() && !Andersens::isMallocCall(&fcn)) {
+      if (!fcn.isDeclaration() && !AllocInfo::fcnIsMalloc(&fcn)) {
         // Any arguments for main have their own objects...
         if (fcn.getName() == "main") {
           std::for_each(fcn.arg_begin(), fcn.arg_end(),
