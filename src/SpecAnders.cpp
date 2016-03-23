@@ -182,44 +182,7 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
 
   llvm::dbgs() << "Original number of constraints: " << cg.getNumConstraints()
     << "\n";
-  {
-    size_t num_alloc = 0;
-    size_t num_gep = 0;
-    size_t num_copy = 0;
-    size_t num_load = 0;
-    size_t num_store = 0;
-    for (auto &pcons : cg) {
-      if (pcons == nullptr) {
-        continue;
-      }
-
-      switch (pcons->type()) {
-        case ConstraintType::AddressOf:
-          num_alloc++;
-          break;
-        case ConstraintType::Copy:
-          if (pcons->offs() != 0) {
-            num_gep++;
-          } else {
-            num_copy++;
-          }
-          break;
-        case ConstraintType::Store:
-          num_store++;
-          break;
-        case ConstraintType::Load:
-          num_load++;
-          break;
-      }
-    }
-
-    llvm::dbgs() << "  num_objs: " << omap.getNumObjs() << "\n";
-    llvm::dbgs() << "  num_alloc: " << num_alloc << "\n";
-    llvm::dbgs() << "  num_gep: " << num_gep << "\n";
-    llvm::dbgs() << "  num_copy: " << num_copy << "\n";
-    llvm::dbgs() << "  num_load: " << num_load << "\n";
-    llvm::dbgs() << "  num_store: " << num_store << "\n";
-  }
+  cg.countConstraints(omap);
 
   ProfilerStart("anders_opt.prof");
   if (!anders_no_opt) {
@@ -249,63 +212,7 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
 
   llvm::dbgs() << "Constraints after HRU: " << cg.getNumConstraints()
     << "\n";
-  {
-    size_t num_alloc = 0;
-    size_t num_gep = 0;
-    size_t num_copy = 0;
-    size_t num_load = 0;
-    size_t num_store = 0;
-    for (auto &pcons : cg) {
-      if (pcons == nullptr) {
-        continue;
-      }
-
-      switch (pcons->type()) {
-        case ConstraintType::AddressOf:
-          num_alloc++;
-          break;
-        case ConstraintType::Copy:
-          if (pcons->offs() != 0) {
-            num_gep++;
-          } else {
-            num_copy++;
-          }
-          break;
-        case ConstraintType::Store:
-          num_store++;
-          break;
-        case ConstraintType::Load:
-          num_load++;
-          break;
-      }
-    }
-
-    llvm::dbgs() << "  num_objs: " << omap.getNumObjs() << "\n";
-    llvm::dbgs() << "  num_alloc: " << num_alloc << "\n";
-    llvm::dbgs() << "  num_gep: " << num_gep << "\n";
-    llvm::dbgs() << "  num_copy: " << num_copy << "\n";
-    llvm::dbgs() << "  num_load: " << num_load << "\n";
-    llvm::dbgs() << "  num_store: " << num_store << "\n";
-
-    Bitmap nodes;
-    for (auto &pcons : cg) {
-      if (pcons == nullptr) {
-        continue;
-      }
-
-      // Ignore address of destinations?
-      if (pcons->type() == ConstraintType::AddressOf) {
-        // Add dest only for addressof
-        nodes.set(pcons->dest().val());
-        continue;
-      }
-
-      nodes.set(pcons->dest().val());
-      nodes.set(pcons->src().val());
-    }
-
-    llvm::dbgs() << "  num_nodes: " << nodes.count() << "\n";
-  }
+  cg.countConstraints(omap);
 
   // Then, HCD
   {

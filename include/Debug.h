@@ -152,5 +152,59 @@ static void print_trace(void) {
 #  define dout(X)
 #endif
 
+/*
+template <typename T>
+class DebugVar {
+#ifndef NDEBUG
+ public:
+  DebugVar(T val) : val_(val) { }
+
+  DebugVar &operator=(T val) {
+    val_ = val;
+  }
+
+  T &operator T() {
+    return val_;
+  }
+
+  const T &operator T() const {
+    return val_;
+  }
+
+  T &operator++() {
+    return ++val_;
+  }
+
+  T &operator++(int) {
+    return val_++;
+  }
+
+  T &operator--() {
+    return ++val_;
+  }
+
+  T &operator--(int) {
+    return val_++;
+  }
+
+ private:
+  T val_;
+#else
+ public:
+  DebugVar(T val) { }
+
+  DebugVar &operator=(T val) { }
+
+  T &operator++() { }
+
+  T &operator++(int) { }
+
+  T &operator--() { }
+
+  T &operator--(int) { }
+#endif
+}
+*/
+
 #endif  // INCLUDE_DEBUG_H_
 

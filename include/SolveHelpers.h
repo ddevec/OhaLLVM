@@ -159,30 +159,6 @@ class Worklist {
     std::vector<HeapEntry> nextHeap_;
   //}}}
 };
-/*
-class Worklist {
-  //{{{
- public:
-    DUGNode *pop(uint32_t &fake_prio) {
-      if (q_.empty()) {
-        return nullptr;
-      }
-      auto ret = q_.front();
-      q_.pop();
-      fake_prio = std::numeric_limits<uint32_t>::max();
-      return ret;
-    }
-
-    void push(DUGNode *pnd, uint32_t) {
-      q_.push(pnd);
-    }
-
-
- private:
-    std::queue<DUGNode *> q_;
-  //}}}
-};
-*/
 
 // FIXME: ?BDDs?
 class BddPtstoSet {
@@ -283,7 +259,15 @@ class BddPtstoSet {
 
       ret &= rhs;
 
-      return ret;
+      return std::move(ret);
+    }
+
+    BddPtstoSet operator-(const BddPtstoSet &rhs) const {
+      BddPtstoSet ret(*this);
+
+      ret.ptsto_ -= rhs.ptsto_;
+
+      return std::move(ret);
     }
 
     bool operator|=(const BddPtstoSet &rhs) {
@@ -636,7 +620,6 @@ class BddPtstoSet {
 
     mutable bdd iterBdd_ = bddfalse;
     mutable std::shared_ptr<std::vector<ObjectMap::ObjID>> bddVec_ = nullptr;
-
   //}}}
 };
 

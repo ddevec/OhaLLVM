@@ -187,6 +187,9 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     }
   }
 
+  llvm::dbgs() << "Counting sfs constraints\n";
+  cg.countConstraints(omap);
+
   if_debug(cfg.getSEG().printDotFile("CFG.dot", omap));
 
   cfg.cleanup();
@@ -226,16 +229,6 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     util::PerfTimerPrinter fill_timer(llvm::dbgs(), "fillTopLevel");
     graph.fillTopLevel(cg, omap);
   }
-
-
-  /*
-  llvm::dbgs() << "ID 100827 is: " << FullValPrint(ObjectMap::ObjID(100827)) <<
-    "\n";
-  llvm::dbgs() << "ID 101052 is: " << FullValPrint(ObjectMap::ObjID(101052)) <<
-    "\n";
-  llvm::dbgs() << "ID 112793 is: " << FullValPrint(ObjectMap::ObjID(112793)) <<
-    "\n";
-  */
 
   // Now that we've filled in the top level constraint graph, we add in dynamic
   //   info (If we're using speculative optimizations)

@@ -49,7 +49,7 @@ class AndersCons {
   //}}}
 
   virtual void process(AndersGraph &graph, Worklist<AndersNode> &wl,
-      const std::vector<uint32_t> &priority) const;
+      const std::vector<uint32_t> &priority, const PtstoSet &update) const;
 
   friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
       const AndersCons &cons) {
@@ -111,7 +111,8 @@ class AndersStoreCons : public AndersCons {
       AndersCons(AndersCons::Kind::Store, src, dest, 0) { }
 
   void process(AndersGraph &graph, Worklist<AndersNode> &wl,
-      const std::vector<uint32_t> &priority) const override;
+      const std::vector<uint32_t> &priority,
+      const PtstoSet &update) const override;
 };
 
 class AndersLoadCons : public AndersCons {
@@ -122,7 +123,8 @@ class AndersLoadCons : public AndersCons {
       AndersCons(AndersCons::Kind::Load, src, dest, 0) { }
 
   void process(AndersGraph &graph, Worklist<AndersNode> &wl,
-      const std::vector<uint32_t> &priority) const override;
+      const std::vector<uint32_t> &priority,
+      const PtstoSet &update) const override;
 };
 
 class AndersIndirCallCons : public AndersCons {
@@ -153,7 +155,8 @@ class AndersIndirCallCons : public AndersCons {
   }
 
   void process(AndersGraph &graph, Worklist<AndersNode> &wl,
-      const std::vector<uint32_t> &priority) const override;
+      const std::vector<uint32_t> &priority,
+      const PtstoSet &update) const override;
 
  private:
   const std::vector<ObjID> args_;
@@ -192,12 +195,27 @@ class AndersNode {
     return gepSuccs_;
   }
 
+  /*
   bool updated() const {
     return ptsto_ != oldPtsto_;
   }
 
   void clearUpdated() {
     oldPtsto_ = ptsto_;
+  }
+  */
+
+  PtstoSet getUpdateSet() {
+    if (oldPtsto_ == ptsto_) {
+      return PtstoSet();
+    }
+
+    auto ret = ptsto_ - oldPtsto_;
+    // auto ret = ptsto_;
+
+    oldPtsto_ = ptsto_;
+
+    return ret;
   }
 
   std::vector<std::unique_ptr<AndersCons>> &constraints() {
@@ -217,14 +235,41 @@ class AndersNode {
   bool addCopyEdge(ObjID dest_id) {
     bool ret = false;
     // Don't add edges to/from int/null value, or to yourself
+    // These should be done externally... I think
+    /*
+    assert(id() != ObjectMap::IntValue);
+    assert(dest_id != ObjectMap::IntValue);
+    assert(id() != ObjectMap::NullValue);
+    assert(dest_id != ObjectMap::NullValue);
+    assert(id() != dest_id);
+    */
+
     if (id() != ObjectMap::IntValue &&
         dest_id != ObjectMap::IntValue &&
         id() != ObjectMap::NullValue &&
         dest_id != ObjectMap::NullValue &&
-        dest_id != id()) {
+        id() != dest_id) {
       ret = copySuccs_.test_and_set(dest_id.val());
     }
+
     return ret;
+  }
+
+  bool addCopyEdges(const PtstoSet &pts) {
+    // Just skip these in the sorted vector...
+    // IF they are at the start of the object space
+    assert(ObjectMap::NullValue.val() < 3);
+    assert(ObjectMap::IntValue.val() < 3);
+    assert(ObjectMap::NullObjectValue.val() < 3);
+
+    auto begin_it = std::begin(pts);
+    auto end_it = std::end(pts);
+    // FIXME: Hacky
+    while (begin_it != end_it && *begin_it < ObjectMap::ObjID(3)) {
+      ++begin_it;
+    }
+
+    return copySuccs_.addSorted(begin_it, std::end(pts));
   }
 
   void addCons(std::unique_ptr<AndersCons> cons) {
@@ -269,6 +314,7 @@ class AndersNode {
 
     ptsto_ |= rhs.ptsto_;
 
+    // Is this unneeded?
     oldPtsto_.clear();
 
     // Free up some memory
@@ -459,11 +505,17 @@ class AndersGraph {
         // Alloc constraints are added as initial points-to data
         case ConstraintType::AddressOf:
           {
+            /*
             if (cons.src().val() == 8418 ||
                 cons.src().val() == 8400) {
               llvm::dbgs() << "Node: " << cons.dest() << " has initial pts: " <<
                 cons.src() << "\n";
             }
+            */
+            /*
+            llvm::dbgs() << "fill addrof: " << cons.dest() << " <- " <<
+              cons.src() << "\n";
+            */
             auto &node = getNode(cons.dest());
             // llvm::dbgs() << "Setting ptsto to: " << cons.src() << "\n";
             assert(cons.src().val() < omap.getNumObjs());

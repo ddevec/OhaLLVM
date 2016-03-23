@@ -179,6 +179,8 @@ class DUG {
           auto dest = cons.dest();
           auto src = cons.src();
           auto offs = cons.offs();
+          assert(omap.isRep(dest));
+          assert(omap.isRep(src));
 
           SEG::NodeID node_id;
 

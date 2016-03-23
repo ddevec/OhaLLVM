@@ -1357,6 +1357,43 @@ class SparseBitmap {
 
     return std::move(ret);
   }
+
+  template <typename itr>
+  bool addSorted(itr rhs_begin, itr rhs_end) {
+    bool ch = false;
+    auto it1 = std::begin(elms_);
+    auto it2 = rhs_begin;
+
+    while (it2 != rhs_end) {
+      auto it2_val = static_cast<size_t>(*it2);
+      auto it2_idx = getIdx(it2_val);
+      // std::cout << "it1->idx: " << it1->index() << std::endl;
+      // std::cout << "it2->idx: " << it2->index() << std::endl;
+
+      // If this index doesn't exist in our map, create a new node for it
+      if (it1 == std::end(elms_) || it1->index() > it2_idx) {
+        it1 = elms_.emplace(it1, it2_idx);
+        it1->set(getOffs(it2_val));
+        ++it2;
+        ch = true;
+      // If the index does exist, use it
+      } else if (it1->index() == it2_idx) {
+        // Don't do copy if we've already changed
+        auto offs = getOffs(it2_val);
+        // If they are about to be set, ch is true
+        ch |= !it1->test(offs);
+        it1->set(offs);
+        ++it2;
+      // If the bitmap has an extra node, skip it
+      } else {
+        ++it1;
+      }
+    }
+
+    curElm_ = std::begin(elms_);
+
+    return ch;
+  }
   //}}}
 
   // Operators {{{

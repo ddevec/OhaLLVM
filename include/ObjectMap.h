@@ -437,6 +437,10 @@ class ObjectMap {
     }
   }
 
+  bool isRep(ObjID id) const {
+    return reps_.find(id) == id;
+  }
+
   ObjID getRep(ObjID id) const {
     return reps_.find(id);
   }
