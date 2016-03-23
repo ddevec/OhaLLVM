@@ -41,6 +41,8 @@ struct HUNode : public SEG::Node {
   //{{{
   typedef typename SEG::NodeID NodeID;
 
+  static const int32_t PENonPtr = 0;
+
   explicit HUNode(NodeID node_id) :
     SEG::Node(NodeKind::HUNode, node_id) { }
 
@@ -56,18 +58,13 @@ struct HUNode : public SEG::Node {
     return ptsto_;
   }
 
-  bool indirect() const {
-    return indirect_;
-  }
-
-  void setIndirect() {
-    indirect_ = true;
+  bool isNonPtr() const {
+    return ptsto_.test(PENonPtr);
   }
 
   void unite(SEG &seg, SEG::Node &n) override {
     auto &node = cast<HUNode>(n);
 
-    indirect_ |= node.indirect();
     ptsto() |= node.ptsto();
 
     node.ptsto().clear();
@@ -75,6 +72,7 @@ struct HUNode : public SEG::Node {
     SEG::Node::unite(seg, n);
   }
 
+  /*
   void print_label(dbg_ostream &o_fil,
       const ObjectMap &omap) const override {
     auto id = SEG::Node::id();
@@ -86,6 +84,7 @@ struct HUNode : public SEG::Node {
     }
     o_fil << " }";
   }
+  */
 
   // For LLVM RTTI {{{
   static bool classof(const SEG::Node *n) {
@@ -93,164 +92,67 @@ struct HUNode : public SEG::Node {
   }
   //}}}
 
-  bool indirect_ = false;
-
-  // For tarjan's
-  int32_t lowlink = -1;
-  int32_t index = -1;
-  bool onStack = false;
-
   Bitmap ptsto_;
   //}}}
 };
 
-class HUCalc {
+class HUData {
   //{{{
  public:
-    static const int32_t PENonPtr = 0;
+  int32_t getNextPE() {
+    return nextPE_++;
+  }
 
-    HUCalc() = default;
+  int32_t getGEPPE(SEG::NodeID node_id, int32_t offs) {
+    auto it = gepToPE_.find(std::make_pair(node_id, offs));
 
-    static bool isNonPtr(HUNode &nd) {
-      bool ret = nd.ptsto().test(PENonPtr);
-      // If its a non-ptr the ptsto size must be 1
-      assert(!ret || nd.ptsto().count() == 1);
-
-      return ret;
+    if (it == std::end(gepToPE_)) {
+      auto rp = gepToPE_.emplace(std::make_pair(node_id, offs), getNextPE());
+      assert(rp.second);
+      it = rp.first;
     }
 
-    void giveNewPE(HUNode &node) {
-      node.ptsto().set(nextPE_);
-      nextPE_++;
+    return it->second;
+  }
+
+  int32_t getHashValue(const HUNode &node) {
+    auto &ptsto = node.ptsto();
+
+    auto it = hashValueMap_.find(ptsto);
+    if (it == std::end(hashValueMap_)) {
+      auto rv = hashValueMap_.emplace(ptsto, getNextPE());
+      assert(rv.second);
+      it = rv.first;
     }
 
-    int32_t getPE(SEG::NodeID id, int32_t offs) {
-      auto it = gepToPE_.find(std::make_pair(id, offs));
+    return it->second;
+  }
 
-      if (it == std::end(gepToPE_)) {
-        auto rp = gepToPE_.emplace(std::make_pair(id, offs),
-            nextPE_);
-        nextPE_++;
-        assert(rp.second);
-        it = rp.first;
-      }
-
-      return it->second;
+  int32_t getPEForID(SEG::NodeID id) {
+    auto it = idToPE_.find(id);
+    if (it == std::end(idToPE_)) {
+      auto rv = idToPE_.emplace(id, getNextPE());
+      assert(rv.second);
+      it = rv.first;
     }
 
-    // Here we run tarjan's algorithm, this merges our SCC's as only strong
-    // edges are represented in our graph
-    void visitHU(SEG &seg, HUNode &node) {
-      node.index = nextIndex_;
-      node.lowlink = nextIndex_;
-      nextIndex_++;
-
-      nodeStack_.push_back(node.id());
-
-      node.onStack = true;
-
-      for (auto pred_id : node.preds()) {
-        auto &pred_node = seg.getNode<HUNode>(pred_id);
-        if (pred_node.index < 0) {
-          visitHU(seg, pred_node);
-          node.lowlink = std::min(pred_node.lowlink, node.lowlink);
-        } else if (pred_node.onStack) {
-          node.lowlink = std::min(node.lowlink, pred_node.index);
-        }
-      }
-
-      if (node.lowlink == node.index) {
-        dout("Node rep: (" << node.id() << ") "  <<
-          ValPrint(nodeToObj(node.id())) << "\n");
-        // Do the SCC merging
-        while (true) {
-          auto merge_id = nodeStack_.back();
-          nodeStack_.pop_back();
-
-          auto &merge_node = seg.getNode<HUNode>(merge_id);
-          merge_node.onStack = false;
-
-          if (merge_id == node.id()) {
-            break;
-          }
-
-          dout("  merging in: (" << merge_node.id() << ") " <<
-            ValPrint(nodeToObj(merge_node.id())) << "\n");
-          node.unite(seg, merge_node);
-        }
-
-        // If this node is indirect, add a new PE, so it can't be merged w/ its
-        //   preds
-        if (node.indirect()) {
-          dout("  indirect, adding PE: " << nextPE_ << "\n");
-          node.addPtsTo(nextPE_);
-          nextPE_++;
-        }
-
-        // We also merge in the ptsto sets from our pred, in our topological
-        // node visit post-merge
-        dout("  gathering pred ptstos\n");
-        for (auto pred_id : node.preds()) {
-          auto &pred_node = seg.getNode<HUNode>(pred_id);
-
-          if (pred_node.id() == node.id()) {
-            continue;
-          }
-
-          dout("  have pred: " << pred_node.id() << "\n");
-          if_debug(
-            dout("  pred ptsto: ");
-            for (auto pts : pred_node.ptsto()) {
-              dout(" " << pts);
-            }
-            dout("\n"));
-
-          assert(!pred_node.ptsto().empty());
-
-          // Merge in our preds ptsto, unless they are a nonptr
-          if (!pred_node.ptsto().test(PENonPtr)) {
-            node.ptsto() |= pred_node.ptsto();
-          }
-        }
-
-        if (node.ptsto().empty()) {
-          node.addPtsTo(PENonPtr);
-        }
-
-        if_debug(
-          dout("  node ptsto: ");
-          for (auto pts : node.ptsto()) {
-            dout(" " << pts);
-          }
-          dout("\n"));
-      }
-    }
-
-    void calcHU(SEG &seg) {
-      nextIndex_ = 0;
-      nodeStack_.clear();
-
-      for (auto &pnode : seg) {
-        // Do the HU visit (pred collection) on each node in reverse
-        //    topological order
-        auto &node = cast<HUNode>(*pnode);
-        if (node.index < 0) {
-          visitHU(seg, node);
-        }
-      }
-    }
+    return it->second;
+  }
 
  private:
-    int32_t nextIndex_ = 0;
-    int32_t nextPE_ = 1;
-    std::vector<SEG::NodeID> nodeStack_;
-    std::map<std::pair<SEG::NodeID, int32_t>, int32_t> gepToPE_;
+  // 0 is non-ptr
+  int32_t nextPE_ = (HUNode::PENonPtr + 1);
+
+  std::map<std::pair<SEG::NodeID, int32_t>, int32_t> gepToPE_;
+
+  std::unordered_map<Bitmap, int32_t, BitmapHash> hashValueMap_;
+
+  std::unordered_map<SEG::NodeID, int32_t, SEG::NodeID::hasher> idToPE_;
   //}}}
 };
 
-
 static void addHUEdge(SEG::NodeID src, SEG::NodeID dest,
-    SEG &graph, const Constraint &con, HUCalc &calc) {
+    SEG &graph, const Constraint &con, HUData &data) {
   // Get our two HU nodes
   auto &dest_node = graph.getNode<HUNode>(dest);
   auto &src_node = graph.getNode<HUNode>(src);
@@ -261,14 +163,14 @@ static void addHUEdge(SEG::NodeID src, SEG::NodeID dest,
       break;
     case ConstraintType::Load:
       // Add its own indirect ptsto
-      dest_node.setIndirect();
+      dest_node.addPtsTo(data.getNextPE());
       break;
     case ConstraintType::AddressOf:
       if_debug(
         dout("Setting: " << dest << " to indirect\n");
         dout("Adding ptsto: " << dest <<
             " to ptsto of: " << src << "\n"));
-      dest_node.setIndirect();
+      dest_node.addPtsTo(data.getNextPE());
 
       break;
     case ConstraintType::Copy:
@@ -280,7 +182,7 @@ static void addHUEdge(SEG::NodeID src, SEG::NodeID dest,
       // TODO(ddevec): What about gep with idx 0?
       //   I think we can ignore this...
       if (con.offs() != 0) {
-        dest_node.addPtsTo(calc.getPE(src, con.offs()));
+        dest_node.addPtsTo(data.getGEPPE(src, con.offs()));
       // If not a GEP, we've got a copy
       } else {
         dest_node.addPred(graph, src_node.id());
@@ -291,12 +193,13 @@ static void addHUEdge(SEG::NodeID src, SEG::NodeID dest,
       llvm_unreachable("Should never get here!\n");
   }
 }
+
 //}}}
 
 }  // End anon namespace
 
 // SFS HU implementation {{{
-bool SFSHU(ConstraintGraph &graph, CFG &cfg,
+bool SFSHU(ConstraintGraph &cg, CFG &cfg,
     ObjectMap &omap) {
 
   // Okay, we run HU here, over the constraints
@@ -315,103 +218,96 @@ bool SFSHU(ConstraintGraph &graph, CFG &cfg,
 
   // Create our HU graph
   SEG hu_graph;
+  HUData data;
 
   // Populate the graph
   // create a HUNode per ConstraintNode:
-  ObjectMap::ObjID max_src_dest_id = ObjectMap::ObjID(-1);
-  std::for_each(graph.cbegin(), graph.cend(),
-      [&max_src_dest_id]
-      (const ConstraintGraph::iter_type &pcons) {
-    // Store constraints don't define nodes!
-    auto dest = pcons->dest();
-    auto src = pcons->src();
-    auto rep = pcons->rep();
-
-    if (dest > max_src_dest_id) {
-      max_src_dest_id = dest;
-    }
-
-    if (src > max_src_dest_id) {
-      max_src_dest_id = src;
-    }
-
-    if (rep > max_src_dest_id) {
-      max_src_dest_id = rep;
-    }
-  });
+  ObjectMap::ObjID max_src_dest_id = cg.getMaxID();
 
   // go to max val + 1, so if I find id 0, there should be 1 element
-  for (int i = 0; i < max_src_dest_id.val()+1; i++) {
+  for (int32_t i = 0; i < max_src_dest_id.val()+1; ++i) {
     // Add a node per potential dest
     auto node_id = hu_graph.addNode<HUNode>();
     assert(node_id.val() == i);
 
-    // If the node is not a value, make it indirect, so its not merged
-    //   arbitrarily
     // Don't optimize away funciton call/ret information
     auto obj_id = nodeToObj(node_id);
-    if (!omap.isValue(obj_id) || graph.isIndirCall(obj_id)) {
+    // If this node is an object, or an indirect callsite, don't merge it
+    if (!omap.isValue(obj_id) || ObjectMap::isSpecial(obj_id) ||
+        cg.isIndirCall(obj_id)) {
       auto &node = hu_graph.getNode<HUNode>(node_id);
-      node.setIndirect();
+      node.addPtsTo(data.getNextPE());
     }
   }
 
-  HUCalc calc;
-
-  // Add a PE for each store rep, so they aren't merged
-  std::for_each(graph.cbegin(), graph.cend(),
-      [&hu_graph, &calc]
-      (const ConstraintGraph::iter_type &pcons) {
-    // Store constraints don't define nodes!
-    auto rep_id = pcons->rep();
-    auto node_rep_id = objToNode(rep_id);
-    auto &node = hu_graph.getNode<HUNode>(node_rep_id);
-    calc.giveNewPE(node);
-  });
-
-  // Also add a PE for each call/return node
-  std::for_each(cfg.function_start_begin(), cfg.function_start_end(),
-      [&hu_graph, &calc]
-      (const std::pair<ObjectMap::ObjID, CFG::CFGid> &pr) {
-    // Store constraints don't define nodes!
-    auto ret_id = objToNode(pr.first);
-    auto &node = hu_graph.getNode<HUNode>(ret_id);
-    node.setIndirect();
-    // calc.giveNewPE(node);
-  });
-  std::for_each(cfg.function_ret_begin(), cfg.function_ret_end(),
-      [&hu_graph, &calc]
-      (const std::pair<ObjectMap::ObjID, CFG::CFGid> &pr) {
-    // Store constraints don't define nodes!
-    auto ret_id = objToNode(pr.first);
-    auto &node = hu_graph.getNode<HUNode>(ret_id);
-    node.setIndirect();
-    // calc.giveNewPE(node);
-  });
-
   // Add the edges for each constraint
-  std::for_each(graph.cbegin(), graph.cend(),
-      [&hu_graph, &calc]
-      (const ConstraintGraph::iter_type &pcons) {
+  std::set<SEG::NodeID> touched;
+  for (auto &pcons : cg) {
     auto cons = *pcons;
 
     auto src_id = cons.src();
     auto dest_id = cons.dest();
 
+    // Don't optimize null/int values, they're special
+    if (src_id == ObjectMap::IntValue ||
+        dest_id == ObjectMap::IntValue ||
+        src_id == ObjectMap::NullValue ||
+        dest_id == ObjectMap::NullValue) {
+      continue;
+    }
+
     // Convert to nodes:
     auto dest_node_id = objToNode(dest_id);
     auto src_node_id = objToNode(src_id);
+    touched.insert(dest_node_id);
+    touched.insert(src_node_id);
 
-    addHUEdge(src_node_id, dest_node_id, hu_graph, cons, calc);
-  });
+
+    addHUEdge(src_node_id, dest_node_id, hu_graph, cons, data);
+  }
+
+  for (auto &pnode : hu_graph) {
+    auto &node = cast<HUNode>(*pnode);
+    if (touched.find(node.id()) == std::end(touched)) {
+      auto pts = data.getNextPE();
+      /*
+      llvm::dbgs() << "Dealing with untouched: " <<
+        FullValPrint(nodeToObj(node.id())) <<
+        "Adding: " << pts << "\n";
+      */
+      node.addPtsTo(pts);
+    }
+  }
 
   // if_debug(hu_graph.printDotFile("HuStart.dot", *g_omap));
   // hu_graph.printDotFile("HuStart.dot", *g_omap);
 
   // Now iterate in topological order (start w/ root, end w/ leaf)
   // NOTE: visitHU enforces topo order... internally
+  auto traverse_pe = [&data, &hu_graph] (const SEG::Node &nd) {
+    auto &node = cast<HUNode>(nd);
+    // Now, unite any pred ids:
+    for (auto pred_id : node.preds()) {
+      auto &pred_node = hu_graph.getNode<HUNode>(pred_id);
 
-  calc.calcHU(hu_graph);
+      // Skip pointers to self
+      if (pred_node.id() == node.id()) {
+        continue;
+      }
+
+      // If the pred node isn't a non_ptr
+      if (!pred_node.ptsto().test(HUNode::PENonPtr)) {
+        node.ptsto() |= pred_node.ptsto();
+      }
+    }
+
+    if (node.ptsto().empty()) {
+      node.addPtsTo(HUNode::PENonPtr);
+    }
+  };
+
+  RunTarjans<should_visit_default, decltype(traverse_pe)>
+      (hu_graph, should_visit_default(), traverse_pe);
 
   // if_debug(hu_graph.printDotFile("HuStart.dot", *g_omap));
   // hu_graph.printDotFile("HuOpt.dot", *g_omap);
@@ -427,9 +323,13 @@ bool SFSHU(ConstraintGraph &graph, CFG &cfg,
     auto &ptsto = node.ptsto();
 
     // Set empty nodes to nonptr
-    if (ptsto.empty() || ptsto.test(HUCalc::PENonPtr)) {
+    if (ptsto.empty() || ptsto.test(HUNode::PENonPtr)) {
       ptsto.clear();
-      ptsto.set(HUCalc::PENonPtr);
+      ptsto.set(HUNode::PENonPtr);
+      /*
+      llvm::dbgs() << "Have NonPtr: " << FullValPrint(nodeToObj(node.id())) <<
+        "\n";
+      */
     }
 
     auto ret = pts_to_pe.emplace(ptsto, node.id());
@@ -443,6 +343,8 @@ bool SFSHU(ConstraintGraph &graph, CFG &cfg,
   }
 
   // Need to update omap!  value to ObjID ptr needs to change:
+  std::unordered_map<SEG::NodeID, SEG::NodeID, SEG::NodeID::hasher>
+    rep_remapping;
   for (int i = 0; i < max_src_dest_id.val(); i++) {
     auto node_id = SEG::NodeID(i);
 
@@ -450,13 +352,29 @@ bool SFSHU(ConstraintGraph &graph, CFG &cfg,
 
     auto rep_id = node.id();
 
+    if (nodeToObj(node_id) == ObjectMap::IntValue ||
+        nodeToObj(rep_id) == ObjectMap::IntValue  ||
+        nodeToObj(node_id) == ObjectMap::NullValue ||
+        nodeToObj(rep_id) == ObjectMap::NullValue) {
+      continue;
+    }
+
     if (rep_id != node_id) {
       /*
       llvm::dbgs() << "Updating omap: (" << node_id << ") " <<
         ValPrint(nodeToObj(node_id)) << " -> " << rep_id << "\n";
       */
       // setObjIDRep(nodeToObj(node_id), nodeToObj(rep_id));
-      omap.mergeObjRep(nodeToObj(node_id), nodeToObj(rep_id));
+      if (nodeToObj(rep_id) > max_src_dest_id) {
+        auto rc = rep_remapping.insert(std::make_pair(rep_id, node_id));
+
+        if (!rc.second) {
+          auto it = rc.first;
+          omap.mergeObjRep(nodeToObj(node_id), nodeToObj(it->second));
+        }
+      } else {
+        omap.mergeObjRep(nodeToObj(node_id), nodeToObj(rep_id));
+      }
     }
   }
 
@@ -464,9 +382,24 @@ bool SFSHU(ConstraintGraph &graph, CFG &cfg,
   // point to them (and note what we upated)
   // As well as: the uses and defs in the CFG
   std::set<Constraint> dedup;
-  for (size_t i = 0; i < graph.constraintSize(); i++) {
+  for (size_t i = 0; i < cg.constraintSize(); i++) {
     ConstraintGraph::ConsID id(i);
-    auto &cons = graph.getConstraint(id);
+    auto pcons = cg.tryGetConstraint(id);
+
+    if (pcons == nullptr) {
+      continue;
+    }
+
+    auto &cons = *pcons;
+
+    /*
+    if (cons.src() == ObjectMap::IntValue ||
+        cons.dest() == ObjectMap::IntValue ||
+        cons.src() == ObjectMap::NullValue ||
+        cons.dest() == ObjectMap::NullValue) {
+      continue;
+    }
+    */
 
     auto rep_obj_id = cons.rep();
     auto src_obj_id = cons.src();
@@ -512,14 +445,14 @@ bool SFSHU(ConstraintGraph &graph, CFG &cfg,
       cons.retarget(src_rep_id, dest_rep_id);
     }
 
-    if (HUCalc::isNonPtr(src_rep_node) || HUCalc::isNonPtr(dest_rep_node)) {
+    if (src_rep_node.isNonPtr() || dest_rep_node.isNonPtr()) {
       // If this constriant had a node in the cfg, remove it
       if (cons.type() == ConstraintType::Load ||
           cons.type() == ConstraintType::Store) {
         cfg.eraseObjToCFG(rep_obj_id);
       }
       // llvm::dbgs() << __LINE__ << " Deleting rep: " << cons.rep() << "\n";
-      graph.removeConstraint(id);
+      cg.removeConstraint(id);
       continue;
     }
 
@@ -528,7 +461,7 @@ bool SFSHU(ConstraintGraph &graph, CFG &cfg,
         cons.src() == cons.dest() && cons.offs() == 0) {
       // llvm::dbgs() << __LINE__ << " Deleting rep: " << cons.rep() << "\n";
       // llvm::dbgs() << "  With dest: " << cons.dest() << "\n";
-      graph.removeConstraint(id);
+      cg.removeConstraint(id);
       continue;
     }
 
@@ -537,14 +470,11 @@ bool SFSHU(ConstraintGraph &graph, CFG &cfg,
     //   sensitive info, not represented here
     if (cons.type() == ConstraintType::Copy ||
         cons.type() == ConstraintType::AddressOf) {
-      dout("Have cons: " << cons << "\n");
-      auto it = dedup.find(cons);
-      if (it == std::end(dedup)) {
-        dedup.insert(cons);
-      } else {
+      auto rc = dedup.insert(cons);
+      if (!rc.second) {
         // llvm::dbgs() << __LINE__ << " Deleting rep: " << cons.rep() << "\n";
         // llvm::dbgs() << "  With dest: " << cons.dest() << "\n";
-        graph.removeConstraint(id);
+        cg.removeConstraint(id);
       }
     }
   }
@@ -585,9 +515,9 @@ bool SFSHU(ConstraintGraph &graph, CFG &cfg,
 
     /*
     if (new_obj_id != pr.first) {
-      llvm::dbgs() << "Inserting " << new_obj_id << " to obj_to_cfg at: " <<
-          pr.second << "\n";
-      llvm::dbgs() << "  In place of: " << pr.first << "\n";
+      llvm::dbgs() << "Inserting " << FullValPrint(new_obj_id) <<
+          " to obj_to_cfg at: " << pr.second << "\n";
+      llvm::dbgs() << "  In place of: " << FullValPrint(pr.first) << "\n";
     }
     */
 
