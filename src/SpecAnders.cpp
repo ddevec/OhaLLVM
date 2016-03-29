@@ -184,7 +184,7 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
     << "\n";
   cg.countConstraints(omap);
 
-  ProfilerStart("anders_opt.prof");
+  // ProfilerStart("anders_opt.prof");
   if (!anders_no_opt) {
     {
       util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "HVN");
@@ -198,7 +198,7 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
       HRU(cg, omap, 100);
     }
   }
-  ProfilerStop();
+  // ProfilerStop();
   llvm::dbgs() << "SparseBitmap =='s: " << Bitmap::numEq() << "\n";
   llvm::dbgs() << "SparseBitmap hash's: " << Bitmap::numHash() << "\n";
 
@@ -782,8 +782,23 @@ llvm::AliasAnalysis::AliasResult SpecAnders::alias(const Location &L1,
   // llvm::dbgs() << "v2: " << *v2 << " obj_id2: " << obj_id2 << "\n";
   // llvm::dbgs() << "v1: " << *v1 << " obj_id1: " << obj_id1 << "\n";
 
-  auto &node1 = graph_.getNode(obj_id1);
-  auto &node2 = graph_.getNode(obj_id2);
+  auto pnode1 = graph_.tryGetNode(obj_id1);
+  auto pnode2 = graph_.tryGetNode(obj_id2);
+
+  if (pnode1 == nullptr) {
+    llvm::dbgs() << "Anders couldn't find node: " << obj_id1 <<
+      FullValPrint(obj_id1, omap_) << "\n";
+    return AliasAnalysis::alias(L1, L2);
+  }
+
+  if (pnode2 == nullptr) {
+    llvm::dbgs() << "Anders couldn't find node: " << obj_id2 <<
+      FullValPrint(obj_id2, omap_) << "\n";
+    return AliasAnalysis::alias(L1, L2);
+  }
+
+  auto &node1 = *pnode1;
+  auto &node2 = *pnode2;
 
   auto &pts1 = node1.ptsto();
   auto &pts2 = node2.ptsto();

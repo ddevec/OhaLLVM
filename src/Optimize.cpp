@@ -103,6 +103,19 @@ class HUData {
     return nextPE_++;
   }
 
+  int32_t getLoadPE(SEG::NodeID node_id, CFG::CFGid cfg_id) {
+    auto rc = loadToPE_.insert(std::make_pair(std::make_pair(node_id, cfg_id),
+          nextPE_));
+
+    if (rc.second) {
+      getNextPE();
+    }
+
+    auto it = rc.first;
+
+    return it->second;
+  }
+
   int32_t getGEPPE(SEG::NodeID node_id, int32_t offs) {
     auto it = gepToPE_.find(std::make_pair(node_id, offs));
 
@@ -145,6 +158,8 @@ class HUData {
 
   std::map<std::pair<SEG::NodeID, int32_t>, int32_t> gepToPE_;
 
+  std::map<std::pair<SEG::NodeID, CFG::CFGid>, int32_t> loadToPE_;
+
   std::unordered_map<Bitmap, int32_t, BitmapHash> hashValueMap_;
 
   std::unordered_map<SEG::NodeID, int32_t, SEG::NodeID::hasher> idToPE_;
@@ -152,7 +167,8 @@ class HUData {
 };
 
 static void addHUEdge(SEG::NodeID src, SEG::NodeID dest,
-    SEG &graph, const Constraint &con, HUData &data) {
+    SEG &graph, const Constraint &con, HUData &data,
+    const CFG &/*cfg*/) {
   // Get our two HU nodes
   auto &dest_node = graph.getNode<HUNode>(dest);
   auto &src_node = graph.getNode<HUNode>(src);
@@ -163,7 +179,12 @@ static void addHUEdge(SEG::NodeID src, SEG::NodeID dest,
       break;
     case ConstraintType::Load:
       // Add its own indirect ptsto
+      // We could instead mark this with a PE  unique to (load_id, CFGid)
       dest_node.addPtsTo(data.getNextPE());
+      /*
+      dest_node.addPtsTo(data.getLoadPE(src_node.id(),
+            cfg.getCFGid(con.rep())));
+      */
       break;
     case ConstraintType::AddressOf:
       if_debug(
@@ -193,7 +214,6 @@ static void addHUEdge(SEG::NodeID src, SEG::NodeID dest,
       llvm_unreachable("Should never get here!\n");
   }
 }
-
 //}}}
 
 }  // End anon namespace
@@ -263,7 +283,7 @@ bool SFSHU(ConstraintGraph &cg, CFG &cfg,
     touched.insert(src_node_id);
 
 
-    addHUEdge(src_node_id, dest_node_id, hu_graph, cons, data);
+    addHUEdge(src_node_id, dest_node_id, hu_graph, cons, data, cfg);
   }
 
   for (auto &pnode : hu_graph) {
@@ -477,6 +497,10 @@ bool SFSHU(ConstraintGraph &cg, CFG &cfg,
         cg.removeConstraint(id);
       }
     }
+
+    // FIXME:
+    // If we have a load with an equivalent input and output set, we can remove
+    //   duplicates of that load constraint...
   }
 
   // Don't update def-use or objToCFG, as the reps haven't changed?
@@ -526,8 +550,8 @@ bool SFSHU(ConstraintGraph &cg, CFG &cfg,
     // either is the same...
 
     if_debug_enabled(auto ret =)
-      new_obj_to_cfg.emplace(new_obj_id, pr.second);
-    assert(ret.second);
+      new_obj_to_cfg.insert(std::make_pair(new_obj_id, pr.second));
+    assert(ret.second || pr.second == ret.first->second);
   });
   cfg.swapObjToCFG(new_obj_to_cfg);
 
@@ -580,7 +604,6 @@ bool SFSHU(ConstraintGraph &cg, CFG &cfg,
     });
     cfg.swapFunctionReturns(new_fcn_entries);
   }
-
 
   return false;
 }

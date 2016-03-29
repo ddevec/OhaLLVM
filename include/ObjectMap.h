@@ -68,7 +68,10 @@ class ObjectMap {
     eStdIOValue = 15,
     eIoctlValue = 16,
     eDirObject = 17,
-    eEnvObject = 18,
+    eEnvValue = 18,
+    eEnvObject = 19,
+    eEnvpValue = 20,
+    eEnvpObject = 21,
     eNumDefaultObjs
   } DefaultObjs;
 
@@ -92,7 +95,10 @@ class ObjectMap {
   static const ObjID StdIOValue;
   static const ObjID IoctlValue;
   static const ObjID DirObject;
+  static const ObjID EnvValue;
   static const ObjID EnvObject;
+  static const ObjID EnvpValue;
+  static const ObjID EnvpObject;
   //}}}
 
   static constexpr ObjID getOffsID(ObjID id, int32_t offs) {
@@ -430,8 +436,14 @@ class ObjectMap {
       o << "(argv)";
     } else if (id == ArgvObjectObject) {
       o << "(argv obj)";
+    } else if (id == EnvValue) {
+      o << "(env value)";
     } else if (id == EnvObject) {
       o << "(env)";
+    } else if (id == EnvpValue) {
+      o << "(envp value)";
+    } else if (id == EnvpObject) {
+      o << "(envp)";
     } else {
       llvm_unreachable("not special");
     }
@@ -485,6 +497,14 @@ class ObjectMap {
 
     // Return either the emplaced value, or the value that used to live there
     return getRep(ret_pr.first->second);
+  }
+
+  ObjID getValueC(llvm::Value *val) {
+    if (auto c = dyn_cast<llvm::Constant>(val)) {
+      return getConstRep(c);
+    } else {
+      return getValueRep(val);
+    }
   }
 
   // Returns pair<bool, objid>

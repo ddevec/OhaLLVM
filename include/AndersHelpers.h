@@ -365,6 +365,14 @@ class AndersGraph {
     return reps_.find(id);
   }
 
+  AndersNode *tryGetNode(ObjID id) {
+    if (static_cast<size_t>(id.val()) > nodes_.size()) {
+      return nullptr;
+    }
+
+    return &getNode(id);
+  }
+
   AndersNode &getNode(ObjID id) {
     auto rep = getRep(id);
 

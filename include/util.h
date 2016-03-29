@@ -7,6 +7,7 @@
 
 #include <cassert>
 
+#include <algorithm>
 #include <atomic>
 #include <bitset>
 #include <chrono>
@@ -14,6 +15,7 @@
 #include <limits>
 #include <list>
 #include <memory>
+#include <numeric>
 #include <set>
 #include <string>
 #include <vector>
@@ -884,7 +886,7 @@ class SlabAlloc : std::allocator<T> {
     return ret;
   }
 
-  void deallocate(pointer p, size_type n) {
+  void deallocate(pointer, size_type) {
     // slab doesn't deallocate LOL
   }
 

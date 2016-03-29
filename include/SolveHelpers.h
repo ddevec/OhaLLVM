@@ -207,6 +207,14 @@ class BddPtstoSet {
       return (init != ptsto_);
     }
 
+    template<typename InputIterator>
+    void insert(InputIterator it, InputIterator en) {
+      std::for_each(it, en,
+          [this] (ObjectMap::ObjID id) {
+        set(id);
+      });
+    }
+
     void reset(ObjectMap::ObjID id) {
       ptsto_ &= !getFddVar(id);
     }

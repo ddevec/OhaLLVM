@@ -55,7 +55,7 @@ class RunTarjans {
   struct TarjanData &getData(SEG::NodeID id) {
     assert(id != SEG::NodeID::invalid());
     assert(id.val() >= 0);
-    assert(id.val() < nodeData_.size());
+    assert(static_cast<size_t>(id.val()) < nodeData_.size());
     return nodeData_.at(id.val());
   }
 

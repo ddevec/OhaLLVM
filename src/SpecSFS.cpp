@@ -36,6 +36,7 @@
 #include "include/lib/UnusedFunctions.h"
 #include "include/lib/IndirFcnTarget.h"
 #include "include/lib/DynPtsto.h"
+#include "include/lib/DynAlias.h"
 
 using std::swap;
 
@@ -143,6 +144,7 @@ void SpecSFS::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   usage.addRequired<IndirFunctionInfo>();
   // For dynamic ptsto removal
   usage.addRequired<DynPtstoLoader>();
+  usage.addRequired<DynAliasLoader>();
   usage.addRequired<llvm::ProfileInfo>();
 }
 
@@ -258,11 +260,11 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   // Finally, solve the graph
   {
     util::PerfTimerPrinter solve_timer(llvm::dbgs(), "solve");
-    ProfilerStart("solve.prof");
+    // ProfilerStart("solve.prof");
     if (solve(graph, std::move(dyn_pts))) {
       error("Solve failure!");
     }
-    ProfilerStop();
+    // ProfilerStop();
   }
 
 
@@ -339,11 +341,15 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
 
           auto &ptsto = pts_set_vec[i];
 
+          llvm::dbgs() << "  " << ptsto << "\n";
+
+          /*
           std::for_each(ptsto.cbegin(), ptsto.cend(),
               [&omap] (const ObjectMap::ObjID obj_id) {
             llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
                 << "\n";
           });
+          */
         }
       }
     });
@@ -363,11 +369,15 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
 
           auto &ptsto = pts_set_vec[i];
 
+          llvm::dbgs() << "  " << ptsto << "\n";
+
+          /*
           std::for_each(ptsto.cbegin(), ptsto.cend(),
               [&omap] (const ObjectMap::ObjID obj_id) {
             llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
                 << "\n";
           });
+          */
         }
       }
     });
@@ -587,7 +597,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
 
     // First, deal with nodes which have been optimized away from the
     //   dyn_ptsto set
-    std::map<ObjectMap::ObjID, std::set<ObjectMap::ObjID>> new_dyn_ptsto;
+    std::map<ObjectMap::ObjID, BddPtstoSet> new_dyn_ptsto;
 
     for (auto &pr : dyn_ptsto) {
       auto old_id = pr.first;
@@ -598,7 +608,11 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
       if (!ObjectMap::isSpecial(new_id)) {
         auto val = omap.valueAtID(new_id);
         if (val != nullptr) {
-          new_id = omap.getValue(val);
+          if (auto c = dyn_cast<llvm::Constant>(val)) {
+            new_id = omap.getConstRep(c);
+          } else {
+            new_id = omap.getValue(val);
+          }
         }
         // assert(omap.isObject(new_id));
       }
@@ -640,11 +654,18 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
           if (st_pts_set.test(obj_id) == false) {
             // If this is the first time we've found a missing value for this
             //    set...
+            auto val = omap.valueAtID(obj_id);
+            if (auto g = dyn_cast_or_null<llvm::GlobalVariable>(val)) {
+              std::string prefix(".str");
+              if (!std::string(g->getName()).compare(
+                    0, prefix.size(), prefix)) {
+                continue;
+              }
+            }
             if (!set_id_found) {
               const llvm::Function *fcn = nullptr;
               const llvm::BasicBlock *bb = nullptr;
               llvm::dbgs() << "Element: " << set_obj_id << ": ";
-              auto val = omap.valueAtID(set_obj_id);
               if (val == nullptr) {
                 llvm::dbgs() << "Value NULL";
               } else if (auto ins = dyn_cast<llvm::Instruction>(val)) {
@@ -687,7 +708,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
 
               set_id_found = true;
             }
-            auto val = omap.valueAtID(obj_id);
+
             llvm::dbgs() << "  Found element in dyn set not in static set:\n";
             llvm::dbgs() << "    ";
             if (val == nullptr) {
@@ -706,6 +727,12 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
             llvm::dbgs() << "    (obj_id): " << obj_id << "\n";
           }
         }
+
+        /*
+        if (set_id_found) {
+          llvm::dbgs() << "  " << dyn_pts_set - st_pts_set << "\n";
+        }
+        */
       }
     }
     //}}}

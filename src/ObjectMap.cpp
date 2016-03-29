@@ -83,6 +83,18 @@ const ObjectMap::ObjID ObjectMap::EnvObject =
     ObjectMap::ObjID(
         static_cast<int32_t>(ObjectMap::ObjEnum::eEnvObject));
 
+const ObjectMap::ObjID ObjectMap::EnvValue =
+    ObjectMap::ObjID(
+        static_cast<int32_t>(ObjectMap::ObjEnum::eEnvValue));
+
+const ObjectMap::ObjID ObjectMap::EnvpObject =
+    ObjectMap::ObjID(
+        static_cast<int32_t>(ObjectMap::ObjEnum::eEnvpObject));
+
+const ObjectMap::ObjID ObjectMap::EnvpValue =
+    ObjectMap::ObjID(
+        static_cast<int32_t>(ObjectMap::ObjEnum::eEnvpValue));
+
 ObjectMap::ObjectMap() {
   for (int32_t i = 0; i < static_cast<int32_t>(ObjEnum::eNumDefaultObjs);
       i++) {

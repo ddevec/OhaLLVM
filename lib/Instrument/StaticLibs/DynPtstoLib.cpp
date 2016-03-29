@@ -229,7 +229,7 @@ void __DynPtsto_do_finish() {
 void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
     void *addr);
 void __DynPtsto_main_init2(int32_t obj_id, int32_t argv_dest_id,
-    int32_t /*envp_id*/,
+    int32_t /*envp_id*/, int32_t /*env_id*/,
     int argc, char **argv) {
   int i = 0;
   for (i = 0; i < argc; i++) {
@@ -240,7 +240,7 @@ void __DynPtsto_main_init2(int32_t obj_id, int32_t argv_dest_id,
 }
 
 void __DynPtsto_main_init3(int32_t obj_id, int32_t argv_dest_id,
-    int32_t envp_id,
+    int32_t envp_id, int32_t env_id,
     int argc, char **argv, char **envp) {
   // Init envp
   int i;
@@ -250,10 +250,10 @@ void __DynPtsto_main_init3(int32_t obj_id, int32_t argv_dest_id,
   // Also do for the nullptr
   __DynPtsto_do_malloc(envp_id, (1)*8, envp[i]);
 
-  __DynPtsto_do_malloc(envp_id, (sizeof(*envp)*(i+1))*8, envp);
+  __DynPtsto_do_malloc(env_id, (sizeof(*envp)*(i+1))*8, envp);
 
   // Do std init
-  __DynPtsto_main_init2(obj_id, argv_dest_id, envp_id, argc, argv);
+  __DynPtsto_main_init2(obj_id, argv_dest_id, envp_id, env_id, argc, argv);
 }
 
 void __DynPtsto_do_call() {

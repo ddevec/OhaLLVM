@@ -340,7 +340,7 @@ ObjectMap::ObjID getGlobalInitializer(ConstraintGraph &, CFG &,
   } else if (name == "stdin") {
     ret = ObjectMap::StdIOValue;
   } else if (name == "environ") {
-    ret = ObjectMap::EnvObject;
+    ret = ObjectMap::EnvpValue;
   }
 
   return ret;
@@ -2297,20 +2297,32 @@ bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
   {
     cg.add(ConstraintType::AddressOf,
       ObjectMap::ArgvValue, ObjectMap::ArgvValueObject);
-    num_misc++;
 
-    // FIXME: Delete this when convenient
-    //   -- *argv points to an array of chars
-    //   -- ** argv points to integral values, so argv object object is an
-    //         intvalue, which should be ignored
+    // Pointer to envP points to env values...
     cg.add(ConstraintType::AddressOf,
-        ObjectMap::ArgvObject, ObjectMap::ArgvObjectObject);
-    num_misc++;
+      ObjectMap::EnvpValue, ObjectMap::EnvpObject);
+
+    cg.add(ConstraintType::AddressOf,
+      ObjectMap::EnvValue, ObjectMap::EnvObject);
+
+    auto ev_st_id = omap.createPhonyID();
+    cg.add(ConstraintType::Store, ev_st_id,
+        ObjectMap::EnvpValue, ObjectMap::EnvValue);
+
+    auto ev_node_id = cfg.nextNode();
+
+    cfg.addPred(ev_node_id, CFG::CFGArgvBegin);
+
+    addCFGStore(cfg, &ev_node_id, ev_st_id);
+
+    cfg.addPred(CFG::CFGArgvEnd, ev_node_id);
+
+    cg.add(ConstraintType::AddressOf,
+      ObjectMap::EnvValue, ObjectMap::EnvObject);
 
     auto st_id = omap.createPhonyID();
     cg.add(ConstraintType::Store, st_id,
       ObjectMap::ArgvObject, ObjectMap::ArgvValue);
-    num_misc++;
 
     auto node_id = cfg.nextNode();
 
@@ -2319,6 +2331,8 @@ bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
     addCFGStore(cfg, &node_id, st_id);
 
     cfg.addPred(CFG::CFGArgvEnd, node_id);
+
+    num_misc += 5;
   }
 
   // Constraints for stdio

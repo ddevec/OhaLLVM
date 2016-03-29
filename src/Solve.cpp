@@ -216,6 +216,17 @@ void DUG::LoadNode::processShared(DUG &dug, TopLevelPtsto &pts_top,
   dout("src is " << src() << " " << src_pts << "\n");
   dout("dest is " << dest() << " " << dest_pts << "\n");
 
+  if (dest().val() == 201515) {
+    llvm::dbgs() << "SHARED_LOAD\n";
+    llvm::dbgs() << "value at src() (" << src() << ")\n";
+    llvm::dbgs() << "value at dest() (" << dest() << ")\n";
+    llvm::dbgs() << "SHARED\n";
+    llvm::dbgs() << "Load is " << rep() << "\n";
+    llvm::dbgs() << "src is " << src() << " " << src_pts << "\n";
+    llvm::dbgs() << "dest is " << dest() << " " << dest_pts << "\n";
+    llvm::dbgs() << "in is " << in << " " << dest_pts << "\n";
+  }
+
   bool changed = false;
   std::for_each(std::begin(src_pts), std::end(src_pts),
       [this, &dug, &work, &changed, &dest_pts, &in]
@@ -316,6 +327,16 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top,
 
   logout("i " << in() << "\n");
 
+  if (dest().val() == 201515) {
+    llvm::dbgs() << "LOAD\n";
+    llvm::dbgs() << "value at src() (" << src() << ")\n";
+    llvm::dbgs() << "value at dest() (" << dest() << ")\n";
+    llvm::dbgs() << "Load is " << rep() << "\n";
+    llvm::dbgs() << "src is " << src() << " " << src_pts << "\n";
+    llvm::dbgs() << "dest is " << dest() << " " << dest_pts << "\n";
+    llvm::dbgs() << "in is " << in_ << " " << dest_pts << "\n";
+  }
+
   bool changed = false;
   for (auto id : src_pts) {
     dout("  id is: " << id << "\n");
@@ -326,6 +347,7 @@ void DUG::LoadNode::process(DUG &dug, TopLevelPtsto &pts_top,
       llvm::dbgs() << "  LOAD\n";
       llvm::dbgs() << "  value at src() (" << src() << ")\n";
       llvm::dbgs() << "  value at dest() (" << dest() << ")\n";
+      llvm::dbgs() << "  value at rep() (" << rep() << ")\n";
       llvm::dbgs() << "  src is " << src() << " " << src_pts << "\n";
       llvm::dbgs() << "  dest is " << dest() << " " << dest_pts << "\n";
       llvm::dbgs() << "  in_ is " << in_ << "\n";
@@ -457,6 +479,17 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top,
 
   logout("i " << in() << "\n");
   logout("o " << out_ << "\n");
+
+  if (dest().val() == 50817) {
+    llvm::dbgs() << "STORE\n";
+    llvm::dbgs() << "value at src() (" << src() << ")\n";
+    llvm::dbgs() << "value at dest() (" << dest() << ")\n";
+    llvm::dbgs() << "Load is " << rep() << "\n";
+    llvm::dbgs() << "src is " << src() << " " << src_pts << "\n";
+    llvm::dbgs() << "dest is " << dest() << " " << dest_pts << "\n";
+    llvm::dbgs() << "in is " << in_ << " " << dest_pts << "\n";
+    llvm::dbgs() << "out is " << out_ << " " << dest_pts << "\n";
+  }
 
   // If this is a strong update, remove all outgoing edges from dest
   // NOTE: This is a strong update if we are updating a single concrete location

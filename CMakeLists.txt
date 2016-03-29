@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 2.8)
 
+#set(CMAKE_CXX_COMPILER clang++-libc++)
+#set(CMAKE_CXX_COMPILER g++)
+
 function(list_prefix var prefix)
 
   set(listvar "")
@@ -83,7 +86,8 @@ find_package(LLVM REQUIRED CONFIG)
 include(AddLLVM)
 
 add_definitions(${LLVM_DEFINITOINS})
-include_directories(${LLVM_INCLUDE_DIRS} /home/ddevec/prefix/include)
+include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
+include_directories(/home/ddevec/prefix/include)
 link_directories(${LLVM_LIBRARY_DIRS} /home/ddevec/prefix/lib)
 
 list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
@@ -97,7 +101,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O4 -DNDEBUG -DSPECSFS_NODEBUG")
 set(CMAKE_CXX_FLAGS_DEBUG "-Og -g")
 
 #set(CMAKE_CXX_COMPILER "g++-5")
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -flto -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -flto -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -std=c++11 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
 #set(CMAKE_CXX_LINKER_FLAGS "${CMAKE_CXX_LINKER_FLAGS} -flto")
@@ -134,6 +138,7 @@ set(SPECSFS_SOURCES
   # Instrumentation passes
   lib/Instrument/IndirFcnTarget.cpp
   lib/Instrument/DynPtsto.cpp
+  lib/Instrument/DynAlias.cpp
   lib/Instrument/DynPtstoCheck.cpp
 
   lib/StaticSlice.cpp
@@ -189,6 +194,14 @@ add_library(prof_ptsto STATIC
   ${PROF_DYNPTSTO_SOURCES}
   )
 add_cpplint_target(prof_ptsto ${PROF_DYNPTSTO_SOURCES})
+
+set(PROF_DYNALIAS_SOURCES
+  lib/Instrument/StaticLibs/DynAliasLib.cpp
+  )
+add_library(prof_alias STATIC
+  ${PROF_DYNALIAS_SOURCES}
+  )
+add_cpplint_target(prof_alias ${PROF_DYNALIAS_SOURCES})
 
 set(CHECK_DYNPTSTO_SOURCES
   lib/Instrument/StaticLibs/DynPtstoCheckLib.cpp

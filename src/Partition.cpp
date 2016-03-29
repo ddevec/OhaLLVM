@@ -166,6 +166,10 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
       llvm::dbgs() << "Getting node with rep: " << rep_id << " recorded id: " <<
           pr.first << "\n";
       */
+      // We should always get a rep_id out of the obj_to_cfg graph...
+      assert(omap.getRep(pr.first) == pr.first);
+
+
       // llvm::dbgs() << "Getting node: " << pr.first << "\n";
       auto &node = dug.getNode(pr.first);
 
@@ -223,17 +227,17 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
         // val is src for gv and loads
         val_id = node.src();
       }
-      /*
-      if (pr.first == ObjectMap::ObjID(77377)) {
+
+      if (pr.first == ObjectMap::ObjID(143080)) {
         llvm::dbgs() << "Have obj of: " << pr.first << "\n";
         llvm::dbgs() << "At node: " << node.id() << "\n";
       }
 
-      if (val_id == ObjectMap::ObjID(77377)) {
+      if (val_id == ObjectMap::ObjID(50695)) {
         llvm::dbgs() << "Creating part_node for: " << val_id << "\n";
         llvm::dbgs() << "At node: " << node.id() << "\n";
       }
-      */
+
       /*
       auto val = omap.valueAtID(val_id);
       auto obj_id = omap.getObject(val);
@@ -268,7 +272,8 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
       }
 
       auto &aux_ptsto = aux.getPointsTo(obj_id);
-      if (obj_id == ObjectMap::ObjID(82470)) {
+
+      if (obj_id == ObjectMap::ObjID(40402)) {
         llvm::dbgs() << "  aux_pts for " << obj_id << " is: " << aux_ptsto <<
           "\n";
       }
@@ -410,8 +415,7 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
     part_map[ObjectMap::ObjID(47070)] << "\n";
   */
 
-  /*
-  ObjectMap::ObjID rel_id(181419);
+  ObjectMap::ObjID rel_id(40402);
   llvm::dbgs() << "  ObjID " << rel_id << " is part of part_id: " <<
     part_map[rel_id.val()] << "\n";
   for (auto id : AE[rel_id.val()]) {
@@ -419,13 +423,12 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
   }
   llvm::dbgs() << "\n";
 
-  ObjectMap::ObjID node_id(181419);
+  ObjectMap::ObjID node_id(50695);
   llvm::dbgs() << "  Part nodes[" << node_id << "] is:";
   for (auto &id : part_nodes[node_id.val()]) {
     llvm::dbgs() << " " << id;
   }
   llvm::dbgs() << "\n";
-  */
 
 
   /*
@@ -527,7 +530,7 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
       auto &rel_map = graph.getRelevantNodes();
       dout("Getting rel_map for: " << obj_id << "\n");
       auto &rel_bitmap = rel_map[obj_id.val()];
-      if (part_id.val() == 279) {
+      if (part_id.val() == 215) {
         llvm::dbgs() << "  Part " << part_id << " got rel_bitmap of:";
         for (auto rel_id : rel_bitmap) {
           llvm::dbgs() << " " << rel_id;
