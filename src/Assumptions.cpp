@@ -646,6 +646,7 @@ PtstoAssumption::approxDependencies(
             const_cast<llvm::Instruction *>(ptr_inst), obj_id));
     } else {
       // This is a global variable, or function...
+      llvm::dbgs() << "Global assumption? " << FullValPrint(obj_id) << "\n";
       assert(llvm::isa<llvm::GlobalValue>(val));
     }
   }

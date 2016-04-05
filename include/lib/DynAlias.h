@@ -93,11 +93,16 @@ class DynAliasLoader : public llvm::ModulePass {
 
   bool loadStoreAlias(const llvm::LoadInst *li, const llvm::StoreInst *si) {
     // Check for the store inst in our load alias set...
-    auto sid = omap_.getValueC(si->getOperand(1));
-    auto lid = omap_.getValueC(li->getOperand(0));
+    auto sid = omap_.getValueC(si);
+    auto lid = omap_.getValueC(li);
 
     // Get the loadinst for our value:
-    auto &load_ptsto = valToObjs_.at(lid);
+    auto load_it = valToObjs_.find(lid);
+    if (load_it == std::end(valToObjs_)) {
+      return false;
+    }
+
+    auto &load_ptsto = load_it->second;
 
     return load_ptsto.find(sid) != std::end(load_ptsto);
   }

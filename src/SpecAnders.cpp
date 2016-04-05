@@ -235,12 +235,12 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
   graph_.setStructInfo(omap.getIsStructSet());
 
   {
-    ProfilerStart("anders_solve.prof");
+    // ProfilerStart("anders_solve.prof");
     util::PerfTimerPrinter solve_timer(llvm::dbgs(), "AndersSolve");
     if (solve()) {
       error("Solve failure!");
     }
-    ProfilerStop();
+    // ProfilerStop();
   }
 
   for (auto &id_val : id_debug) {

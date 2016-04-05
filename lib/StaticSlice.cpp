@@ -21,6 +21,7 @@
 #include "include/lib/UnusedFunctions.h"
 #include "include/lib/IndirFcnTarget.h"
 #include "include/lib/DynPtsto.h"
+#include "include/lib/DynAlias.h"
 
 #include "llvm/Constants.h"
 #include "llvm/Pass.h"
@@ -58,6 +59,12 @@ static llvm::cl::opt<bool>
   do_rand_slice("slice-do-random", llvm::cl::init(false),
       llvm::cl::value_desc("bool"),
       llvm::cl::desc("Creates random slices"));
+
+static llvm::cl::opt<bool>
+  force_alias("slice-force-dyn-alias", llvm::cl::init(false),
+      llvm::cl::value_desc("bool"),
+      llvm::cl::desc("Does load-store aliasing based on the "
+        "DynAliasLoader pass"));
 
 static llvm::cl::opt<bool>
   no_control_flow("slice-no-control-flow", llvm::cl::init(false),
@@ -793,11 +800,17 @@ class StaticSlice : public llvm::ModulePass {
     usage.addRequired<UnusedFunctions>();
     usage.addRequired<DynPtstoLoader>();
     usage.addRequired<llvm::DominatorTree>();
+    if (force_alias) {
+      usage.addRequired<DynAliasLoader>();
+    }
     usage.setPreservesAll();
   }
 
   bool runOnModule(llvm::Module &m) override {
     alias_ = &getAnalysis<llvm::AliasAnalysis>();
+    if (force_alias) {
+      dynAlias_ = &getAnalysis<DynAliasLoader>();
+    }
     dynInfo_ = &getAnalysis<UnusedFunctions>();
     auto &cons_pass = getAnalysis<ConstraintPass>();
     omap_ = cons_pass.getObjectMap();
@@ -1214,14 +1227,23 @@ class StaticSlice : public llvm::ModulePass {
               auto st_dest = inst.getOperand(1);
 
               if (llvm::isa<llvm::PointerType>(inst.getOperand(0)->getType())) {
-                // llvm::dbgs() << "store is: " << inst << "\n";
-                if (alias_->alias(llvm::AliasAnalysis::Location(st_dest),
-                        llvm::AliasAnalysis::Location(ld_src)) !=
-                      llvm::AliasAnalysis::NoAlias) {
-                  // llvm::dbgs() << "Adding inst: " << inst << "\n";
-                  // llvm::dbgs() << "  with stack: " << stack << "\n";  // NOLINT
-                  ret.emplace_back(&inst, StackCache::EmptyStack(), omap_,
-                      stackCache_, callInfo_, fcnToNode_, fcnGraph_);
+                // If we're forcing using static alias analysis:
+                if (force_alias) {
+                  if (dynAlias_->loadStoreAlias(cast<llvm::LoadInst>(pinst),
+                        cast<llvm::StoreInst>(&inst))) {
+                    ret.emplace_back(&inst, StackCache::EmptyStack(), omap_,
+                        stackCache_, callInfo_, fcnToNode_, fcnGraph_);
+                  }
+                } else {
+                  // llvm::dbgs() << "store is: " << inst << "\n";
+                  if (alias_->alias(llvm::AliasAnalysis::Location(st_dest),
+                          llvm::AliasAnalysis::Location(ld_src)) !=
+                        llvm::AliasAnalysis::NoAlias) {
+                    // llvm::dbgs() << "Adding inst: " << inst << "\n";
+                    // llvm::dbgs() << "  with stack: " << stack << "\n";  // NOLINT
+                    ret.emplace_back(&inst, StackCache::EmptyStack(), omap_,
+                        stackCache_, callInfo_, fcnToNode_, fcnGraph_);
+                  }
                 }
               // OR if we just cast a ptr to an int...
               } else if (llvm::ConstantExpr *ce =
@@ -1411,6 +1433,7 @@ class StaticSlice : public llvm::ModulePass {
   ObjectMap omap_;
 
   llvm::AliasAnalysis *alias_;
+  DynAliasLoader *dynAlias_;
 
   NodeMap fcnToNode_;
   SEG fcnGraph_;

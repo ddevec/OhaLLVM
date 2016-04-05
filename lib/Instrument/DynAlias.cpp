@@ -181,6 +181,11 @@ bool InstrDynAlias::runOnModule(llvm::Module &m) {
       std::vector<llvm::Instruction *> pointer_list;
       std::list<llvm::Instruction *> phi_list;
 
+      // Don't instrument malloc functions!
+      if (AllocInfo::fcnIsMalloc(&fcn) || AllocInfo::fcnIsFree(&fcn)) {
+        continue;
+      }
+
       for (auto &inst : bb) {
         // Add stack allocation
         if (llvm::isa<llvm::AllocaInst>(&inst)) {

@@ -172,6 +172,7 @@ add_llvm_loadable_module(SpecSFS
 target_link_libraries(SpecSFS
   bdd
   profiler
+  tcmalloc
   )
 
 add_cpplint_target(SpecSFS ${SPECSFS_SOURCES})

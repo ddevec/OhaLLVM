@@ -499,7 +499,7 @@ class ObjectMap {
     return getRep(ret_pr.first->second);
   }
 
-  ObjID getValueC(llvm::Value *val) {
+  ObjID getValueC(const llvm::Value *val) {
     if (auto c = dyn_cast<llvm::Constant>(val)) {
       return getConstRep(c);
     } else {

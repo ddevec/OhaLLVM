@@ -33,8 +33,8 @@ class AllocInfo {
         callee->getName() != "fopen64" &&
         // callee->getName() != "opendir" &&
         // callee->getName() != "getenv" &&
-        // callee->getName() != "Perl_safesysmalloc" &&
-        // callee->getName() != "Perl_safesysrealloc" &&
+        callee->getName() != "Perl_safesysmalloc" &&
+        callee->getName() != "Perl_safesysrealloc" &&
         callee->getName() != "_Znwj" &&  // operator new(unsigned int)
         callee->getName() != "_Znwm" &&  // operator new(unsigned long)
         callee->getName() != "_Znaj" &&  // operator new[](unsigned int)
@@ -67,7 +67,7 @@ class AllocInfo {
     llvm::Instruction *after = ci;
     // Arg pos 0
     if (callee->getName() == "malloc" ||
-        // callee->getName() == "Perl_safesysmalloc" ||
+        callee->getName() == "Perl_safesysmalloc" ||
         callee->getName() == "valloc") {
       ret = ci->getArgOperand(0);
       before = ci;
@@ -76,7 +76,7 @@ class AllocInfo {
 
     // Arg pos 1
     if (callee->getName() == "memalign" ||
-        // callee->getName() == "Perl_safesysrealloc" ||
+        callee->getName() == "Perl_safesysrealloc" ||
         callee->getName() == "realloc") {
       ret = ci->getArgOperand(1);
       before = ci;
@@ -207,7 +207,7 @@ class AllocInfo {
     if (callee->getName() != "free" &&
         callee->getName() != "fclose" &&
         callee->getName() != "realloc" &&
-        // callee->getName() != "Perl_safesysrealloc" &&
+        callee->getName() != "Perl_safesysrealloc" &&
         // callee->getName() != "closedir" &&
         callee->getName() != "pclose") {
       return false;
@@ -221,8 +221,8 @@ class AllocInfo {
       bool allow_cast = true) {
     // Arg pos 0
     if (callee->getName() == "free" ||
-        callee->getName() == "realloc" /*||
-        callee->getName() == "Perl_safesysrealloc"*/) {
+        callee->getName() == "realloc" ||
+        callee->getName() == "Perl_safesysrealloc") {
       return ci->getArgOperand(0);
     }
 

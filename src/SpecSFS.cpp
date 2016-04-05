@@ -267,7 +267,6 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     // ProfilerStop();
   }
 
-
   // Go through a function, and print the ptsto graph for that function, this
   // should be faster then printing the whole graph
   if (glbl_name != "") {
