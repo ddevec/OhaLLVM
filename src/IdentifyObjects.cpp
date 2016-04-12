@@ -611,6 +611,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
       F->getName() == "read" || F->getName() == "pipe" ||
       F->getName() == "wait" || F->getName() == "time" ||
       F->getName() == "stat" || F->getName() == "fstat" ||
+      F->getName() == "stat64" || F->getName() == "fstat64" ||
       F->getName() == "lstat" || F->getName() == "strtod" ||
       F->getName() == "strtof" || F->getName() == "strtold" ||
       F->getName() == "fflush" || F->getName() == "feof" ||
@@ -694,12 +695,48 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
       F->getName() == "tigetnum" || F->getName() == "times" ||
       F->getName() == "sysconf" || F->getName() == "ceilf" ||
       F->getName() == "setlinebuf" || F->getName() == "putchar" ||
+      F->getName() == "htons" || F->getName() == "htonl" ||
+      F->getName() == "ntohs" || F->getName() == "ntohl" ||
+      F->getName() == "random" || F->getName() == "inet_pton" ||
+      F->getName() == "rand" || F->getName() == "inet_ntop" ||
+      F->getName() == "pthread_mutex_init" ||
+      F->getName() == "pthread_cond_init" ||
+      F->getName() == "sigemtpyset" ||
+      F->getName() == "sigfillset" ||
+      F->getName() == "sigaddset" ||
+      F->getName() == "sigdelset" ||
+      F->getName() == "sigismember" ||
+      F->getName() == "epoll_ctl" ||
+      F->getName() == "epoll_wait" ||
+      F->getName() == "poll" ||
+      F->getName() == "setsocketopt" ||
+      F->getName() == "socket" ||
+      F->getName() == "bind" ||
+      F->getName() == "connect" ||
+      F->getName() == "accept" ||
+      F->getName() == "getpeername" ||
+      F->getName() == "getsockname" ||
+      F->getName() == "setsockopt" ||
+      F->getName() == "getsockopt" ||
+      F->getName() == "strcoll" ||
+      F->getName() == "syslog" || F->getName() == "uname" ||
+      F->getName() == "wait3" || F->getName() == "dup2" ||
+      F->getName() == "setsid" || F->getName() == "srand" ||
+      F->getName() == "getrlimit64" || F->getName() == "setrlimit64" ||
+      F->getName() == "pthread_attr_setstacksize" ||
+      F->getName() == "pthread_attr_getstacksize" ||
+      F->getName() == "ftruncate64" || F->getName() == "sync_file_range" ||
+      F->getName() == "fdatasync" || F->getName() == "truncate64" ||
+      F->getName() == "ftello64" || F->getName() == "ftello" ||
+      F->getName() == "getitimer" || F->getName() == "setitimer" ||
+      F->getName() == "__isinf" || F->getName() == "__isinfl" ||
+      F->getName() == "__isnan" || F->getName() == "__isnanl" ||
+      F->getName() == "__finite" || F->getName() == "__finitel" ||
       F->getName() == "getopt_long" || F->getName() == "getopt") {
     return true;
   }
 
   // Okay, how do we handle jmp functions?
-  // Uhhh, well... we... um, you-know
   // For anders we do nothing
   // For sfs, we need to add edges to the CFG
   // -- based on results from anders (where the jmps may come from or go)
@@ -892,6 +929,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
   // stores arg0 in arg1
   if (F->getName() == "strtoll" ||
       F->getName() == "strtoul" ||
+      F->getName() == "strtoull" ||
       F->getName() == "strtol") {
     auto st_id = omap.createPhonyID();
     cg.add(ConstraintType::Store, st_id,

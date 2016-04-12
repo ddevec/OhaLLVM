@@ -18,6 +18,7 @@
 #include "llvm/Function.h"
 #include "llvm/GlobalVariable.h"
 #include "llvm/Instructions.h"
+#include "llvm/InlineAsm.h"
 #include "llvm/Module.h"
 #include "llvm/Pass.h"
 #include "llvm/PassManager.h"
@@ -137,6 +138,9 @@ bool InstrIndirCalls::runOnModule(llvm::Module &m) {
       //   from andersens?
       // Add call to our instrumentation
       llvm::Value *callee = cs.getCalledValue();
+      if (llvm::isa<llvm::InlineAsm>(callee)) {
+        continue;
+      }
       if (callee->getType() != void_ptr_type) {
         callee = new llvm::BitCastInst(callee, void_ptr_type,
           "", ci);

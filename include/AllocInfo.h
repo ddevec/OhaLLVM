@@ -33,8 +33,9 @@ class AllocInfo {
         callee->getName() != "fopen64" &&
         // callee->getName() != "opendir" &&
         // callee->getName() != "getenv" &&
+        callee->getName() != "getaddrinfo" &&
         callee->getName() != "Perl_safesysmalloc" &&
-        callee->getName() != "Perl_safesysrealloc" &&
+        callee->getName() != "Perl_safesysmalloc" &&
         callee->getName() != "_Znwj" &&  // operator new(unsigned int)
         callee->getName() != "_Znwm" &&  // operator new(unsigned long)
         callee->getName() != "_Znaj" &&  // operator new[](unsigned int)
@@ -200,12 +201,13 @@ class AllocInfo {
         callee->getName() << "\n";
     }
     assert(ret != nullptr);
-    return std::make_pair(ret, after);;
+    return std::make_pair(ret, after);
   }
 
   static bool fcnIsFree(const llvm::Function *callee) {
     if (callee->getName() != "free" &&
         callee->getName() != "fclose" &&
+        callee->getName() != "freeaddrinfo" &&
         callee->getName() != "realloc" &&
         callee->getName() != "Perl_safesysrealloc" &&
         // callee->getName() != "closedir" &&
@@ -222,6 +224,7 @@ class AllocInfo {
     // Arg pos 0
     if (callee->getName() == "free" ||
         callee->getName() == "realloc" ||
+        callee->getName() == "freeaddrinfo" ||
         callee->getName() == "Perl_safesysrealloc") {
       return ci->getArgOperand(0);
     }

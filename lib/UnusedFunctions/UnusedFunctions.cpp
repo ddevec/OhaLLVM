@@ -6,11 +6,13 @@
 
 #include "llvm/Support/Debug.h"
 #include "llvm/Analysis/ProfileInfo.h"
+#include "llvm/Analysis/ProfileInfoLoader.h"
 #include "llvm/Function.h"
 
 void UnusedFunctions::getAnalysisUsage(llvm::AnalysisUsage &AU) const {
   AU.setPreservesAll();
   AU.addRequired<llvm::ProfileInfo>();
+  // AU.addRequired<llvm::ProfileInfoLoader>();
 }
 
 bool UnusedFunctions::runOnModule(llvm::Module &m) {

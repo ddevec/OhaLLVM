@@ -32,6 +32,7 @@ class ExtInfo {
 
     // c stdlib returning fcns
     if (F->getName() == "strerror" ||
+        F->getName() == "gai_strerror" ||
         F->getName() == "gmtime" ||
         F->getName() == "readdir") {
       return ObjectMap::CLibObject;
@@ -94,6 +95,7 @@ class ExtInfo {
 
     // c stdlib returning fcns
     if (F->getName() == "strerror" ||
+        F->getName() == "gai_strerror" ||
         F->getName() == "gmtime" ||
         F->getName() == "readdir") {
       llvm::dbgs() << "WARNING: strerror/gmtime/readdir size guessed\n";
