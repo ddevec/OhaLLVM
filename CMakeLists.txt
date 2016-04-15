@@ -122,6 +122,7 @@ set(SPECSFS_SOURCES
   src/ControlFlowGraph.cpp
 
   src/IdentifyObjects.cpp
+  src/ExtInfo.cpp
   src/Optimize.cpp
   src/ComputeSSA.cpp
   src/Partition.cpp
@@ -160,6 +161,8 @@ set(SPECSFS_HEADERS
   AndersHelpers.h
   SolveHelpers.h
   Assumptions.h
+
+  ExtInfo.h
 
   ObjectMap.h
   DUG.h

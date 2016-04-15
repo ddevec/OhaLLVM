@@ -53,7 +53,7 @@ static size_t num_store = 0;
 static size_t num_cast = 0;
 static size_t num_ext = 0;
 static size_t num_ret = 0;
-static size_t num_addrof = 0;
+size_t num_addrof = 0;
 static size_t num_misc = 0;
 
 static void countConstraints() {
@@ -935,6 +935,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
     cg.add(ConstraintType::Store, st_id,
         getValue(cg, omap, CS.getArgument(0)),
         getValue(cg, omap, CS.getArgument(1)));
+    addCFGStore(cfg, next_id, st_id);
     num_ext++;
     return true;
   }
@@ -1036,6 +1037,7 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
       llvm::dbgs() << "FIXME: Handle pthread_create store!\n";
       llvm::Value *ThrFunc = I->getOperand(2);
       llvm::Value *Arg = I->getOperand(3);
+      // Add indirect calls...
       cg.add(ConstraintType::Store, getValue(cg, omap, ThrFunc),
           getValue(cg, omap, Arg), 0);
       num_ext++;
@@ -1570,7 +1572,7 @@ static void addGlobalConstraintForType(ConstraintType ctype,
   }
 }
 
-static void addConstraintForType(ConstraintType ctype,
+void addConstraintForType(ConstraintType ctype,
     ConstraintGraph &cg, ObjectMap &omap,
     const llvm::Type *type, ObjectMap::ObjID dest,
     ObjectMap::ObjID src_obj, bool strong, size_t &count) {

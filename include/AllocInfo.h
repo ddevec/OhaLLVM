@@ -35,7 +35,7 @@ class AllocInfo {
         // callee->getName() != "getenv" &&
         callee->getName() != "getaddrinfo" &&
         callee->getName() != "Perl_safesysmalloc" &&
-        callee->getName() != "Perl_safesysmalloc" &&
+        callee->getName() != "Perl_safesysrealloc" &&
         callee->getName() != "_Znwj" &&  // operator new(unsigned int)
         callee->getName() != "_Znwm" &&  // operator new(unsigned long)
         callee->getName() != "_Znaj" &&  // operator new[](unsigned int)
