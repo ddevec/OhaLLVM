@@ -328,19 +328,20 @@ bool traceInt(const llvm::Value *val, std::set<const llvm::Value *> &src,
 }
 
 ObjectMap::ObjID getGlobalInitializer(ConstraintGraph &, CFG &,
-    ObjectMap &, const llvm::GlobalValue &glbl) {
+    ObjectMap &omap, const llvm::GlobalValue &glbl) {
   ObjectMap::ObjID ret = ObjectMap::UniversalValue;
 
   auto name = glbl.getName();
 
   if (name == "stdout") {
-    ret = ObjectMap::StdIOValue;
+    ret = omap.getNamedValue("stdio");
   } else if (name == "stderr") {
-    ret = ObjectMap::StdIOValue;
+    ret = omap.getNamedValue("stdio");
   } else if (name == "stdin") {
-    ret = ObjectMap::StdIOValue;
+    ret = omap.getNamedValue("stdio");
   } else if (name == "environ") {
-    ret = ObjectMap::EnvpValue;
+    // envp points to env
+    ret = omap.getNamedValue("envp");
   }
 
   return ret;
@@ -361,9 +362,9 @@ void identifyAUXFcnCallRetInfo(CFG &cfg,
         cast<llvm::CallInst>(omap.valueAtID(pair.first));
 
 
-      llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
+      llvm::ImmutableCallSite cs(ci);
 
-      auto fptr = CS.getCalledValue();
+      auto fptr = cs.getCalledValue();
 
       // This is the andersen's node for this element
       auto &ptsto = aux.getPointsTo(omap.getValue(fptr));
@@ -411,8 +412,8 @@ void identifyAUXFcnCallRetInfo(CFG &cfg,
 
       auto ci = const_cast<llvm::CallInst *>(cci);
 
-      llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
-      auto fptr = CS.getCalledValue();
+      llvm::ImmutableCallSite cs(ci);
+      auto fptr = cs.getCalledValue();
 
       // llvm::dbgs() << "Getting info for target: " << *ci << "\n";
       auto fcn_targets = dyn_info->getTargets(ci);
@@ -436,7 +437,7 @@ void identifyAUXFcnCallRetInfo(CFG &cfg,
         // ci.getOperand(0) -> the value being called
         // llvm::dbgs() << "Have fptr: " << *fptr << "\n";
         std::unique_ptr<Assumption> ptsto_aspn(new PtstoAssumption(
-              cast<llvm::Value>(fptr), pts_ids));
+              cast<llvm::Value>(const_cast<llvm::Value *>(fptr)), pts_ids));
 
         // addSpeculativeAssumption(std::move(ptsto_aspn));
       }
@@ -525,7 +526,8 @@ void addGlobalInit(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
 }
 
 void addCFGCallsite(CFG &cfg, ObjectMap &omap,
-    llvm::Function *fcn, llvm::Instruction *ci, CFG::CFGid *pcall_id) {
+    const llvm::Function *fcn, const llvm::Instruction *ci,
+    CFG::CFGid *pcall_id) {
 
   // Ignore the llvm debug function...
   if (fcn != nullptr && fcn->getName() == "llvm.dbg.declare") {
@@ -550,8 +552,8 @@ void addCFGCallsite(CFG &cfg, ObjectMap &omap,
     //    calls because we don't know the destination until we run our AUX
     //    analysis.
     // All call instructions are associated with values, so we use getValue here
-    llvm::CallSite CS(ci);
-    if (llvm::isa<llvm::InlineAsm>(CS.getCalledValue())) {
+    llvm::ImmutableCallSite cs(ci);
+    if (llvm::isa<llvm::InlineAsm>(cs.getCalledValue())) {
       llvm::dbgs() << "WARNING: ignoring inline asm: " << *ci << "\n";
       cfg.addPred(next_id, call_id);
     } else {
@@ -568,518 +570,6 @@ void addCFGCallsite(CFG &cfg, ObjectMap &omap,
   }
 }
 //}}}
-
-static bool isMalloc(const llvm::CallInst *V) {
-  auto fcn = LLVMHelper::getFcnFromCall(V);
-  if (fcn == nullptr) {
-    return false;
-  }
-  return AllocInfo::fcnIsMalloc(fcn);
-}
-
-// NOTE: Copy/pasted shamelessly from Andersens.cpp
-static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
-    ObjectMap &omap, llvm::CallSite &CS, llvm::Function *F,
-    CFG::CFGid *next_id) {
-  assert(F->isDeclaration() && "Not an external call!");
-
-  // These functions don't induce any points-to constraints.
-  if (F->getName() == "atoi" || F->getName() == "atof" ||
-      F->getName() == "atol" || F->getName() == "atoll" ||
-      F->getName() == "remove" || F->getName() == "unlink" ||
-      F->getName() == "rename" || F->getName() == "memcmp" ||
-      F->getName() == "llvm.memset" || F->getName() == "llvm.va_copy" ||
-      F->getName() == "system" || F->getName() == "link" ||
-      F->getName() == "setuid" || F->getName() == "setgid" ||
-      F->getName() == "seteuid" || F->getName() == "setegid" ||
-      F->getName() == "geteuid" || F->getName() == "getegid" ||
-      F->getName() == "getpid" ||
-      F->getName() == "setvbuf" || F->getName() == "setbuf" ||
-      F->getName() == "ftruncate" ||
-      F->getName() == "closedir" || F->getName() == "putenv" ||
-      F->getName() == "kill" || F->getName() == "frexp" ||
-      F->getName() == "__isnan" ||
-      F->getName() == "strcmp" || F->getName() == "strncmp" ||
-      F->getName() == "execl" || F->getName() == "execlp" ||
-      F->getName() == "execle" || F->getName() == "execv" ||
-      F->getName() == "execvp" || F->getName() == "chmod" ||
-      F->getName() == "puts" || F->getName() == "write" ||
-      F->getName() == "open" || F->getName() == "create" ||
-      F->getName() == "open64" || F->getName() == "lstat64" ||
-      F->getName() == "truncate" || F->getName() == "chdir" ||
-      F->getName() == "mkdir" || F->getName() == "rmdir" ||
-      F->getName() == "read" || F->getName() == "pipe" ||
-      F->getName() == "wait" || F->getName() == "time" ||
-      F->getName() == "stat" || F->getName() == "fstat" ||
-      F->getName() == "stat64" || F->getName() == "fstat64" ||
-      F->getName() == "lstat" || F->getName() == "strtod" ||
-      F->getName() == "strtof" || F->getName() == "strtold" ||
-      F->getName() == "fflush" || F->getName() == "feof" ||
-      F->getName() == "fileno" || F->getName() == "clearerr" ||
-      F->getName() == "rewind" || F->getName() == "ftell" ||
-      F->getName() == "ferror" || F->getName() == "fgetc" ||
-      F->getName() == "fgetc" || F->getName() == "_IO_getc" ||
-      F->getName() == "fwrite" || F->getName() == "fread" ||
-      F->getName() == "fgets" || F->getName() == "ungetc" ||
-      F->getName() == "fputc_unlocked" || F->getName() == "fputc" ||
-      F->getName() == "fputs" || F->getName() == "fputs_unlocked" ||
-      F->getName() == "putc" || F->getName() == "fclose" ||
-      F->getName() == "ftell" || F->getName() == "rewind" ||
-      F->getName() == "_IO_putc" || F->getName() == "fseek" ||
-      F->getName() == "fgetpos" || F->getName() == "fsetpos" ||
-      F->getName() == "printf" || F->getName() == "fprintf" ||
-      F->getName() == "sprintf" || F->getName() == "vprintf" ||
-      F->getName() == "vfprintf" || F->getName() == "vsprintf" ||
-      F->getName() == "scanf" || F->getName() == "fscanf" ||
-      F->getName() == "sscanf" || F->getName() == "__assert_fail" ||
-      F->getName() == "modf" || F->getName() == "exit" ||
-      F->getName() == "_exit" || F->getName() == "strlen" ||
-      F->getName() == "close" || F->getName() == "abort" ||
-      F->getName() == "atexit" || F->getName() == "error" ||
-      F->getName() == "umask" || F->getName() == "free" ||
-      F->getName() == "setfscreatecon" || F->getName() == "strspn" ||
-      F->getName() == "strcspn" ||
-      F->getName() == "bsearch" || F->getName() == "clock" ||
-      // End jump fixme
-      F->getName() == "getpagesize" ||
-      // FIXME: gcc stuffs?
-      F->getName() == "obstack_free" || F->getName() == "_obstack_newchunk" ||
-      F->getName() == "_obstack_begin" ||
-      F->getName() == "_obstack_memory_used" ||
-      // END GCC Stuffs
-      F->getName() == "__ctype_get_mb_cur_max" ||
-      F->getName() == "iswprint" || F->getName() == "mbsinit" ||
-      // Although this copies the strings, it doesn't move pointers
-      F->getName() == "mbrtowc" ||
-      F->getName() == "fchdir" || F->getName() == "fseeko" ||
-      F->getName() == "ferror_unlocked" ||
-      F->getName() == "fork" || F->getName() == "waitpid" ||
-      F->getName() == "raise" || F->getName() == "__fpending" ||
-      F->getName() == "ferror" || F->getName() == "fchown" ||
-      F->getName() == "fchmod" || F->getName() == "lchown" ||
-      F->getName() == "chown" || F->getName() == "lchown" ||
-      F->getName() == "getc_unlocked" || F->getName() == "snprintf" ||
-      F->getName() == "__freading" || F->getName() == "lseek" ||
-      F->getName() == "fcntl" || F->getName() == "feeko" ||
-      F->getName() == "abs" || F->getName() == "toupper" ||
-      F->getName() == "__iso_c99sscanf" || F->getName() == "iswupper" ||
-      F->getName() == "tolower" || F->getName() == "towupper" ||
-      F->getName() == "towlower" || F->getName() == "strncasecmp" ||
-      F->getName() == "floor" || F->getName() == "ceil" ||
-      F->getName() == "fabs" || F->getName() == "acos" ||
-      F->getName() == "asin" || F->getName() == "atan" ||
-      F->getName() == "atan2" || F->getName() == "cos" ||
-      F->getName() == "cosh" || F->getName() == "exp" ||
-      F->getName() == "fmod" || F->getName() == "strcasecmp" ||
-      F->getName() == "log" || F->getName() == "log10" ||
-      F->getName() == "sin" || F->getName() == "sinh" ||
-      F->getName() == "tan" || F->getName() == "tanh" ||
-      F->getName() == "readlink" || F->getName() == "qsort" ||
-      F->getName() == "sqrt" || F->getName() == "strftime" ||
-      F->getName() == "getuid" || F->getName() == "getgid" ||
-      F->getName() == "gettimeofday" || F->getName() == "settimeofday" ||
-      F->getName() == "iconv" || F->getName() == "iconv_close" ||
-      F->getName() == "access" || F->getName() == "dup" ||
-      F->getName() == "strncpy" || F->getName() == "__isoc99_sscanf" ||
-      F->getName() == "select" || F->getName() == "ctime" ||
-      F->getName() == "fsync" || F->getName() == "utime" ||
-      F->getName() == "mblen" || F->getName() == "perror" ||
-      F->getName() == "lseek64" || F->getName() == "perror" ||
-      F->getName() == "signal" || F->getName() == "stat64" ||
-      F->getName() == "isatty" || F->getName() == "stat64" ||
-      F->getName() == "vsnprintf" || F->getName() == "__isoc99_fscanf" ||
-      F->getName() == "pclose" || F->getName() == "getrusage" ||
-      F->getName() == "getrlimit" || F->getName() == "setrlimit" ||
-      F->getName() == "cielf" || F->getName() == "floorf" ||
-      F->getName() == "sleep" || F->getName() == "setupterm" ||
-      F->getName() == "tigetnum" || F->getName() == "times" ||
-      F->getName() == "sysconf" || F->getName() == "ceilf" ||
-      F->getName() == "setlinebuf" || F->getName() == "putchar" ||
-      F->getName() == "htons" || F->getName() == "htonl" ||
-      F->getName() == "ntohs" || F->getName() == "ntohl" ||
-      F->getName() == "random" || F->getName() == "inet_pton" ||
-      F->getName() == "rand" || F->getName() == "inet_ntop" ||
-      F->getName() == "pthread_mutex_init" ||
-      F->getName() == "pthread_cond_init" ||
-      F->getName() == "sigemtpyset" ||
-      F->getName() == "sigfillset" ||
-      F->getName() == "sigaddset" ||
-      F->getName() == "sigdelset" ||
-      F->getName() == "sigismember" ||
-      F->getName() == "epoll_ctl" ||
-      F->getName() == "epoll_wait" ||
-      F->getName() == "poll" ||
-      F->getName() == "setsocketopt" ||
-      F->getName() == "socket" ||
-      F->getName() == "bind" ||
-      F->getName() == "connect" ||
-      F->getName() == "accept" ||
-      F->getName() == "getpeername" ||
-      F->getName() == "getsockname" ||
-      F->getName() == "setsockopt" ||
-      F->getName() == "getsockopt" ||
-      F->getName() == "strcoll" ||
-      F->getName() == "syslog" || F->getName() == "uname" ||
-      F->getName() == "wait3" || F->getName() == "dup2" ||
-      F->getName() == "setsid" || F->getName() == "srand" ||
-      F->getName() == "getrlimit64" || F->getName() == "setrlimit64" ||
-      F->getName() == "pthread_attr_setstacksize" ||
-      F->getName() == "pthread_attr_getstacksize" ||
-      F->getName() == "ftruncate64" || F->getName() == "sync_file_range" ||
-      F->getName() == "fdatasync" || F->getName() == "truncate64" ||
-      F->getName() == "ftello64" || F->getName() == "ftello" ||
-      F->getName() == "getitimer" || F->getName() == "setitimer" ||
-      F->getName() == "__isinf" || F->getName() == "__isinfl" ||
-      F->getName() == "__isnan" || F->getName() == "__isnanl" ||
-      F->getName() == "__finite" || F->getName() == "__finitel" ||
-      F->getName() == "getopt_long" || F->getName() == "getopt") {
-    return true;
-  }
-
-  // Okay, how do we handle jmp functions?
-  // For anders we do nothing
-  // For sfs, we need to add edges to the CFG
-  // -- based on results from anders (where the jmps may come from or go)
-  //    Similar to indirect functions:
-  //
-  // For each setjmp:
-  //    Make a mapping of obj-ids to setjmps
-  //    Also ensure that each setjmp is a boundry with a new cfgnode
-  //
-  // for each longjmp do a lookup in the setjmp map
-  //   Add an edge from each longjmp to each setjmp
-  // FIXME: well, this is actually ugly, wrt the cfg
-  //
-  // Broken down:
-  // Responsibility here:
-  //  setjmp:
-  //    Alert the CFG of a setjmp, to be filled in later
-  //    Break the node after the setjmp, as the entry for any incoming
-  //      longjmps
-  if (F->getName() == "_setjmp" ||
-      F->getName() == "__sigsetjmp") {
-    // Add new node to cfg (to be the dest of any longjmps about this node)
-    auto succ_id = cfg.nextNode();
-    cfg.addPred(succ_id, *next_id);
-    *next_id = succ_id;
-
-    // Add succ_id into the cfg longjump list
-    cfg.addSetjmp(succ_id, CS.getArgument(0));
-    return true;
-  }
-
-  //  longjmp:
-  //    Alert the CFG of a longjmp here
-  //    Break the node, remove any cfg edges going out of the prior node, to be
-  //    replaced with longjmp destinations
-  if ( F->getName() == "siglongjmp" ||
-      F->getName() == "longjmp") {
-    auto succ_id = cfg.nextNode();
-
-    cfg.addLongjmp(*next_id, CS.getArgument(0));
-
-    *next_id = succ_id;
-    return true;
-  }
-
-  // Ignore memset, it modifies the array, but not the ptsto
-  if (F->getName().find("llvm.memset") == 0 ||
-      F->getName().find("llvm.bswap") == 0 ||
-      F->getName().find("llvm.expect") == 0 ||
-      F->getName().find("llvm.pow") == 0) {
-    return true;
-  }
-
-  // These functions do induce points-to edges.
-  if (F->getName().find("llvm.memcpy") == 0 ||
-      F->getName().find("llvm.memmove") == 0 ||
-      F->getName().find("memmove") == 0) {
-    const llvm::FunctionType *FTy = F->getFunctionType();
-
-    if (FTy->getNumParams() > 1 &&
-        llvm::isa<llvm::PointerType>(FTy->getParamType(0)) &&
-        llvm::isa<llvm::PointerType>(FTy->getParamType(1))) {
-      // *Dest = *Src, which requires an artificial graph node to
-      // represent the constraint.
-      // It is broken up into *Dest = temp, temp = *Src
-      auto first_arg = getValue(cg, omap, CS.getArgument(0));
-      auto second_arg = getValue(cg, omap, CS.getArgument(1));
-      // Creates a new node in the graph, and a temp holder in omap
-
-      // Setup constraints
-      assert(llvm::isa<llvm::PointerType>(CS.getArgument(0)->getType()));
-      auto dest = CS.getArgument(0);
-      // Get the type of the dest, stripping bitcasts if needed
-      auto type = getTypeOfVal(dest);
-      // Strip away the outer pointer type
-      assert(llvm::isa<llvm::PointerType>(type));
-      type = type->getContainedType(0);
-
-      // If this is a struct, we need to insert all the loads and stores for all
-      // of the fields...
-      if (auto st = dyn_cast<llvm::StructType>(type)) {
-        // Okay, for each field of the structure...
-        auto &si = omap.getStructInfo(st);
-
-        // Setup the base of our CFG node, we need all stores to proceed in
-        //   parallel...
-        auto base_id = next_id;
-        auto merge_id = cfg.nextNode();
-
-        // Now iterate each field, and add a copy for each field
-        int32_t i = 0;
-        std::for_each(si.sizes_begin(), si.sizes_end(),
-            [&cfg, &cg, &i, &omap, &first_arg, &second_arg, &base_id,
-              &merge_id, &CS] (int32_t) {
-          auto node_id = cfg.nextNode();
-          auto load_dest = omap.createPhonyID();
-          // The gep dests have equivalent ptsto as the argumens
-          auto load_gep_dest = omap.createPhonyID(CS.getArgument(1));
-          auto store_gep_dest = omap.createPhonyID(CS.getArgument(0));
-          auto store_id = omap.createPhonyID();
-
-          // Okay, now create the constraints
-          // The load_dest is the destination address of the load:
-          cg.add(ConstraintType::Copy, load_gep_dest, second_arg, i);
-          cg.add(ConstraintType::Load, load_dest, load_gep_dest, load_dest);
-
-          cg.add(ConstraintType::Copy, store_gep_dest, first_arg, i);
-
-          cg.add(ConstraintType::Store, store_id, load_dest,
-            store_gep_dest);
-          num_ext += 4;
-
-          cfg.addPred(node_id, *base_id);
-          cfg.addPred(merge_id, node_id);
-
-          // Create a load at this id
-          dout("Adding load: " << load_dest << " and store: " <<
-            store_id << "\n");
-          addCFGLoad(cfg, node_id, load_dest);
-          addCFGStore(cfg, &node_id, store_id);
-
-          i++;
-        });
-
-        // Advance the merge_id to next_id
-        *next_id = merge_id;
-
-      // If this isn't a struct, handle it normally
-      } else {
-        auto load_id = omap.createPhonyID();
-        auto store_id = omap.createPhonyID();
-
-        cg.add(ConstraintType::Load, load_id, second_arg, load_id);
-        cg.add(ConstraintType::Store, store_id, load_id, first_arg);
-        num_ext += 2;
-
-        // Setup CFG
-        // First setup the load
-        addCFGLoad(cfg, *next_id, load_id);
-        // Then setup the store
-        addCFGStore(cfg, next_id, store_id);
-      }
-
-      return true;
-    }
-  }
-
-  // Result = Arg0
-  if (F->getName() == "realloc" || F->getName() == "strchr" ||
-      F->getName() == "strrchr" || F->getName() == "strstr" ||
-      F->getName() == "strtok"  || F->getName() == "stpcpy" ||
-      F->getName() == "getcwd"  || F->getName() == "strcat" ||
-      F->getName() == "strcpy"  || F->getName() == "strncat"  ||
-      F->getName() == "strpbrk"  || F->getName() == "localtime"  ||
-      // FIXME: I don't fully understand the man page, so I'm not 100% sure
-      //   bindtextdomain goes here
-      F->getName() == "textdomain"  || F->getName() == "mkdtemp"  ||
-      F->getName() == "memchr"  ||
-      F->getName() == "bindtextdomain") {
-    const llvm::FunctionType *FTy = F->getFunctionType();
-    if (FTy->getNumParams() > 0 &&
-        llvm::isa<llvm::PointerType>(FTy->getParamType(0))) {
-      cg.add(ConstraintType::Copy,
-          omap.getValue(CS.getInstruction()),
-          getValue(cg, omap, CS.getArgument(0)));
-      num_ext++;
-      return true;
-    }
-  }
-
-  auto alloc_id = ExtInfo::returnsExtInfo(F);
-  if (alloc_id != ObjectMap::NullValue) {
-    cg.add(ConstraintType::AddressOf,
-        omap.getValue(CS.getInstruction()),
-        alloc_id);
-    num_ext++;
-    return true;
-  }
-
-  // Result = Arg3
-  if (F->getName() == "gcvt") {
-    cg.add(ConstraintType::Copy,
-        omap.getValue(CS.getInstruction()),
-        getValue(cg, omap, CS.getArgument(2)));
-    num_ext++;
-    return true;
-  }
-
-  // strtoll maddness
-  // stores arg0 in arg1
-  if (F->getName() == "strtoll" ||
-      F->getName() == "strtoul" ||
-      F->getName() == "strtoull" ||
-      F->getName() == "strtol") {
-    auto st_id = omap.createPhonyID();
-    cg.add(ConstraintType::Store, st_id,
-        getValue(cg, omap, CS.getArgument(0)),
-        getValue(cg, omap, CS.getArgument(1)));
-    addCFGStore(cfg, next_id, st_id);
-    num_ext++;
-    return true;
-  }
-
-  // FIXME: Instead treat it as an alloc, unclear if this is best
-  /*
-  // getenv -- This is currently linked to argv...
-  if (F->getName() == "getenv") {
-    cg.add(ConstraintType::AddressOf,
-      omap.getValue(CS.getInstruction()),
-      ObjectMap::ArgvValueObject);
-    return true;
-  }
-  */
-
-  if (F->getName() == "realpath") {
-    const llvm::FunctionType *FTy = F->getFunctionType();
-    if (FTy->getNumParams() > 0 &&
-        llvm::isa<llvm::PointerType>(FTy->getParamType(1))) {
-      cg.add(ConstraintType::Copy,
-          omap.getValue(CS.getInstruction()),
-          getValue(cg, omap, CS.getArgument(1)));
-      num_ext++;
-      return true;
-    }
-  }
-
-  if (F->getName() == "gettext") {
-    const llvm::FunctionType *FTy = F->getFunctionType();
-    if (FTy->getNumParams() > 0 &&
-        llvm::isa<llvm::PointerType>(FTy->getParamType(0))) {
-      cg.add(ConstraintType::Copy,
-          omap.getValue(CS.getInstruction()),
-          getValue(cg, omap, CS.getArgument(0)));
-      num_ext++;
-      return true;
-    }
-  }
-
-  if (F->getName() == "freopen") {
-    const llvm::FunctionType *FTy = F->getFunctionType();
-    if (FTy->getNumParams() > 0 &&
-        llvm::isa<llvm::PointerType>(FTy->getParamType(2))) {
-      cg.add(ConstraintType::Copy,
-          omap.getValue(CS.getInstruction()),
-          getValue(cg, omap, CS.getArgument(2)));
-      num_ext++;
-      return true;
-    }
-  }
-
-  // FIXME: There must be a better way to do this?
-  if (F->getName() == "ioctl") {
-    auto va = CS.getArgument(2);
-
-    auto st_id = omap.createPhonyID();
-    auto dest_val = getValue(cg, omap, va);
-    cg.add(ConstraintType::Store, st_id,
-        ObjectMap::IoctlValue,
-        dest_val);
-    num_ext++;
-    addCFGStore(cfg, next_id, st_id);
-    return true;
-  }
-
-  llvm::Instruction *I = CS.getInstruction();
-  if (I) {
-    if (llvm::IntrinsicInst *II = dyn_cast<llvm::IntrinsicInst>(I)) {
-      llvm::Intrinsic::ID IID = II->getIntrinsicID();
-      if (IID == llvm::Intrinsic::vastart) {
-        // llvm::Function *ParentF = I->getParent()->getParent();
-        assert(I->getParent()->getParent()->getFunctionType()->isVarArg()
-            && "va_start in non-vararg function!");
-        llvm::dbgs() << "FIXME: ???VARARG???\n";
-        /*
-        llvm::Value *Arg = II->getArgOperand(0);
-        auto TempArg = omap.createPhonyID();
-        cg.add(ConstraintType::AddressOf, TempArg,
-            omap.getVarArg(ParentF));
-        cg.add(ConstraintType::Store, omap.getValue(Arg),
-            TempArg);
-        addCFGStore(cfg, next_id, omap.getValue(Arg));
-        */
-        return true;
-      } else if (IID == llvm::Intrinsic::vaend) {
-        return true;
-      }
-    }
-  }
-
-  if (F->getName() == "pthread_create") {
-    const llvm::FunctionType *FTy = F->getFunctionType();
-    if (FTy->getNumParams() == 4
-        && llvm::isa<llvm::PointerType>(FTy->getParamType(0))
-        && llvm::isa<llvm::PointerType>(FTy->getParamType(1))
-        && llvm::isa<llvm::PointerType>(FTy->getParamType(2))
-        && llvm::isa<llvm::PointerType>(FTy->getParamType(3))) {
-      // Copy the actual argument into the formal argument.
-      llvm::dbgs() << "FIXME: Handle pthread_create store!\n";
-      llvm::Value *ThrFunc = I->getOperand(2);
-      llvm::Value *Arg = I->getOperand(3);
-      // Add indirect calls...
-      cg.add(ConstraintType::Store, getValue(cg, omap, ThrFunc),
-          getValue(cg, omap, Arg), 0);
-      num_ext++;
-      addCFGStore(cfg, next_id,
-          omap.getOffsID(getValue(cg, omap, Arg), 0));
-      return true;
-    }
-  }
-
-  if (F->getName() == "pthread_getspecific") {
-    const llvm::FunctionType *FTy = F->getFunctionType();
-    if (FTy->getNumParams() == 1 &&
-        llvm::isa<llvm::PointerType>(FTy->getReturnType())) {
-      llvm::dbgs() << "FIXME: Handle pthread_getspecific store!\n";
-      cg.add(ConstraintType::Store,
-          omap.getValue(CS.getInstruction()),
-          ObjectMap::PthreadSpecificValue);
-      num_ext++;
-      addCFGStore(cfg, next_id, ObjectMap::PthreadSpecificValue);
-      return true;
-    }
-  } else if (F->getName() == "pthread_setspecific") {
-    const llvm::FunctionType *FTy = F->getFunctionType();
-    if (FTy->getNumParams() == 2 &&
-        llvm::isa<llvm::PointerType>(FTy->getParamType(1))) {
-      cg.add(ConstraintType::Copy,
-          ObjectMap::PthreadSpecificValue,
-          getValue(cg, omap, CS.getInstruction()->getOperand(1)));
-      num_ext++;
-      return true;
-    }
-  }
-
-  // Don't worry about debug declare...
-  if (F->getName() == "llvm.dbg.declare" ||
-      F->getName() == "llvm.dbg.value") {
-    return true;
-  }
-
-  llvm::dbgs() << "!!! Unknown external call: " << F->getName() << "\n";
-  return false;
-}
 //}}}
 
 // Constraint helpers {{{
@@ -1242,10 +732,10 @@ static bool analyzeUsesOfFunction(const llvm::Value &val) {
         return true;
       }
     } else if (auto CI = dyn_cast<llvm::CallInst>(*UI)) {
-      llvm::CallSite CS((llvm::CallInst *)CI);
+      llvm::ImmutableCallSite cs(CI);
       // Can't use std::for_each because of return
-      for (size_t i = 0, e = CS.arg_size(); i < e; i++) {
-        if (CS.getArgument(i) == &val) {
+      for (size_t i = 0, e = cs.arg_size(); i < e; i++) {
+        if (cs.getArgument(i) == &val) {
           return true;
         }
       }
@@ -1291,8 +781,8 @@ static void addConstraintsForNonInternalLinkage(ConstraintGraph &,
 
 
 static void addConstraintsForIndirectCall(ConstraintGraph &cg, ObjectMap &omap,
-    llvm::CallSite &CS) {
-  auto &called_val = *CS.getCalledValue();
+    llvm::ImmutableCallSite &cs) {
+  auto &called_val = *cs.getCalledValue();
 
   if (llvm::isa<llvm::InlineAsm>(&called_val)) {
     llvm::errs() << "WARNING: Ignoring inline asm!\n";
@@ -1307,18 +797,18 @@ static void addConstraintsForIndirectCall(ConstraintGraph &cg, ObjectMap &omap,
   // Instead we alert the constraint graph of the appropriate nodes, and allow
   //   it to fill in the information later.
   // Create a ret node:
-  auto call_id = omap.getValueRep(CS.getInstruction());
+  auto call_id = omap.getValueRep(cs.getInstruction());
   bool is_pointer =
-    llvm::isa<llvm::PointerType>(CS.getInstruction()->getType());
+    llvm::isa<llvm::PointerType>(cs.getInstruction()->getType());
   std::vector<ObjectMap::ObjID> args;
-  std::for_each(CS.arg_begin(), CS.arg_end(),
-      [&CS, &cg, &omap, &args] (const llvm::Use &arg) {
+  std::for_each(cs.arg_begin(), cs.arg_end(),
+      [&cs, &cg, &omap, &args] (const llvm::Use &arg) {
     // args.push_back(omap.createPhonyID(arg.get()));
     auto val_id = getValue(cg, omap, arg.get());
     /*
     if (val_id == ObjectMap::IntValue) {
       llvm::dbgs() << "Got int value for arg: " << arg.get() << " in call: " <<
-          *CS.getInstruction() <<"\n";
+          *cs.getInstruction() <<"\n";
     }
     */
     args.push_back(val_id);
@@ -1328,18 +818,18 @@ static void addConstraintsForIndirectCall(ConstraintGraph &cg, ObjectMap &omap,
 }
 
 static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
-    llvm::CallSite &CS, llvm::Function *F) {
-  // llvm::dbgs() << "Add direct call: " << *CS.getInstruction() << "\n";
+    llvm::ImmutableCallSite &cs, const llvm::Function *F) {
+  // llvm::dbgs() << "Add direct call: " << *cs.getInstruction() << "\n";
   // If this call returns a pointer
   assert(F != nullptr);
-  if (llvm::isa<llvm::PointerType>(F->getFunctionType()->getReturnType())) {
-    auto val = omap.getValueRep(CS.getInstruction());
+  if (llvm::isa<llvm::PointerType>(cs.getInstruction()->getType())) {
+    auto val = omap.getValueRep(cs.getInstruction());
 
     // If the function that's called also returns a pointer
     // Add a copy from the return value into this value
     /*
-    llvm::dbgs() << "CS is: " << *CS.getInstruction() << "\n";
-    llvm::dbgs() << "cv is: " << *CS.getCalledValue() << "\n";
+    llvm::dbgs() << "cs is: " << *cs.getInstruction() << "\n";
+    llvm::dbgs() << "cv is: " << *cs.getCalledValue() << "\n";
     llvm::dbgs() << "Fcn is: " << *F << "\n";
     */
     auto ret_val = omap.getReturnRep(F);
@@ -1352,15 +842,15 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
       llvm::isa<llvm::PointerType>(F->getFunctionType()->getReturnType())) {
     // The call now aliases the universal value
     llvm::dbgs() << "FIXME: Direct call returns universal value: " <<
-        CS.getInstruction() << "\n";
+        cs.getInstruction() << "\n";
     auto ret_id = omap.getReturnRep(F);
     cg.add(ConstraintType::Copy,
         ret_id, ObjectMap::UniversalValue);
     num_call++;
   }
 
-  auto ArgI = CS.arg_begin();
-  auto ArgE = CS.arg_end();
+  auto ArgI = cs.arg_begin();
+  auto ArgE = cs.arg_end();
 
   bool external = F->isDeclaration();
 
@@ -1380,7 +870,7 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
       */
 
       llvm::dbgs() << "WARNING: adding universal store which doesn't "
-       "jive w/ andersen's for fcn args: " << *CS.getCalledValue() << "\n";
+       "jive w/ andersen's for fcn args: " << *cs.getCalledValue() << "\n";
       cg.add(ConstraintType::Store, node_id, ObjectMap::UniversalValue,
           arg_id);
       num_call++;
@@ -1391,7 +881,7 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
       // And we get one!
       if (llvm::isa<llvm::PointerType>((*ArgI)->getType())) {
         // llvm::dbgs() << "Adding arg copy!\n";
-        // llvm::dbgs() << "Callinst: " << *CS.getInstruction() << "\n";
+        // llvm::dbgs() << "Callinst: " << *cs.getInstruction() << "\n";
         auto node_id = omap.createPhonyID();
         auto dest_id = getValue(cg, omap, FargI);
         auto src_id = getValue(cg, omap, *ArgI);
@@ -1399,7 +889,7 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
         if (src_id == ObjectMap::UniversalValue ||
             src_id == ObjectMap::IntValue) {
           llvm::dbgs() << "  src is: " << ValPrint(src_id) << "for call: " <<
-            *CS.getInstruction() << "\n";
+            *cs.getInstruction() << "\n";
         }
         */
 
@@ -1419,7 +909,7 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
         auto dest_id = getValue(cg, omap, FargI);
 
         /*
-        llvm::dbgs() << "instr is: " << *CS.getInstruction() << "\n";
+        llvm::dbgs() << "instr is: " << *cs.getInstruction() << "\n";
         llvm::dbgs() << "dest is: " << F->getName() << "\n";
         llvm::dbgs() << "ArgI is: " << (*ArgI)->getName() << "\n";
         llvm::dbgs() << "FargI is: " << FargI->getName() << "\n";
@@ -1446,15 +936,24 @@ static void addConstraintsForDirectCall(ConstraintGraph &cg, ObjectMap &omap,
   }
 }
 
+static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
+    ObjectMap &omap, llvm::ImmutableCallSite &cs, const llvm::Function *F,
+    CFG::CFGid *next_id, const ExtLibInfo &ext_info) {
+  // Get the exteral
+  auto &info = ext_info.getInfo(F->getName());
+
+  return info.insertCallCons(cs, omap, cg, cfg, next_id);
+}
+
 static bool addConstraintsForCall(ConstraintGraph &cg, CFG &cfg,
-    ObjectMap &omap, llvm::CallSite &CS, llvm::Function *F,
-    CFG::CFGid *next_id) {
+    ObjectMap &omap, llvm::ImmutableCallSite &cs, const llvm::Function *F,
+    CFG::CFGid *next_id, const ExtLibInfo &ext_info) {
   // Try to recover the function from a bitcast (taken from sfs code)
   // If this function was just cast to a function pointer from the prior
   // instruction, this will determine so statically, and treat it as a direct
   // call
   if (!F) {
-    llvm::Value *callee = CS.getCalledValue();
+    const llvm::Value *callee = cs.getCalledValue();
 
     auto ce = dyn_cast<llvm::ConstantExpr>(callee);
 
@@ -1469,26 +968,22 @@ static bool addConstraintsForCall(ConstraintGraph &cg, CFG &cfg,
   if (F && F->isDeclaration()) {
     // Add it as an external function
     // llvm::dbgs() << "External call\n";
-    if (addConstraintsForExternalCall(cg, cfg, omap, CS, F, next_id)) {
-      // If This is an external call that I identified, then we don't add a node
-      // for it constraints for it, because we've already added constriants for
-      // its properties
-      return false;
-    }
+    addConstraintsForExternalCall(cg, cfg, omap, cs, F, next_id, ext_info);
+    return false;
   }
 
   // next_id will be nullptr when called to add this call's constraints from
   // SpecSFS::addIndirectCalls()  In that instance, we've already created
   // callsite nodes in the CFG, and shouldn't make more
   if (next_id != nullptr) {
-    addCFGCallsite(cfg, omap, F, CS.getInstruction(), next_id);
+    addCFGCallsite(cfg, omap, F, cs.getInstruction(), next_id);
   }
   if (F) {
-    addConstraintsForDirectCall(cg, omap, CS, F);
+    addConstraintsForDirectCall(cg, omap, cs, F);
   } else {
     assert(next_id != nullptr && "Adding constraints for indirect call in "
         "indirect call resolution");
-    addConstraintsForIndirectCall(cg, omap, CS);
+    addConstraintsForIndirectCall(cg, omap, cs);
   }
 
   return true;
@@ -1619,11 +1114,16 @@ void addConstraintForType(ConstraintType ctype,
 }
 
 static bool idCallInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
-    const llvm::Instruction &inst, CFG::CFGid *bb_id) {
-  // Meh, Callsites don't take consts... bleh
-  llvm::CallSite CS(const_cast<llvm::Instruction *>(&inst));
+    const llvm::Instruction &inst, CFG::CFGid *bb_id,
+    const ExtLibInfo &ext_info) {
+  auto ci = dyn_cast<llvm::CallInst>(&inst);
+  llvm::ImmutableCallSite cs(ci);
 
-  if (isMalloc(cast<const llvm::CallInst>(&inst))) {
+  auto called_fcn = LLVMHelper::getFcnFromCall(ci);
+
+  auto &info = ext_info.getInfo(cs);
+  auto alloc_info = info.getAllocInfo(cs, omap);
+  if (called_fcn != nullptr && alloc_info.first != AllocStatus::None) {
     /*
     llvm::dbgs() << "Have malloc call: " <<
       inst.getParent()->getParent()->getName() << ":" << inst << "\n";
@@ -1633,7 +1133,7 @@ static bool idCallInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
     //
     // Unfortunately, malloc doesn't tell us what size strucutre is
     //   being allocated, we infer this information from its uses
-    auto inferred_type = findLargestType(omap, inst);
+    auto inferred_type = alloc_info.second;
 
     auto dest_id = omap.getValue(&inst);
     auto src_obj_id = omap.getObject(&inst);
@@ -1662,8 +1162,8 @@ static bool idCallInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
     return false;
   }
 
-  return addConstraintsForCall(cg, cfg, omap, CS, CS.getCalledFunction(),
-      bb_id);
+  return addConstraintsForCall(cg, cfg, omap, cs, called_fcn,
+      bb_id, ext_info);
 }
 
 static void idAllocaInst(ConstraintGraph &cg, ObjectMap &omap,
@@ -2024,7 +1524,7 @@ void processBlock(const UnusedFunctions &unused_fcns,
     ConstraintGraph &cg, CFG &cfg,
     std::map<const llvm::BasicBlock *, CFG::CFGid> &seen,
     ObjectMap &omap, const llvm::BasicBlock &BB, CFG::CFGid parent_id,
-    AssumptionSet &as) {
+    AssumptionSet &as, const ExtLibInfo &ext_info) {
   // If this block is never used, don't process it! -- This includes adding
   //   edges from/to parents
   if (do_spec && !unused_fcns.isUsed(&BB)) {
@@ -2102,7 +1602,7 @@ void processBlock(const UnusedFunctions &unused_fcns,
         break;
       case llvm::Instruction::Invoke:
       case llvm::Instruction::Call:
-        block_has_call |= idCallInst(cg, cfg, omap, inst, &next_id);
+        block_has_call |= idCallInst(cg, cfg, omap, inst, &next_id, ext_info);
         break;
       case llvm::Instruction::Alloca:
         assert(is_ptr);
@@ -2163,14 +1663,16 @@ void processBlock(const UnusedFunctions &unused_fcns,
 
   // Process all of our successor blocks (In DFS order)
   std::for_each(succ_begin(&BB), succ_end(&BB),
-      [&cg, &cfg, &seen, &omap, next_id, &unused_fcns, &as]
+      [&cg, &cfg, &seen, &omap, next_id, &unused_fcns, &as, &ext_info]
       (const llvm::BasicBlock *succBB) {
-    processBlock(unused_fcns, cg, cfg, seen, omap, *succBB, next_id, as);
+    processBlock(unused_fcns, cg, cfg, seen, omap, *succBB, next_id, as,
+      ext_info);
   });
 }
 
 void scanFcn(const UnusedFunctions &unused_fcns, ConstraintGraph &cg,
-    CFG &cfg, ObjectMap &omap, const llvm::Function &fcn, AssumptionSet &as) {
+    CFG &cfg, ObjectMap &omap, const llvm::Function &fcn, AssumptionSet &as,
+    const ExtLibInfo &ext_info) {
   // SFS adds instructions to graph, we've already added them?
   //   So we don't need to worry about it
   // Add instructions to graph
@@ -2186,7 +1688,7 @@ void scanFcn(const UnusedFunctions &unused_fcns, ConstraintGraph &cg,
   // Now create constraints in depth first order:
   std::map<const llvm::BasicBlock *, CFG::CFGid> seen;
   processBlock(unused_fcns, cg, cfg, seen, omap,
-      fcn.getEntryBlock(), CFG::CFGid::invalid(), as);
+      fcn.getEntryBlock(), CFG::CFGid::invalid(), as, ext_info);
 }
 //}}}
 
@@ -2271,7 +1773,7 @@ bool ConstraintPass::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
 
     // For each instruction:
     std::for_each(inst_begin(fcn), inst_end(fcn),
-        [&omap](const llvm::Instruction &inst) {
+        [&omap, this](const llvm::Instruction &inst) {
       // Add pointer values
       if (llvm::isa<llvm::PointerType>(inst.getType())) {
         // Do we reserve values for the pointer inst here?
@@ -2299,9 +1801,11 @@ bool ConstraintPass::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
       }
 
       if (auto ci = dyn_cast<llvm::CallInst>(&inst)) {
-        if (isMalloc(ci)) {
+        auto &info = extInfo_.getInfo(ci);
+        auto alloc_info = info.getAllocInfo(ci, omap);
+        if (alloc_info.first != AllocStatus::None) {
           // Once again, add objectS
-          auto inferred_type = findLargestType(omap, inst);
+          auto inferred_type = alloc_info.second;
           if_debug(
             dout("Finding type for malloc: " << inst << "\n");
             if (llvm::isa<llvm::StructType>(inferred_type)) {
@@ -2331,46 +1835,59 @@ bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
       ObjectMap::UniversalValue);
   num_misc++;
 
-  // Constraints for argv
+  // Setup constriants for named values
+  // -- (->) indicates points-to // address-of
+  // env value -> env object
+  // envp value -> evnp object
+  // argv value -> argv object
+  //  arg value -> arg object
   // The argv value always points to the argv object
   // Do store here...
   {
-    cg.add(ConstraintType::AddressOf,
-      ObjectMap::ArgvValue, ObjectMap::ArgvValueObject);
+    // First create named objects:
+    //   nullptr as they have a size 1 type (array)
+    auto env_obj_id = omap.addNamedObject(nullptr, "env");
+    auto envp_obj_id = omap.addNamedObject(nullptr, "envp");
+    auto argv_obj_id = omap.addNamedObject(nullptr, "argv");
+    auto arg_obj_id = omap.addNamedObject(nullptr, "arg");
 
-    // Pointer to envP points to env values...
-    cg.add(ConstraintType::AddressOf,
-      ObjectMap::EnvpValue, ObjectMap::EnvpObject);
+    auto env_id = omap.addNamedValue("env");
+    auto envp_id = omap.addNamedValue("envp");
+    auto argv_id = omap.addNamedValue("argv");
+    auto arg_id = omap.addNamedValue("arg");
 
-    cg.add(ConstraintType::AddressOf,
-      ObjectMap::EnvValue, ObjectMap::EnvObject);
+    // Now address of constraints
+    cg.add(ConstraintType::AddressOf, env_id, env_obj_id);
+    cg.add(ConstraintType::AddressOf, envp_id, envp_obj_id);
+    cg.add(ConstraintType::AddressOf, arg_id, arg_obj_id);
+    cg.add(ConstraintType::AddressOf, argv_id, argv_obj_id);
 
-    auto ev_st_id = omap.createPhonyID();
-    cg.add(ConstraintType::Store, ev_st_id,
-        ObjectMap::EnvpValue, ObjectMap::EnvValue);
+    // Now do the stores for argv and envp
+    // Envp
+    {
+      auto env_st_id = omap.createPhonyID();
+      cg.add(ConstraintType::Store, env_st_id,
+          env_id, envp_id);
 
-    auto ev_node_id = cfg.nextNode();
+      auto env_cfg_id = cfg.nextNode();
 
-    cfg.addPred(ev_node_id, CFG::CFGArgvBegin);
+      cfg.addPred(env_cfg_id, CFG::CFGArgvBegin);
+      addCFGStore(cfg, &env_cfg_id, env_st_id);
+      cfg.addPred(CFG::CFGArgvEnd, env_cfg_id);
+    }
 
-    addCFGStore(cfg, &ev_node_id, ev_st_id);
+    // Argv
+    {
+      auto argv_st_id = omap.createPhonyID();
+      cg.add(ConstraintType::Store, argv_st_id,
+          arg_id, argv_id);
 
-    cfg.addPred(CFG::CFGArgvEnd, ev_node_id);
+      auto argv_cfg_id = cfg.nextNode();
 
-    cg.add(ConstraintType::AddressOf,
-      ObjectMap::EnvValue, ObjectMap::EnvObject);
-
-    auto st_id = omap.createPhonyID();
-    cg.add(ConstraintType::Store, st_id,
-      ObjectMap::ArgvObject, ObjectMap::ArgvValue);
-
-    auto node_id = cfg.nextNode();
-
-    cfg.addPred(node_id, CFG::CFGArgvBegin);
-
-    addCFGStore(cfg, &node_id, st_id);
-
-    cfg.addPred(CFG::CFGArgvEnd, node_id);
+      cfg.addPred(argv_cfg_id, CFG::CFGArgvBegin);
+      addCFGStore(cfg, &argv_cfg_id, argv_st_id);
+      cfg.addPred(CFG::CFGArgvEnd, argv_cfg_id);
+    }
 
     num_misc += 5;
   }
@@ -2378,16 +1895,21 @@ bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
   // Constraints for stdio
   {
     // Create a fileio struct:
-    auto obj = omap.createPhonyObjectIDs(M.getTypeByName("struct._IO_FILE"));
+    // auto obj = omap.createPhonyObjectIDs(M.getTypeByName("struct._IO_FILE"));
+    auto stdio_obj = omap.addNamedObject(M.getTypeByName("struct._IO_FILE"),
+        "stdio");
+    auto stdio_id = omap.addNamedValue("stdio");
 
     cg.add(ConstraintType::AddressOf,
-        ObjectMap::StdIOValue, obj);
+        stdio_id, stdio_obj);
     num_misc++;
   }
 
   // Constraints for ctype values
+  /*
   cg.add(ConstraintType::AddressOf, ObjectMap::CTypeObject,
       ObjectMap::CTypeObject);
+  */
   num_misc++;
 
 
@@ -2515,8 +2037,9 @@ bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
         }
       }
 
-      // If this function has a body
-      if (!fcn.isDeclaration() && !AllocInfo::fcnIsMalloc(&fcn)) {
+      // If this function has a body, scan it
+      auto &ext_info = extInfo_.getInfo(fcn.getName());
+      if (!fcn.isDeclaration() && !ext_info.canAlloc()) {
         // Any arguments for main have their own objects...
         if (fcn.getName() == "main") {
           std::for_each(fcn.arg_begin(), fcn.arg_end(),
@@ -2528,8 +2051,9 @@ bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
               // NOTE: We also need to add a new phony object which
               //   argv[i]/envp[i] pts to
               auto val_id = omap.getValue(&arg);
+              auto argv_obj_id = omap.getNamedObject("argv");
               cg.add(ConstraintType::AddressOf, val_id,
-                ObjectMap::ArgvValueObject);
+                argv_obj_id);
               num_addrof++;
               /*  old argv behavior
               auto obj_id = omap.getObject(&arg);
@@ -2553,50 +2077,7 @@ bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
           });
         }
 
-        scanFcn(unused_fcns, cg, cfg, omap, fcn, as);
-      // There is no body... We handle this via external calls?
-      } else {
-        /*
-        if (llvm::isa<llvm::PointerType>(
-              fcn.getFunctionType()->getReturnType())) {
-          llvm::dbgs() << "FIXME: adding Universal value ret for: " <<
-            fcn.getName() << "\n";
-          auto ret_id = omap.getReturn(&fcn);
-          cg.add(ConstraintType::Copy, ret_id,
-              ObjectMap::UniversalValue);
-        }
-
-        // Add a universal constraint for each pointer arg
-        std::for_each(fcn.arg_begin(), fcn.arg_end(),
-            [&cg, &omap, &fcn](const llvm::Argument &arg) {
-          if (llvm::isa<llvm::PointerType>(arg.getType())) {
-            // Must deal with pointers passed into extrernal fcns
-            // We add a phony store object?, so we can uniquely refer
-            //   to this later
-
-            dout("fcn is: " << fcn.getName() << "\n");
-            dout("arg is: " << arg << "\n");
-            llvm::dbgs() << "FIXME: adding Universal value arg for: " <<
-              fcn.getName() << ": " << arg << "\n";
-
-            auto arg_id = omap.getValue(&arg);
-            // must deal w/ memory object passed into external fcns
-            cg.add(ConstraintType::Copy, arg_id,
-              ObjectMap::UniversalValue);
-          }
-        });
-
-        if (fcn.getFunctionType()->isVarArg()) {
-          if_debug(
-            auto st_id = omap.createPhonyID();
-            dout("Creating universal value vararg pass to id: " <<
-                st_id << "\n"));
-          llvm::dbgs() << "FIXME: adding Universal value vararg for: " <<
-            fcn.getName() << "\n";
-          cg.add(ConstraintType::Copy, omap.getVarArg(&fcn),
-              ObjectMap::UniversalValue);
-        }
-      */
+        scanFcn(unused_fcns, cg, cfg, omap, fcn, as, extInfo_);
       }
     } else if (do_spec && !unused_fcns.isUsed(fcn)) {
       // Add a visit assumption to our assumptions for the entry block of this
@@ -2686,7 +2167,7 @@ void handleJmps(CFG &cfg, SpecAnders &aux, ObjectMap &omap) {
 // NOTE: Also handles sigjmp and longjmps
 bool addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
     SpecAnders &aux, const IndirFunctionInfo *dyn_indir_info,
-    ObjectMap &omap) {
+    ObjectMap &omap, const ExtLibInfo &ext_info) {
   //{{{
   identifyAUXFcnCallRetInfo(cfg, omap, aux, dyn_indir_info);
 
@@ -2705,11 +2186,11 @@ bool addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
   // We iterate each indirect call in the DUG
   // to add the indirect info to the constraint map:
   std::for_each(cfg.indirect_cbegin(), cfg.indirect_cend(),
-      [&cg, &cfg, &aux, &omap]
+      [&cg, &cfg, &aux, &omap, &ext_info]
       (const std::pair<ConstraintGraph::ObjID, CFG::CFGid> &pair) {
     const llvm::CallInst *ci =
       cast<llvm::CallInst>(omap.valueAtID(pair.first));
-    llvm::CallSite CS(const_cast<llvm::CallInst *>(ci));
+    llvm::ImmutableCallSite cs(ci);
 
     /*
     llvm::dbgs() << "Have call: " << pair.first << " " <<
@@ -2771,7 +2252,8 @@ bool addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
 
         // Add any new constraints
         // If this is an allocation we need to note that in our structures...
-        if (AllocInfo::fcnIsMalloc(fcn) &&
+        auto &e_info = ext_info.getInfo(fcn->getName());
+        if (e_info.canAlloc() &&
             llvm::isa<llvm::PointerType>(ci->getType())) {
           llvm::dbgs() << "Have indirect malloc call\n";
           // If its a malloc, we don't add constriants for the call, we
@@ -2801,8 +2283,8 @@ bool addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
         // If its not an allocation, add normal constraints
         } else {
           // llvm::dbgs() << "  Non-malloc call!\n";
-          is_ext |= addConstraintsForCall(cg, cfg, omap, CS,
-            const_cast<llvm::Function *>(fcn), nullptr);
+          is_ext |= addConstraintsForCall(cg, cfg, omap, cs,
+            fcn, nullptr, ext_info);
         }
       }
     // If we can't figure out the target, add a universal constraint
@@ -2810,7 +2292,7 @@ bool addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
       // FIXME: Evaluate the soundness of this...
       /*
       is_ext = true;
-      std::for_each(CS.arg_begin(), CS.arg_end(),
+      std::for_each(cs.arg_begin(), cs.arg_end(),
           [&cfg, &cg, &omap] (const llvm::Use &arg) {
         auto val = arg.get();
         if (llvm::isa<llvm::PointerType>(val->getType())) {
@@ -2822,9 +2304,9 @@ bool addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
       });
 
       // Also return the universal value from the function
-      if (llvm::isa<llvm::PointerType>(CS.getType())) {
+      if (llvm::isa<llvm::PointerType>(cs.getType())) {
         auto node_id = omap.createPhonyID();
-        auto arg_id = omap.getValue(CS.getInstruction());
+        auto arg_id = omap.getValue(cs.getInstruction());
         cg.add(ConstraintType::Copy, node_id, arg_id,
             ObjectMap::UniversalValue);
       }

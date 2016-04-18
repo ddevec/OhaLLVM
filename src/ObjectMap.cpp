@@ -27,6 +27,7 @@ const ObjectMap::ObjID ObjectMap::UniversalValue =
 const ObjectMap::ObjID ObjectMap::AggregateValue =
     ObjectMap::ObjID(static_cast<int32_t>(ObjectMap::ObjEnum::eAggregateValue));
 
+/*
 const ObjectMap::ObjID ObjectMap::PthreadSpecificValue =
     ObjectMap::ObjID(
         static_cast<int32_t>(ObjectMap::ObjEnum::ePthreadSpecificValue));
@@ -94,6 +95,7 @@ const ObjectMap::ObjID ObjectMap::EnvpObject =
 const ObjectMap::ObjID ObjectMap::EnvpValue =
     ObjectMap::ObjID(
         static_cast<int32_t>(ObjectMap::ObjEnum::eEnvpValue));
+*/
 
 ObjectMap::ObjectMap() {
   for (int32_t i = 0; i < static_cast<int32_t>(ObjEnum::eNumDefaultObjs);

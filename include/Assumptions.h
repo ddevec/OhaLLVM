@@ -14,6 +14,7 @@
 #include "include/util.h"
 #include "include/ObjectMap.h"
 #include "include/SolveHelpers.h"
+#include "include/ExtInfo.h"
 
 #include "llvm/Constants.h"
 #include "llvm/Function.h"
@@ -137,7 +138,7 @@ class InstrumentationSite {  //{{{
     virtual bool operator==(const InstrumentationSite &is) const = 0;
 
     virtual int64_t approxCost() = 0;
-    virtual bool doInstrument(llvm::Module &m);
+    virtual bool doInstrument(llvm::Module &m, const ExtLibInfo &ext_info);
 
     virtual llvm::BasicBlock *getBB() const = 0;
 
@@ -202,7 +203,7 @@ class AllocInst : public InstrumentationSite {  //{{{
       return allocInst_;
     }
 
-    bool doInstrument(llvm::Module &m) override;
+    bool doInstrument(llvm::Module &m, const ExtLibInfo &ext_info) override;
 
     static bool classof(const InstrumentationSite *is) {
       return is->getKind() == InstrumentationSite::Kind::AllocInst;
@@ -233,7 +234,7 @@ class DoubleAllocInst : public AllocInst {  //{{{
       return 2 * AllocInst::approxCost();
     }
 
-    bool doInstrument(llvm::Module &) override {
+    bool doInstrument(llvm::Module &, const ExtLibInfo &) override {
       llvm_unreachable("Shouldn't try to instrument a double alloc");
     }
 };
@@ -269,7 +270,7 @@ class FreeInst : public InstrumentationSite {  //{{{
       return 1;
     }
 
-    bool doInstrument(llvm::Module &m) override;
+    bool doInstrument(llvm::Module &m, const ExtLibInfo &info) override;
 
     static bool classof(const InstrumentationSite *is) {
       return is->getKind() == InstrumentationSite::Kind::FreeInst;
@@ -326,7 +327,7 @@ class AssignmentInst : public InstrumentationSite {  //{{{
       return 1;
     }
 
-    bool doInstrument(llvm::Module &m) override;
+    bool doInstrument(llvm::Module &m, const ExtLibInfo &ext_info) override;
 
     static bool classof(const InstrumentationSite *is) {
       return is->getKind() == InstrumentationSite::Kind::AssignmentInst;
@@ -386,7 +387,7 @@ class SetCheckInst : public InstrumentationSite {  //{{{
       return 1;
     }
 
-    bool doInstrument(llvm::Module &m) override;
+    bool doInstrument(llvm::Module &m, const ExtLibInfo &ext_info) override;
 
     static bool classof(const InstrumentationSite *is) {
       return is->getKind() == InstrumentationSite::Kind::SetCheckInst;
@@ -444,7 +445,7 @@ class VisitInst : public InstrumentationSite {  //{{{
       return 1;
     }
 
-    bool doInstrument(llvm::Module &m) override;
+    bool doInstrument(llvm::Module &m, const ExtLibInfo &ext_info) override;
 
     static bool classof(const InstrumentationSite *is) {
       return is->getKind() == InstrumentationSite::Kind::VisitInst;

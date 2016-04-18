@@ -88,6 +88,7 @@ class InstrDynAlias : public llvm::ModulePass {
         llvm::Instruction *insert_before);
 
     ObjectMap omap_;
+    const ExtLibInfo *extInfo_;
 };
 
 void InstrDynAlias::getAnalysisUsage(llvm::AnalysisUsage &au) const {
@@ -105,6 +106,7 @@ void InstrDynAlias::setupSpecSFSids(llvm::Module &) {
   CFG cfg(cons_pass.getControlFlowGraph());
   */
   omap_ = cons_pass.getObjectMap();
+  extInfo_ = cons_pass.getLibInfo();
 
 
   /*
@@ -166,13 +168,12 @@ bool InstrDynAlias::runOnModule(llvm::Module &m) {
       // Create list to hold all malloc/free Value*s that needs instrumenting
       // within this function
       std::vector<llvm::Instruction *> alloca_list;
-      std::vector<llvm::Instruction *> addr_list;
-      std::vector<llvm::Instruction *> malloc_list;
-      std::vector<llvm::Instruction *> free_list;
       std::vector<llvm::Instruction *> setjmp_list;
       std::vector<llvm::Instruction *> jmp_list;
       std::vector<llvm::CallInst *> call_list;
       std::vector<llvm::GetElementPtrInst *> gep_list;
+
+      std::vector<llvm::CallInst *> ext_list;
 
       std::vector<llvm::Instruction *> load_list;
       std::vector<llvm::Instruction *> store_list;
@@ -182,7 +183,8 @@ bool InstrDynAlias::runOnModule(llvm::Module &m) {
       std::list<llvm::Instruction *> phi_list;
 
       // Don't instrument malloc functions!
-      if (AllocInfo::fcnIsMalloc(&fcn) || AllocInfo::fcnIsFree(&fcn)) {
+      auto &ext_info = extInfo_->getInfo(fcn.getName());
+      if (ext_info.canAlloc()) {
         continue;
       }
 
@@ -199,18 +201,12 @@ bool InstrDynAlias::runOnModule(llvm::Module &m) {
 
           // FIXME: Use andersens results on nullptr???
           if (fcn != nullptr) {
-            if (AllocInfo::fcnIsMalloc(fcn)) {
-              malloc_list.push_back(&inst);
-            }
-            if (AllocInfo::fcnIsFree(fcn)) {
-              free_list.push_back(&inst);
+            auto &info = extInfo_->getInfo(fcn->getName());
+
+            if (!extInfo_->isUnknownFunction(info)) {
+              ext_list.push_back(ci);
             }
 
-            // Functions which inherit a static memory space
-            auto ext_val = ExtInfo::returnsExtInfo(fcn);
-            if (ext_val != ObjectMap::NullValue) {
-              addr_list.push_back(&inst);
-            }
             // Also check for setjmp/longjmp
             if (fcn->getName() == "__sigsetjmp" ||
                 fcn->getName() == "__setjmp") {
@@ -323,26 +319,6 @@ bool InstrDynAlias::runOnModule(llvm::Module &m) {
         call_insn->insertAfter(i8_ptr_val);
       }
 
-      // NOTE: Must do frees before mallocs for realloc functions
-      // (which are both frees and allocs), we need to do free
-      // then alloc for frees
-      auto free_fcn = m.getFunction(FreeInstName);
-      // Get the external funciton
-      // For each free:
-      for (auto val : free_list) {
-        auto ci = cast<llvm::CallInst>(val);
-
-        // Get the function
-        auto fcn = LLVMHelper::getFcnFromCall(ci);
-        // Get the arg_pos for the object being freed
-        auto free_arg = AllocInfo::getFreeArg(m, ci, fcn);
-        // Call the instrumentation, before calling free
-        std::vector<llvm::Value *> args;
-        args.push_back(free_arg);
-        llvm::CallInst::Create(free_fcn,
-            args, "", val);
-      }
-
       // Used to identify jump locations for debugging
       static int32_t jumpcnt = 0;
       auto jmp_fcn = m.getFunction(LongjmpInstName);
@@ -386,80 +362,65 @@ bool InstrDynAlias::runOnModule(llvm::Module &m) {
             args, "", val);
       }
 
-      // for mallocs
-      // Get the external function
+      auto free_fcn = m.getFunction(FreeInstName);
       auto malloc_fcn = m.getFunction(MallocInstName);
-      // For each malloc:
-      for (auto val : malloc_list) {
-        auto ci = cast<llvm::CallInst>(val);
-        // Get the obj from the return value
-        auto obj_id = omap.getObject(val);
+      for (auto ci : ext_list) {
+        // Get the callsite from the inst
+        llvm::CallSite cs(ci);
 
-        // Get the function
-        auto fcn = LLVMHelper::getFcnFromCall(ci);
-        // Get the arg_pos for the size from the function
-        auto size_pr = AllocInfo::getMallocSizeArg(m, ci, fcn);
-        auto size_val = size_pr.first;
-        auto after = size_pr.second;
+        // Check the extinfo for each ci in the extlist
+        auto &ext_info = extInfo_->getInfo(cs);
 
-        llvm::Instruction *i8_ptr_val = ci;
-        if (ci->getType() != i8_ptr_type) {
-          i8_ptr_val = new llvm::BitCastInst(ci, i8_ptr_type);
-          i8_ptr_val->insertAfter(ci);
+
+        llvm::Instruction *ia = ci;
+        // Check for free info first
+        auto free_info = ext_info.getFreeData(m, cs, omap, &ia);
+
+        // Do any freeing
+        for (auto free_value : free_info) {
+          auto i8_ptr_val = free_value;
+          // Call the instrumentation, before calling free
+          if (i8_ptr_val->getType() != i8_ptr_type) {
+            i8_ptr_val = new llvm::BitCastInst(i8_ptr_val, i8_ptr_type, "", ci);
+          }
+
+          std::vector<llvm::Value *> args = { i8_ptr_val };
+          llvm::CallInst::Create(free_fcn,
+              args, "", ci);
         }
 
-        // Make the call
-        std::vector<llvm::Value *> args;
-        args.push_back(llvm::ConstantInt::get(i32_type, obj_id.val()));
-        args.push_back(size_val);
-        args.push_back(i8_ptr_val);
-        auto malloc_inst_call = llvm::CallInst::Create(
-            malloc_fcn, args);
+        // Check for alloc info
+        auto alloc_info = ext_info.getAllocData(m, cs, omap, &ia);
 
-        if (after == ci) {
-          malloc_inst_call->insertAfter(i8_ptr_val);
-        } else {
-          malloc_inst_call->insertAfter(after);
+        for (auto &ai : alloc_info) {
+          // Figure out if this is a static or non-static allocation
+          auto obj_id = std::get<2>(ai);
+
+          // if its non-static, use the object allocated at the ci
+          if (obj_id == ObjectMap::ObjID::invalid()) {
+            // Make sure we have an i8*
+            obj_id = omap.getObject(ci);
+          }
+
+          // Make sure we're passing an i8* to free
+          llvm::Value *i8_ptr_val = std::get<0>(ai);
+          if (i8_ptr_val->getType() != i8_ptr_type) {
+            auto new_i8_ptr_val =
+              new llvm::BitCastInst(i8_ptr_val, i8_ptr_type);
+            new_i8_ptr_val->insertAfter(ia);
+            ia = new_i8_ptr_val;
+            i8_ptr_val = new_i8_ptr_val;
+          }
+
+          std::vector<llvm::Value *> args = {
+            llvm::ConstantInt::get(i32_type, obj_id.val()),
+            std::get<1>(ai),
+            i8_ptr_val };
+          auto malloc_inst_call = llvm::CallInst::Create(
+              malloc_fcn, args);
+          malloc_inst_call->insertAfter(ia);
+          ia = malloc_inst_call;
         }
-      }
-
-      for (auto val : addr_list) {
-        auto ci = cast<llvm::CallInst>(val);
-
-        // Insert for static alloca's in the functions entry BB before the first
-        //    non-alloca inst
-        // llvm::Instruction *insert_pos = alloca_insert_start;
-        // If this isn't a static alloca, do instrumentation before it
-        // if (!ai->isStaticAlloca()) {
-        // }
-        // The address is returned from the alloc
-        // The size is gotten from the alloc...
-        //   sizeof(type) * arraysize
-
-        auto callee = LLVMHelper::getFcnFromCall(ci);
-
-        auto obj_id = ExtInfo::returnsExtInfo(callee);
-
-        auto res_tup = ExtInfo::getExtInfo(m, ci, ci, callee);
-        auto array_start = std::get<0>(res_tup);
-        auto insert_after = std::get<2>(res_tup);
-
-        // First, type, then type size
-        auto type_size = std::get<1>(res_tup);
-
-        // Add the mult inst?...
-        auto total_size_val = type_size;
-
-        auto i8_ptr_val = new llvm::BitCastInst(array_start, i8_ptr_type);
-        i8_ptr_val->insertAfter(insert_after);
-        // pass the final result to the function
-        // Make the call
-        std::vector<llvm::Value *> args;
-        args.push_back(llvm::ConstantInt::get(i32_type, obj_id.val()));
-        args.push_back(total_size_val);
-        args.push_back(i8_ptr_val);
-        auto call_insn = llvm::CallInst::Create(malloc_fcn, args);
-        call_insn->insertAfter(i8_ptr_val);
       }
 
       // Loads and stores...
@@ -984,13 +945,13 @@ void InstrDynAlias::addInitializationCalls(llvm::Module &m) {
     // Set first arg to call to be objid for argvval
     auto i32_type = llvm::IntegerType::get(m.getContext(), 32);
     main_args.push_back(llvm::ConstantInt::get(i32_type,
-          ObjectMap::ArgvValueObject.val()));
+          omap_.getNamedObject("argv").val()));
     main_args.push_back(llvm::ConstantInt::get(i32_type,
-          ObjectMap::ArgvObjectObject.val()));
+          omap_.getNamedObject("arg").val()));
     main_args.push_back(llvm::ConstantInt::get(i32_type,
-          ObjectMap::EnvpObject.val()));
+          omap_.getNamedObject("envp").val()));
     main_args.push_back(llvm::ConstantInt::get(i32_type,
-          ObjectMap::EnvObject.val()));
+          omap_.getNamedObject("env").val()));
 
     std::for_each(main_fcn->arg_begin(), main_fcn->arg_end(),
         [&main_args] (llvm::Argument &arg) {

@@ -415,6 +415,7 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
     part_map[ObjectMap::ObjID(47070)] << "\n";
   */
 
+  /*
   ObjectMap::ObjID rel_id(40402);
   llvm::dbgs() << "  ObjID " << rel_id << " is part of part_id: " <<
     part_map[rel_id.val()] << "\n";
@@ -429,6 +430,7 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
     llvm::dbgs() << " " << id;
   }
   llvm::dbgs() << "\n";
+  */
 
 
   /*

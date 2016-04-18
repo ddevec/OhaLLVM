@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-#include "include/AllocInfo.h"
+#include "include/ExtInfo.h"
 #include "include/LLVMHelper.h"
 
 #include "llvm/Constants.h"
@@ -219,7 +219,7 @@ llvm::Function *getVisitFunction(llvm::Module &m) {
 }
 //}}}
 
-bool AllocInst::doInstrument(llvm::Module &m) {
+bool AllocInst::doInstrument(llvm::Module &m, const ExtLibInfo &ext_info) {
   auto i32_type = llvm::IntegerType::get(m.getContext(), 32);
   auto i64_type = llvm::IntegerType::get(m.getContext(), 64);
   auto i8_ptr_type = llvm::PointerType::get(
@@ -265,10 +265,14 @@ bool AllocInst::doInstrument(llvm::Module &m) {
     args.push_back(total_size_val);
   } else {
     auto ci = cast<llvm::CallInst>(allocInst_);
-    auto called_fcn = LLVMHelper::getFcnFromCall(ci);
-    auto size_val = AllocInfo::getMallocSizeArg(m,
-        ci, called_fcn);
-    args.push_back(size_val.first);
+    llvm::CallSite cs(ci);
+
+    llvm::Instruction *ia = ci;
+    auto &info = ext_info.getInfo(ci);
+    auto data = info.getAllocData(m, cs,
+        *static_cast<ObjectMap *>(nullptr), &ia);
+    assert(data.size() == 1);
+    args.push_back(std::get<1>(data[0]));
   }
 
   // Get first instruction:
@@ -282,7 +286,7 @@ bool AllocInst::doInstrument(llvm::Module &m) {
   return true;
 }
 
-bool FreeInst::doInstrument(llvm::Module &m) {
+bool FreeInst::doInstrument(llvm::Module &m, const ExtLibInfo &ext_info) {
   std::vector<llvm::Value *> args;
   // Now we construct the call arguments:
   // Args are:
@@ -290,11 +294,19 @@ bool FreeInst::doInstrument(llvm::Module &m) {
   if (auto ci = dyn_cast<llvm::CallInst>(freeInst_)) {
     auto fcn = getFreeFunction(m);
 
+    /*
     auto called_fcn = LLVMHelper::getFcnFromCall(ci);
 
     auto free_arg = AllocInfo::getFreeArg(m, ci, called_fcn);
+    */
+    auto &free_info = ext_info.getInfo(ci);
+    llvm::Instruction *ia = ci;
+    llvm::CallSite cs(ci);
+    auto free_vec = free_info.getFreeData(m, cs,
+        *static_cast<ObjectMap *>(nullptr), &ia);
+    assert(free_vec.size() == 1);
 
-    args.push_back(free_arg);
+    args.push_back(free_vec[0]);
 
     llvm::dbgs() << "About to instrument free: " << *ci << "\n";
     // Do call
@@ -316,7 +328,7 @@ bool FreeInst::doInstrument(llvm::Module &m) {
   return true;
 }
 
-bool AssignmentInst::doInstrument(llvm::Module &m) {
+bool AssignmentInst::doInstrument(llvm::Module &m, const ExtLibInfo &) {
   auto i32_type = llvm::IntegerType::get(m.getContext(), 32);
   auto i8_ptr_type = llvm::PointerType::get(
       llvm::IntegerType::get(m.getContext(), 8), 0);
@@ -422,7 +434,7 @@ static llvm::GlobalVariable *getGlobalSet(llvm::Module &m,
   return gv;
 }
 
-bool SetCheckInst::doInstrument(llvm::Module &m) {
+bool SetCheckInst::doInstrument(llvm::Module &m, const ExtLibInfo &) {
   static int32_t id = 0;
   auto i32_type = llvm::IntegerType::get(m.getContext(), 32);
   auto i8_ptr_type = llvm::PointerType::get(
@@ -523,7 +535,7 @@ bool SetCheckInst::doInstrument(llvm::Module &m) {
   return true;
 }
 
-bool VisitInst::doInstrument(llvm::Module &m) {
+bool VisitInst::doInstrument(llvm::Module &m, const ExtLibInfo &) {
   static int32_t visit_id = 0;
 
   auto i32_type = llvm::IntegerType::get(m.getContext(), 32);

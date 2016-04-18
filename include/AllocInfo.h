@@ -6,6 +6,7 @@
 #ifndef INCLUDE_ALLOCINFO_H_
 #define INCLUDE_ALLOCINFO_H_
 
+#if 0
 #include <algorithm>
 #include <string>
 
@@ -248,6 +249,7 @@ class AllocInfo {
     return nullptr;
   }
 };
+#endif
 
 #endif  // INCLUDE_ALLOCINFO_H_
 

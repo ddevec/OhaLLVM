@@ -21,8 +21,9 @@
 #include "llvm/Support/CallSite.h"
 #include "llvm/Support/Debug.h"
 
-#include "include/SolveHelpers.h"
+#include "include/ExtInfo.h"
 #include "include/ObjectMap.h"
+#include "include/SolveHelpers.h"
 
 class DynPtstoLoader : public llvm::ModulePass {
  public:

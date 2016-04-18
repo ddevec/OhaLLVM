@@ -64,6 +64,7 @@ void ConstraintPass::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
 }
 
 bool ConstraintPass::runOnModule(llvm::Module &m) {
+  extInfo_.init(m, omap_);
   if (do_spec) {
     llvm::dbgs() << "ConstraintPass: do-spec is true!\n";
   } else {
@@ -111,6 +112,9 @@ bool ConstraintPass::runOnModule(llvm::Module &m) {
   llvm::dbgs() << "Ptsto init start\n";
   PtstoSet::PtstoSetInit(omap_, cg_);
   llvm::dbgs() << "Ptsto init end\n";
+
+  // Info on the omap...
+  omap_.printStats();
 
   // We don't change code.  Ever.
   return false;

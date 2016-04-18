@@ -60,6 +60,7 @@ bool SpecSFSInstrumenter::runOnModule(llvm::Module &m) {
   auto &sfs = getAnalysis<SpecSFS>();
   auto &uf = getAnalysis<UnusedFunctions>();
   auto &omap = sfs.getObjectMap();
+  auto &ext_info = sfs.getLibInfo();
 
   // Okay, now that we have the analysis we need to instrument all of the ptsto
   //   operations
@@ -86,7 +87,20 @@ bool SpecSFSInstrumenter::runOnModule(llvm::Module &m) {
                   &insn);
             }
           } else if (auto ci = dyn_cast<llvm::CallInst>(&insn)) {
-            auto fcn = LLVMHelper::getFcnFromCall(ci);
+            llvm::CallSite cs(ci);
+            auto &info = ext_info.getInfo(cs);
+            llvm::Instruction *ia = ci;
+            auto free_info = info.getFreeData(m, cs, omap, &ia);
+            for (auto free_arg : free_info) {
+              auto pts_set = sfs.getPtstoSet(free_arg);
+
+              llvm::dbgs() << "Found free_fcn call: " << *ci << "\n";
+              for (auto obj_id : pts_set) {
+                free_locs.emplace(obj_id, ci);
+                llvm::dbgs() << "  adding obj_id: " << obj_id << "\n";
+              }
+            }
+            /*
             if (fcn && AllocInfo::fcnIsFree(fcn)) {
               // Okay, have a free function, add it to our free list
               // First though, i need to get all of the values this may free:
@@ -104,6 +118,7 @@ bool SpecSFSInstrumenter::runOnModule(llvm::Module &m) {
                 llvm::dbgs() << "  adding obj_id: " << obj_id << "\n";
               }
             }
+            */
           }
         }
       }
@@ -179,7 +194,7 @@ bool SpecSFSInstrumenter::runOnModule(llvm::Module &m) {
 
   bool ret = false;
   for (auto &pinst : insts) {
-    ret |= pinst->doInstrument(m);
+    ret |= pinst->doInstrument(m, ext_info);
   }
 
 
@@ -328,9 +343,9 @@ bool SpecSFSInstrumenter::runOnModule(llvm::Module &m) {
     std::vector<llvm::Value *> args;
 
     args.push_back(llvm::ConstantInt::get(i32_type,
-          ObjectMap::ArgvValueObject.val()));
+          omap.getNamedObject("argv").val()));
     args.push_back(llvm::ConstantInt::get(i32_type,
-          ObjectMap::ArgvObjectObject.val()));
+          omap.getNamedObject("arg").val()));
 
     std::for_each(main_fcn->arg_begin(), main_fcn->arg_end(),
         [&args] (llvm::Argument &arg) {

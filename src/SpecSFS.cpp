@@ -174,6 +174,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   ConstraintGraph cg(cons_pass.getConstraintGraph());
   CFG cfg(cons_pass.getControlFlowGraph());
   omap_ = cons_pass.getObjectMap();
+  extInfo_ = cons_pass.getLibInfo();
   ObjectMap &omap = omap_;
 
   // Initial optimization pass
@@ -208,7 +209,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     if (!do_spec || !unused_fcns.hasInfo()) {
       dyn_indir_info = nullptr;
     }
-    if (addIndirectCalls(cg, cfg, aux, dyn_indir_info, omap)) {
+    if (addIndirectCalls(cg, cfg, aux, dyn_indir_info, omap, *extInfo_)) {
       error("AddIndirectCalls failure!");
     }
   }
@@ -237,7 +238,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   std::map<ObjectMap::ObjID, Bitmap> dyn_pts;
   if (do_spec) {
     util::PerfTimerPrinter dyn_timer(llvm::dbgs(), "Dynamic Ptsto Info");
-    dyn_pts = addDynPtstoInfo(m, graph, cfg, omap);
+    dyn_pts = addDynPtstoInfo(m, graph, cfg, omap, *extInfo_);
   }
 
   {
@@ -603,18 +604,22 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
       auto &old_set = pr.second;
       auto new_id = omap.getRep(old_id);
 
+      auto orig_size = omap.size();
       // Also, strip out structures to their base field
       if (!ObjectMap::isSpecial(new_id)) {
         auto val = omap.valueAtID(new_id);
         if (val != nullptr) {
-          if (auto c = dyn_cast<llvm::Constant>(val)) {
-            new_id = omap.getConstRep(c);
-          } else {
-            new_id = omap.getValue(val);
+          new_id = omap.getValueC(val);
+
+          if (omap.size() != orig_size) {
+            llvm::dbgs() << "value: " << *val <<
+              "causes omap to create new ID?\n";
+            llvm_unreachable("omap error");
           }
         }
         // assert(omap.isObject(new_id));
       }
+
 
       auto &new_set = new_dyn_ptsto[new_id];
 
@@ -630,6 +635,10 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
 
       // And we get the appropriate top-level ptsto variable:
       // NOTE: We intentionally copy that set here
+      /*
+      llvm::dbgs() << "obj_id is: " << obj_id << ": "
+        << ValPrint(obj_id) << "\n";
+      */
       auto st_pts_set = pts_top_.at(obj_id);
 
       // We then add the base node of any struct fields in the static set
@@ -665,6 +674,7 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
               const llvm::Function *fcn = nullptr;
               const llvm::BasicBlock *bb = nullptr;
               llvm::dbgs() << "Element: " << set_obj_id << ": ";
+              /*
               if (val == nullptr) {
                 llvm::dbgs() << "Value NULL";
               } else if (auto ins = dyn_cast<llvm::Instruction>(val)) {
@@ -687,7 +697,8 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
               } else if (llvm::isa<llvm::GlobalVariable>(val)) {
                 llvm::dbgs() << "(global)";
               }
-              llvm::dbgs() << ": " << ValPrint(set_obj_id) << "\n";
+              */
+              llvm::dbgs() << ": " << FullValPrint(set_obj_id) << "\n";
 
               if (fcn) {
                 llvm::dbgs() << "  !! In Unused Function: " << fcn->getName() <<

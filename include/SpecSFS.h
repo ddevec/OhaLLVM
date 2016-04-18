@@ -12,6 +12,7 @@
 #include "include/Assumptions.h"
 #include "include/ConstraintPass.h"
 #include "include/DUG.h"
+#include "include/ExtInfo.h"
 #include "include/ObjectMap.h"
 #include "include/SpecAnders.h"
 #include "include/lib/UnusedFunctions.h"
@@ -84,6 +85,10 @@ class SpecSFS : public llvm::ModulePass,
     return omap_;
   }
 
+  const ExtLibInfo &getLibInfo() const {
+    return *extInfo_;
+  }
+
  private:
   // The functions which do the primary (high-level) work of SFS
 
@@ -95,7 +100,8 @@ class SpecSFS : public llvm::ModulePass,
   // Takes dynamic pointsto information, as well as hot/cold basic block
   //   information, and trims the edges of the DUG appropriately
   std::map<ObjectMap::ObjID, Bitmap>
-  addDynPtstoInfo(llvm::Module &m, DUG &graph, CFG &cfg, ObjectMap &omap);
+  addDynPtstoInfo(llvm::Module &m, DUG &graph, CFG &cfg, ObjectMap &omap,
+      const ExtLibInfo &ext_info);
 
 
   // Computes partitons based on the conservative address-taken info, the
@@ -132,6 +138,7 @@ class SpecSFS : public llvm::ModulePass,
       */
 
   // Private data {{{
+  const ExtLibInfo *extInfo_;
   ObjectMap omap_;
   TopLevelPtsto pts_top_;
 
@@ -168,6 +175,7 @@ bool SFSHU(ConstraintGraph &graph, CFG &cfg,
 // Adds additional indirect call info, given an AUX analysis
 //   (in this case, Andersens analysis)
 bool addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
-    SpecAnders &aux, const IndirFunctionInfo *, ObjectMap &omap);
+    SpecAnders &aux, const IndirFunctionInfo *, ObjectMap &omap,
+    const ExtLibInfo &ext_info);
 
 #endif  // INCLUDE_SPECSFS_H_

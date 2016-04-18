@@ -140,7 +140,7 @@ set(SPECSFS_SOURCES
   lib/Instrument/IndirFcnTarget.cpp
   lib/Instrument/DynPtsto.cpp
   lib/Instrument/DynAlias.cpp
-  lib/Instrument/DynPtstoCheck.cpp
+  # lib/Instrument/DynPtstoCheck.cpp
 
   lib/StaticSlice.cpp
   lib/StaticSliceCounter.cpp

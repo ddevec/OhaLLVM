@@ -6,6 +6,8 @@
 #ifndef INCLUDE_EXTINFO_H_
 #define INCLUDE_EXTINFO_H_
 
+#include <string>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -14,10 +16,20 @@
 #include "llvm/DerivedTypes.h"
 #include "llvm/Instructions.h"
 #include "llvm/Module.h"
+#include "llvm/Support/CallSite.h"
 
 #include "include/ObjectMap.h"
 #include "include/ConstraintGraph.h"
 #include "include/ControlFlowGraph.h"
+#include "include/LLVMHelper.h"
+
+
+enum class AllocStatus {
+  // Assume weak maybe-struct
+  Strong,
+  Weak,
+  None
+};
 
 class ExtInfo {
  public:
@@ -33,36 +45,71 @@ class ExtInfo {
   //                            allocation (ex. from malloc)
   typedef std::tuple<llvm::Value *, llvm::Value *, ObjectMap::ObjID> AllocInfo;
 
-  virtual bool insertCallCons(llvm::ImmutableCallSite *ci, ObjectMap &omap,
-      ConstraintGraph &cg, CFG &cfg) const = 0;
+  // A pair representing what is allocated by a given instruction.
+  //  - first -- AllocStatus -- If the allocation is weak, strong, none, or
+  //                            unknown
+  //  - second -- type       -- The conservative type (nullptr if non-struct) of
+  //                            the allocation -- used to determine allocation
+  //                            size
+  typedef std::pair<AllocStatus, const llvm::Type *> StaticAllocInfo;
 
-  virtual std::vector<AllocInfo> getAllocData(llvm::Module &m, llvm::CallSite &ci,
-      ObjectMap &omap,
-      llvm::Value **insert_after) const = 0;
+  virtual bool insertCallCons(llvm::ImmutableCallSite &ci, ObjectMap &omap,
+      ConstraintGraph &cg, CFG &cfg, CFG::CFGid *next_id) const = 0;
 
-  virtual std::vector<llvm::Value *> getFreeData(llvm::Module &m, llvm::CallSite &ci,
-      ObjectMap &omap,
-      llvm::Value **insert_after) const = 0;
+  virtual std::vector<AllocInfo> getAllocData(llvm::Module &m,
+      llvm::CallSite &ci, ObjectMap &omap,
+      llvm::Instruction **insert_after) const = 0;
+
+  virtual std::vector<llvm::Value *> getFreeData(llvm::Module &m,
+      llvm::CallSite &ci, ObjectMap &omap,
+      llvm::Instruction **insert_after) const = 0;
+
+  StaticAllocInfo getAllocInfo(const llvm::CallInst *ci,
+      ObjectMap &omap) const {
+    llvm::ImmutableCallSite ics(ci);
+
+    return getAllocInfo(ics, omap);
+  }
+
+  virtual bool canAlloc() const = 0;
+
+  StaticAllocInfo getAllocInfo(llvm::CallSite &cs,
+      ObjectMap &omap) const {
+    llvm::ImmutableCallSite ics(cs);
+
+    return getAllocInfo(ics, omap);
+  }
+
+  virtual StaticAllocInfo getAllocInfo(llvm::ImmutableCallSite &cs,
+      ObjectMap &omap) const = 0;
 };
 
 class UnknownExtInfo : public ExtInfo {
  public:
   UnknownExtInfo() = default;
 
-  bool insertCallCons(llvm::ImmutableCallSite *ci, ObjectMap &omap,
-      ConstraintGraph &cg, CFG &cfg) const override;
+  bool insertCallCons(llvm::ImmutableCallSite &ci, ObjectMap &omap,
+      ConstraintGraph &cg, CFG &cfg, CFG::CFGid *next_id) const override;
 
   std::vector<AllocInfo> getAllocData(llvm::Module &m, llvm::CallSite &ci,
-      ObjectMap &omap, llvm::Value **insert_after) const override;
+      ObjectMap &omap, llvm::Instruction **insert_after) const override;
 
   std::vector<llvm::Value *> getFreeData(llvm::Module &m, llvm::CallSite &ci,
       ObjectMap &omap,
-      llvm::Value **insert_after) const override;
+      llvm::Instruction **insert_after) const override;
+
+  StaticAllocInfo getAllocInfo(llvm::ImmutableCallSite &cs,
+      ObjectMap &omap) const override;
+
+  // Unknown functions cannot alloc, Universal Value covers this...
+  bool canAlloc() const { return false; }
 };
 
 class ExtLibInfo {
  public:
-  ExtLibInfo();
+  ExtLibInfo() = default;
+
+  void init(llvm::Module &m, ObjectMap &omap);
 
   const UnknownExtInfo UnknownFunction;
 
@@ -70,10 +117,29 @@ class ExtLibInfo {
     return &inf == &UnknownFunction;
   }
 
+  const ExtInfo &getInfo(const llvm::CallInst *ci) const {
+    auto fcn = LLVMHelper::getFcnFromCall(ci);
+    if (fcn == nullptr) {
+      return UnknownFunction;
+    }
+
+    return getInfo(fcn->getName());
+  }
+
+  const ExtInfo &getInfo(llvm::CallSite &cs) const {
+    auto ci = cast<llvm::CallInst>(cs.getInstruction());
+    return getInfo(ci);
+  }
+
+  const ExtInfo &getInfo(llvm::ImmutableCallSite &cs) const {
+    auto ci = cast<llvm::CallInst>(cs.getInstruction());
+    return getInfo(ci);
+  }
+
   const ExtInfo &getInfo(const std::string &fcn) const {
     auto it = info_.find(fcn);
 
-    // If we don't know 
+    // If we don't know
     if (it != std::end(info_)) {
       return *it->second;
     }
@@ -95,5 +161,5 @@ class ExtLibInfo {
   std::vector<std::pair<std::string, std::unique_ptr<ExtInfo>>> matchInfo_;
 };
 
-#endif  // INCLUDE_ALLOCINFO_H_
+#endif  // INCLUDE_EXTINFO_H_
 

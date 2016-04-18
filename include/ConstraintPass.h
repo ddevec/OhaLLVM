@@ -9,6 +9,7 @@
 #include "include/ConstraintGraph.h"
 #include "include/ControlFlowGraph.h"
 #include "include/DUG.h"
+#include "include/ExtInfo.h"
 #include "include/ObjectMap.h"
 #include "include/lib/UnusedFunctions.h"
 #include "include/lib/IndirFcnTarget.h"
@@ -39,6 +40,10 @@ class ConstraintPass : public llvm::ModulePass {
     return omap_;
   }
 
+  const ExtLibInfo *getLibInfo() const {
+    return &extInfo_;
+  }
+
   const ConstraintGraph &getConstraintGraph() const {
     return cg_;
   }
@@ -56,6 +61,8 @@ class ConstraintPass : public llvm::ModulePass {
   ConstraintGraph cg_;
   CFG cfg_;
   AssumptionSet specAssumptions_;
+
+  ExtLibInfo extInfo_;
 
   // Identifies all objects in the module, adds them to graph
   bool identifyObjects(ObjectMap &omap, const llvm::Module &M);

@@ -83,7 +83,7 @@ class CostApprox {
 
 std::map<ObjectMap::ObjID, Bitmap>
 SpecSFS::addDynPtstoInfo(llvm::Module &m, DUG &,
-    CFG &, ObjectMap &omap) {
+    CFG &, ObjectMap &omap, const ExtLibInfo &ext_info) {
   // Okay, here we go... dynamic cold path point-to info
 
   // We're going to:
@@ -127,7 +127,8 @@ SpecSFS::addDynPtstoInfo(llvm::Module &m, DUG &,
                 if (auto ci = dyn_cast<llvm::CallInst>(&instr)) {
                   auto fcn = LLVMHelper::getFcnFromCall(ci);
 
-                  if (fcn != nullptr && AllocInfo::fcnIsMalloc(fcn)) {
+                  auto &info = ext_info.getInfo(fcn->getName());
+                  if (fcn != nullptr && info.canAlloc()) {
                     continue;
                   }
                 }

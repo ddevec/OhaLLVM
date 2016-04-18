@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <map>
 #include <set>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -55,6 +56,7 @@ class ObjectMap {
     eIntValue = 2,
     eUniversalValue = 3,
     eAggregateValue = 4,
+    /*
     ePthreadSpecificValue = 5,
     eArgvValue = 6,
     eArgvValueObject = 7,
@@ -72,6 +74,7 @@ class ObjectMap {
     eEnvObject = 19,
     eEnvpValue = 20,
     eEnvpObject = 21,
+    */
     eNumDefaultObjs
   } DefaultObjs;
 
@@ -81,6 +84,7 @@ class ObjectMap {
   static const ObjID IntValue;
   static const ObjID AggregateValue;
   static const ObjID UniversalValue;
+  /*
   static const ObjID PthreadSpecificValue;
   static const ObjID ArgvValue;
   static const ObjID ArgvValueObject;
@@ -99,6 +103,7 @@ class ObjectMap {
   static const ObjID EnvObject;
   static const ObjID EnvpValue;
   static const ObjID EnvpObject;
+  */
   //}}}
 
   static constexpr ObjID getOffsID(ObjID id, int32_t offs) {
@@ -387,6 +392,65 @@ class ObjectMap {
   void addVarArg(const llvm::Value *val) {
     __do_add(val, vargToID_, idToVararg_, nullptr);
   }
+
+
+  ObjID addNamedValue(const std::string &str) {
+    auto id = createMapping(nullptr);
+    nameToID_.emplace(str, id);
+    idToName_.emplace(id, str);
+
+    return id;
+  }
+
+  ObjID addNamedObject(const llvm::Type *type, const std::string &str) {
+    if (type == nullptr) {
+      auto id = createMapping(nullptr);
+      objNameToID_.emplace(str, id);
+      objIdToName_.emplace(id, str);
+      objSet_.set(id);
+      numObjs_++;
+      return id;
+    } else {
+      // Strip away array references:
+      while (auto at = dyn_cast<llvm::ArrayType>(type)) {
+        type = at->getElementType();
+      }
+
+      if (auto st = dyn_cast<llvm::StructType>(type)) {
+        ObjID ret_id;
+
+        auto &struct_info = getStructInfo(st);
+        int num_sizes = struct_info.size();
+        int cur_size = 0;
+        bool first = true;
+
+        for (auto it = struct_info.sizes_begin(), en = struct_info.sizes_end();
+            it != en; ++it) {
+          auto id = createMapping(nullptr);
+
+          if (first) {
+            ret_id = id;
+            objNameToID_.emplace(str, id);
+            first = false;
+          }
+
+          objSet_.set(id);
+          objIdToName_.emplace(id, str);
+          objIsStruct_.emplace(id, num_sizes - cur_size);
+          cur_size++;
+        }
+
+        return ret_id;
+      } else {
+        auto id = createMapping(nullptr);
+        objNameToID_.emplace(str, id);
+        objIdToName_.emplace(id, str);
+        objSet_.set(id);
+        numObjs_++;
+        return id;
+      }
+    }
+  }
   //}}}
 
   // Value Retrieval {{{
@@ -410,6 +474,7 @@ class ObjectMap {
       o << "(AggregateValue)";
     } else if (id == UniversalValue) {
       o << "(UniversalValue)";
+      /*
     } else if (id == PthreadSpecificValue) {
       o << "(PthreadSpecificValue)";
     } else if (id == ArgvValueObject) {
@@ -444,6 +509,7 @@ class ObjectMap {
       o << "(envp value)";
     } else if (id == EnvpObject) {
       o << "(envp)";
+      */
     } else {
       llvm_unreachable("not special");
     }
@@ -464,6 +530,14 @@ class ObjectMap {
 
   const llvm::Value *valueAtID(ObjID id) const {
     return mapping_.at(id.val());
+  }
+
+  ObjID getNamedValue(const std::string &str) {
+    return getRep(nameToID_.at(str));
+  }
+
+  ObjID getNamedObject(const std::string &str) {
+    return getRep(objNameToID_.at(str));
   }
 
   ObjID getValueRep(const llvm::Value *val) {
@@ -500,7 +574,8 @@ class ObjectMap {
   }
 
   ObjID getValueC(const llvm::Value *val) {
-    if (auto c = dyn_cast<llvm::Constant>(val)) {
+    auto c = dyn_cast<llvm::Constant>(val);
+    if (c != nullptr && !llvm::isa<llvm::Function>(val)) {
       return getConstRep(c);
     } else {
       return getValueRep(val);
@@ -643,6 +718,12 @@ class ObjectMap {
 
   size_t size() const {
     return mapping_.size();
+  }
+
+  void printStats() const {
+    llvm::dbgs() << "mapping_.size(): " << mapping_.size() << "\n";
+    llvm::dbgs() << "numObjs: " << numObjs_ << "\n";
+    llvm::dbgs() << "maxObj: " << maxObj_ << "\n";
   }
   //}}}
 
@@ -906,6 +987,11 @@ class ObjectMap {
   std::unordered_map<const llvm::Value *, ObjID> retToID_;
   std::unordered_map<const llvm::Value *, ObjID> vargToID_;
   std::unordered_map<const llvm::Value *, ObjID> consToID_;
+  std::unordered_map<std::string, ObjID> nameToID_;
+  std::unordered_map<std::string, ObjID> objNameToID_;
+
+  std::unordered_map<ObjID, const std::string, ObjID::hasher> idToName_;
+  std::unordered_map<ObjID, const std::string, ObjID::hasher> objIdToName_;
 
   util::SparseBitmap<ObjID> objSet_;
   ObjID maxObj_ = ObjID::invalid();
@@ -953,6 +1039,26 @@ class ObjectMap {
     map = std::move(newmap);
   }
 
+  static void __remap_namedToID(const util::ObjectRemap<ObjID> &remap,
+      std::unordered_map<std::string, ObjID> &map) {
+    for (auto &pr : map) {
+      pr.second = remap[pr.second];
+    }
+  }
+
+  static void __remap_idToNamed(const util::ObjectRemap<ObjID> &remap,
+      std::unordered_map<ObjID, const std::string, ObjID::hasher> &map) {
+    std::unordered_map<ObjID, const std::string, ObjID::hasher> newmap;
+
+    for (auto &pr : map) {
+      if_debug_enabled(auto rc =)
+        newmap.emplace(remap[pr.first], pr.second);
+      assert(rc.second);
+    }
+
+    map = std::move(newmap);
+  }
+
   void __update_internal(const util::ObjectRemap<ObjID> &remap) {
     // First, do the valToID_ mappings
     __remap_valToID(remap, valToID_);
@@ -960,6 +1066,14 @@ class ObjectMap {
     __remap_valToID(remap, retToID_);
     __remap_valToID(remap, vargToID_);
     __remap_valToID(remap, consToID_);
+
+    // Remap nameToID_ and objNameToID_
+    __remap_namedToID(remap, nameToID_);
+    __remap_namedToID(remap, objNameToID_);
+
+    // Also remap idToName_ and objIdToName_
+    __remap_idToNamed(remap, idToName_);
+    __remap_idToNamed(remap, objIdToName_);
 
     // Now the idToVal_ mappings
     __remap_idToVal(remap, idToVal_);
@@ -1182,7 +1296,7 @@ class ObjectMap {
 // Gets the type of a value, stripping the first layer of bitcasts if needed
 // NOTE: Does not strip away pointer type
 [[ gnu::unused ]]
-static const llvm::Type *getTypeOfVal(llvm::Value *val) {
+static const llvm::Type *getTypeOfVal(const llvm::Value *val) {
   auto ret = val->getType();
 
   if (auto ce = dyn_cast<llvm::ConstantExpr>(val)) {
