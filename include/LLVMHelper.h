@@ -66,8 +66,8 @@ class LLVMHelper {
     //   size = ptrtoint (type)* psize to i32
     // TODO(ddevec): I don't need to do this if I get constant values...
     auto ce_null = llvm::ConstantPointerNull::get(type_ptr_type);
-    std::vector<llvm::Constant *> gep_ce_indicies;
-    gep_ce_indicies.push_back(llvm::ConstantInt::get(i64_type, 8));
+    std::vector<llvm::Constant *> gep_ce_indicies =
+        { llvm::ConstantInt::get(i64_type, 1) };
     auto gep_ce = llvm::ConstantExpr::getGetElementPtr(ce_null,
         gep_ce_indicies);
         

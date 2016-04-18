@@ -233,10 +233,10 @@ void __DynPtsto_main_init2(int32_t obj_id, int32_t argv_dest_id,
     int argc, char **argv) {
   int i = 0;
   for (i = 0; i < argc; i++) {
-    __DynPtsto_do_malloc(argv_dest_id, (strlen(argv[i])+1)*8, argv[i]);
+    __DynPtsto_do_malloc(argv_dest_id, (strlen(argv[i])+1), argv[i]);
   }
 
-  __DynPtsto_do_malloc(obj_id, (sizeof(*argv)*(argc+1))*8, argv);
+  __DynPtsto_do_malloc(obj_id, (sizeof(*argv)*(argc+1)), argv);
 }
 
 void __DynPtsto_main_init3(int32_t obj_id, int32_t argv_dest_id,
@@ -245,12 +245,12 @@ void __DynPtsto_main_init3(int32_t obj_id, int32_t argv_dest_id,
   // Init envp
   int i;
   for (i = 0; envp[i] != nullptr; i++) {
-    __DynPtsto_do_malloc(envp_id, (strlen(envp[i])+1)*8, envp[i]);
+    __DynPtsto_do_malloc(envp_id, (strlen(envp[i])+1), envp[i]);
   }
   // Also do for the nullptr
-  __DynPtsto_do_malloc(envp_id, (1)*8, envp[i]);
+  __DynPtsto_do_malloc(envp_id, (1), envp[i]);
 
-  __DynPtsto_do_malloc(env_id, (sizeof(*envp)*(i+1))*8, envp);
+  __DynPtsto_do_malloc(env_id, (sizeof(*envp)*(i+1)), envp);
 
   // Do std init
   __DynPtsto_main_init2(obj_id, argv_dest_id, envp_id, env_id, argc, argv);
@@ -274,7 +274,6 @@ void __DynPtsto_do_gep(int32_t offs, void *base_addr,
   }
   */
 
-  size /= 8;
   // Get the current field at the res_addr
   /*
   std::cout << "gep: " << offs << ", " << res_addr << ", " <<
@@ -441,8 +440,6 @@ void __DynPtsto_do_alloca(int32_t obj_id, int64_t size,
   if (size == 0) {
     return;
   }
-  // Size is in bits...
-  size /= 8;
 
   // Handle alloca
   // Add addresses to stack frame
@@ -594,8 +591,6 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
   std::cout << "do_malloc: " << obj_id << ", " << size << ", " <<
     addr << std::endl;
   */
-  // Size is in bits...
-  size /= 8;
 
   /*
   std::cout << "do_malloc (bytes): " << obj_id << ", " << size << ", " <<

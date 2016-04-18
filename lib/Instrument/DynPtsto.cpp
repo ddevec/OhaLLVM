@@ -924,7 +924,7 @@ void InstrDynPtsto::addInitializationCalls(llvm::Module &m) {
 
     // Do one for IntValue
     first_inst = addMallocCall(m, ObjectMap::NullValue, ce_null,
-        llvm::ConstantInt::get(i64_type, 4096*8), first_inst);
+        llvm::ConstantInt::get(i64_type, 4096), first_inst);
 
     // Deal w/ argc, argv, and envp here
     // Detect number of main args

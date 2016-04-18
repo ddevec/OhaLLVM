@@ -253,10 +253,10 @@ void __DynAlias_main_init2(int32_t obj_id, int32_t argv_dest_id,
     int argc, char **argv) {
   int i = 0;
   for (i = 0; i < argc; i++) {
-    __DynAlias_do_malloc(argv_dest_id, (strlen(argv[i])+1)*8, argv[i]);
+    __DynAlias_do_malloc(argv_dest_id, (strlen(argv[i])+1), argv[i]);
   }
 
-  __DynAlias_do_malloc(obj_id, (sizeof(*argv)*(argc+1))*8, argv);
+  __DynAlias_do_malloc(obj_id, (sizeof(*argv)*(argc+1)), argv);
 }
 
 void __DynAlias_main_init3(int32_t obj_id, int32_t argv_dest_id,
@@ -265,12 +265,12 @@ void __DynAlias_main_init3(int32_t obj_id, int32_t argv_dest_id,
   // Init envp
   int i;
   for (i = 0; envp[i] != nullptr; i++) {
-    __DynAlias_do_malloc(envp_id, (strlen(envp[i])+1)*8, envp[i]);
+    __DynAlias_do_malloc(envp_id, (strlen(envp[i])+1), envp[i]);
   }
   // Also do for the nullptr
-  __DynAlias_do_malloc(envp_id, (1)*8, envp[i]);
+  __DynAlias_do_malloc(envp_id, (1), envp[i]);
 
-  __DynAlias_do_malloc(env_id, (sizeof(*envp)*(i+1))*8, envp);
+  __DynAlias_do_malloc(env_id, (sizeof(*envp)*(i+1)), envp);
 
   // Do std init
   __DynAlias_main_init2(obj_id, argv_dest_id, envp_id, env_id, argc, argv);
@@ -288,8 +288,6 @@ void __DynAlias_do_alloca(int32_t, int64_t size,
   if (size == 0) {
     return;
   }
-  // Size is in bits...
-  size /= 8;
 
   // Handle alloca
   // Add addresses to stack frame
@@ -435,8 +433,6 @@ void __DynAlias_do_malloc(int32_t, int64_t size,
   std::cout << "do_malloc: " << obj_id << ", " << size << ", " <<
     addr << std::endl;
   */
-  // Size is in bits...
-  size /= 8;
 
   /*
   std::cout << "do_malloc (bytes): " << obj_id << ", " << size << ", " <<
@@ -515,7 +511,6 @@ void __DynAlias_do_load(int32_t load_id, void *addr, size_t) {
 
 void __DynAlias_do_store(int32_t store_id, void *addr, size_t size) {
   // Convert from bits to bytes
-  size /= 8;
   map.set(store_id, addr, size);
 }
 

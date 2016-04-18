@@ -4,6 +4,7 @@
 
 #include "include/ExtInfo.h"
 
+
 #include <cassert>
 
 #include <tuple>
@@ -25,7 +26,6 @@ typedef ExtInfo::AllocInfo AllocInfo;
 typedef ExtInfo::StaticAllocInfo StaticAllocInfo;
 
 char ctype_name[] = "ctype";
-char dirstream_name[] = "struct.__dirstream";
 char filestruct_name[] = "struct._IO_FILE";
 char datetimestruct_name[] = "struct.tm";
 
@@ -33,6 +33,7 @@ char locale_name[] = "locale";
 char env_name[] = "env";
 char errno_name[] = "errno";
 char clib_name[] = "clib";
+char dir_name[] = "dir";
 char terminfo_name[] = "terminfo";
 char datetime_name[] = "datetime_static";
 char textdomain_name[] = "textdomain_static";
@@ -106,7 +107,7 @@ struct ReturnCons {
     auto arg0 = cs.getArgument(arg_num);
 
     auto ci_id = omap.getValue(ci);
-    auto arg0_id = omap.getValue(arg0);
+    auto arg0_id = omap.getValueC(arg0);
 
     // Copy the arg into CI
     cg.add(ConstraintType::Copy, ci_id, arg0_id);
@@ -181,7 +182,7 @@ struct ReturnArgOrMallocCons {
         ci_id, ci_obj);
 
     auto arg = cs.getArgument(arg_num);
-    auto arg_id = omap.getValue(arg);
+    auto arg_id = omap.getValueC(arg);
     // Now, handle the arg copy
     cg.add(ConstraintType::Copy,
         ci_id, arg_id);
@@ -205,7 +206,7 @@ struct ReturnArgOrStaticCons {
 
     // Now, handle the arg copy
     auto arg = cs.getArgument(arg_num);
-    auto arg_id = omap.getValue(arg);
+    auto arg_id = omap.getValueC(arg);
     cg.add(ConstraintType::Copy,
         ci_id, arg_id);
 
@@ -1016,8 +1017,9 @@ class FileClose :
 
 // Directories
 class DirOpen :
-  public ExtInfoCRTP<AllocTypeCons<dirstream_name>,
-          AllocStruct<dirstream_name>, NoFreeData,
+  public ExtInfoCRTP<ReturnNamedNSCons<dir_name>,
+          // FIXME(ddevec) -- sizeof(DIR) ? ? ?
+          AllocNamedSize<dir_name, 8>, NoFreeData,
           AllocInfoWeak, CanAlloc> { };
 
 class DirClose :
@@ -1066,6 +1068,7 @@ void ExtLibInfo::init(llvm::Module &m, ObjectMap &omap) {  //  NOLINT
   omap.addNamedObject(nullptr, "locale");
   omap.addNamedObject(nullptr, "errno");
   omap.addNamedObject(nullptr, "env");
+  omap.addNamedObject(nullptr, "dir");
 
   // Does the named data need constraints?
   // Largely no...
