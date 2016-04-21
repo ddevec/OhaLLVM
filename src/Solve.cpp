@@ -493,7 +493,7 @@ void DUG::StoreNode::process(DUG &dug, TopLevelPtsto &pts_top,
 
   // If this is a strong update, remove all outgoing edges from dest
   // NOTE: This is a strong update if we are updating a single concrete location
-  if (strong() && dest_pts.singleton()) {
+  if (dest_pts.singleton() && dug.strong(*std::begin(dest_pts))) {
     // Clear all outgoing edges from pts_top(src) from out
     dout("DOING STRONG UPDATE!!!\n");
     dout("dest is: " << dest() << "\n");

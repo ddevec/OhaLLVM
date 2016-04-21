@@ -707,10 +707,12 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
             // Get the node in the CFG
             auto &node = part_graph.getNode<CFG::Node>(cfg_id);
 
+            /*
             if (part_id.val() == 279) {
               llvm::dbgs() << "  Part " << part_id << " store node: " <<
                 dug_id << " has cfg_id: " << node.id() << "\n";
             }
+            */
 
             // Set M and R
             node.setM();
@@ -737,10 +739,12 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
             // Get the node in the CFG
             auto &node = part_graph.getNode<CFG::Node>(cfg_id);
 
+            /*
             if (part_id.val() == 279) {
               llvm::dbgs() << "  Part " << part_id << " load node: " <<
                 dug_id << " has cfg_id: " << node.id() << "\n";
             }
+            */
 
             // Set R
             node.setR();
@@ -759,21 +763,25 @@ bool SpecSFS::addPartitionsToDUG(DUG &graph, CFG &ssa,
             part_graph.printDotFile(part_file, *g_omap);
           }
 #endif
+          /*
           if (part_id.val() == 279) {
             std::string part_file("part_graph");
             part_file += std::to_string(part_id.val());
             part_file += ".dot";
             part_graph.printDotFile(part_file, *g_omap);
           }
+          */
           // Now, calculate ssa form for this graph:
           computeSSA(part_graph);
 
+          /*
           if (part_id.val() == 279) {
             std::string part_file("part_graph_after");
             part_file += std::to_string(part_id.val());
             part_file += ".dot";
             part_graph.printDotFile(part_file, *g_omap);
           }
+          */
         }
 
         auto &part_ssa = part_graph;

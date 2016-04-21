@@ -652,6 +652,10 @@ PtstoAssumption::approxDependencies(
       continue;
     }
     auto val = omap.valueAtID(obj_id);
+    if (val == nullptr) {
+      llvm::dbgs() << "val unused?\n";
+      continue;
+    }
     auto ptr_inst = dyn_cast<llvm::Instruction>(val);
     if (ptr_inst != nullptr) {
       ret.emplace_back(new DoubleAllocInst(

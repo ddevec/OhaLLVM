@@ -298,23 +298,28 @@ struct PthreadCreateCons {
 
     // pthread_create
     // First, add
-    auto inst = cs.getInstruction();
-    auto call_id = omap.getValue(inst);
     auto callee = cs.getArgument(2);
-    auto callee_id = omap.getValueC(callee);
-    std::vector<ObjectMap::ObjID> arg = { omap.getValueC(cs.getArgument(3)) };
+    auto arg = omap.getValueC(cs.getArgument(3));
 
-    cg.addIndirectCall(call_id, false, callee_id, std::move(arg));
+    // Just add a call to callee
+    // FIXME(ddevec) -- If callee is not a function, this is harder
+    auto fcn = cast<llvm::Function>(callee);
 
-    // Add a cfg edge:
+    // FIXME(ddevec) -- Return value can somehow be passed... ugh
+    // First, make a cfg edge into this function
     auto cur_id = *next_id;
     auto n_id = cfg.nextNode();
     *next_id = n_id;
 
+    cfg.addCallsite(cur_id, omap.getObject(fcn), n_id);
+
     // CFG flows through this callsite, as well as to the called function(s)
     cfg.addPred(n_id, cur_id);
 
-    cfg.addIndirectCall(cur_id, callee_id, n_id);
+    // Now, copy arg into the function's argument:
+    auto fcn_arg = omap.getValue(&(*fcn->arg_begin()));
+    auto node_id = omap.createPhonyID();
+    cg.add(ConstraintType::Copy, node_id, arg, fcn_arg);
 
     return true;
   }
@@ -795,9 +800,12 @@ struct AllocInfoWeak {
 };
 
 struct AllocInfoWeakNS {
-  StaticAllocInfo operator()(llvm::ImmutableCallSite &,
+  StaticAllocInfo operator()(llvm::ImmutableCallSite &cs,
       ObjectMap &) const {
-    return StaticAllocInfo(AllocStatus::Weak, nullptr);
+    auto m = cs.getInstruction()->getParent()->getParent()->getParent();
+    auto i8_ptr_type = llvm::PointerType::get(
+        llvm::IntegerType::get(m->getContext(), 8), 0);
+    return StaticAllocInfo(AllocStatus::Weak, i8_ptr_type);
   }
 };
 
@@ -835,6 +843,8 @@ bool UnknownExtInfo::insertCallCons(llvm::ImmutableCallSite &cs,
   //    to it
   // If the return value is a pointer:
   auto inst = cs.getInstruction();
+  llvm::dbgs() << "WARNING: Instrumentint unknown function: " <<
+    cs.getCalledFunction()->getName() << "\n";
   if (llvm::isa<llvm::PointerType>(inst->getType())) {
     // Store universal value into it
     auto ret_id = omap.getValue(inst);
@@ -862,6 +872,8 @@ std::vector<AllocInfo> UnknownExtInfo::getAllocData(
     llvm::Module &m, llvm::CallSite &ci,
     ObjectMap &omap,
     llvm::Instruction **insert_after) const {
+  llvm::dbgs() << "WARNING: Unknown alloc data: " <<
+    ci.getCalledFunction()->getName() << "\n";
   // Do nothing
   return NoAllocData()(m, ci, omap, insert_after);
 }
@@ -869,6 +881,8 @@ std::vector<AllocInfo> UnknownExtInfo::getAllocData(
 std::vector<llvm::Value *> UnknownExtInfo::getFreeData(
     llvm::Module &m, llvm::CallSite &ci,
     ObjectMap &omap, llvm::Instruction **insert_after) const {
+  llvm::dbgs() << "WARNING: Unknown free data: " <<
+    ci.getCalledFunction()->getName() << "\n";
   // Do nothing
   return NoFreeData()(m, ci, omap, insert_after);
 }
@@ -2073,7 +2087,7 @@ void ExtLibInfo::init(llvm::Module &m, ObjectMap &omap) {  //  NOLINT
   info_.emplace("getopt", ExtNoop);
   //}}}
   //}}}
-*/
+  */
 
 
   // Intrinsics monitored (ex. memcpy) {{{

@@ -922,6 +922,9 @@ class StaticSlice : public llvm::ModulePass {
 
             // Then make a mapping from each operand to each argument
             if (fcn != nullptr && !fcn->isDeclaration()) {
+              if (!dynInfo_->isUsed(fcn)) {
+                continue;
+              }
               auto cs_argi = cs.arg_begin();
               auto cs_arge = cs.arg_end();
               auto argi = fcn->arg_begin();
@@ -949,6 +952,9 @@ class StaticSlice : public llvm::ModulePass {
             } else {
               // Get the functions associated with those ids
               for (auto &fcn : call_dest_to_fcn[cs.getCalledValue()]) {
+                if (!dynInfo_->isUsed(fcn)) {
+                  continue;
+                }
                 if (!fcn->isDeclaration()) {
                   auto cs_argi = cs.arg_begin();
                   auto cs_arge = cs.arg_end();
@@ -1319,6 +1325,12 @@ class StaticSlice : public llvm::ModulePass {
           ret.emplace_back(bi->getCondition(), stack, omap_, stackCache_,
               callInfo_, fcnToNode_, fcnGraph_);
         }
+      } else if (auto armw = dyn_cast<llvm::AtomicRMWInst>(pinst)) {
+        // Ignore rmw?
+        ret.emplace_back(armw->getValOperand(), stack, omap_, stackCache_,
+            callInfo_, fcnToNode_, fcnGraph_);
+        ret.emplace_back(armw->getPointerOperand(), stack, omap_, stackCache_,
+            callInfo_, fcnToNode_, fcnGraph_);
       } else {
         llvm::dbgs() << "inst is: " << *pinst << "\n";
         llvm_unreachable("Unsupported inst");

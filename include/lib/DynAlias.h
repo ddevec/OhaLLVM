@@ -98,11 +98,21 @@ class DynAliasLoader : public llvm::ModulePass {
 
     // Get the loadinst for our value:
     auto load_it = valToObjs_.find(lid);
+    // If we couldn't find the value in our set, assume an alias
     if (load_it == std::end(valToObjs_)) {
       return false;
     }
 
     auto &load_ptsto = load_it->second;
+
+    // If we have some unknown dynamic info, assume it aliases with everything
+    if (load_ptsto.find(ObjectMap::ObjID::invalid()) !=
+        std::end(load_ptsto)) {
+      auto &aa = getAnalysis<llvm::AliasAnalysis>();
+      return aa.alias(llvm::AliasAnalysis::Location(li->getOperand(0)),
+          llvm::AliasAnalysis::Location(si->getOperand(1))) !=
+        llvm::AliasAnalysis::NoAlias;
+    }
 
     return load_ptsto.find(sid) != std::end(load_ptsto);
   }

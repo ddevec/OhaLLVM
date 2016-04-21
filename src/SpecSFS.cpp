@@ -779,6 +779,12 @@ llvm::AliasAnalysis::AliasResult SpecSFS::alias(const Location &L1,
     return NoAlias;
   }
 
+  if (pts1.front().singleton() && omap_.strong(*std::begin(pts1.front())) &&
+      pts2.front().singleton() && omap_.strong(*std::begin(pts2.front())) &&
+      *std::begin(pts1.front()) == *std::begin(pts2.front())) {
+    return MustAlias;
+  }
+
   // Check to see if the two pointers are known to not alias.  They don't alias
   // if their points-to sets do not intersect.
   if (!pts1.front().intersectsIgnoring(pts2.front(),

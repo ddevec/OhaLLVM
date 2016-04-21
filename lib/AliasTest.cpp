@@ -7,8 +7,9 @@
 
 #include "include/DUG.h"
 #include "include/ObjectMap.h"
-#include "include/lib/UnusedFunctions.h"
+#include "include/lib/DynAlias.h"
 #include "include/lib/IndirFcnTarget.h"
+#include "include/lib/UnusedFunctions.h"
 
 #include "llvm/Pass.h"
 #include "llvm/PassSupport.h"
@@ -30,6 +31,12 @@ static llvm::cl::opt<bool>
       llvm::cl::value_desc("bool"),
       llvm::cl::desc("AliasTest will only test load-store values if true"));
 
+static llvm::cl::opt<bool>
+  alias_check("alias-force-dyn", llvm::cl::init(false),
+      llvm::cl::value_desc("bool"),
+      llvm::cl::desc("AliasTest will count the dynamic load-store "
+        "alias loader"));
+
 
 class AliasTest : public llvm::ModulePass {
  public:
@@ -38,6 +45,7 @@ class AliasTest : public llvm::ModulePass {
 
   void getAnalysisUsage(llvm::AnalysisUsage &usage) const {
     usage.setPreservesAll();
+    usage.addRequired<DynAliasLoader>();
     usage.addRequired<llvm::AliasAnalysis>();
     usage.addRequired<UnusedFunctions>();
   }
@@ -95,45 +103,33 @@ class AliasTest : public llvm::ModulePass {
     size_t num_must_alias = 0;
     size_t num_may_alias = 0;
     size_t num_values = value_list.size();
-    auto &aa = getAnalysis<llvm::AliasAnalysis>();
-    if (only_load_store) {
+    if (alias_check) {
+      auto &aa = getAnalysis<DynAliasLoader>();
+
       for (auto li : load_list) {
-        auto load_src = li->getOperand(0);
         for (auto si : store_list) {
-          // Check if the load aliases with a store
-          auto store_dest = si->getOperand(1);
-
-          auto alias = aa.alias(llvm::AliasAnalysis::Location(load_src, 1),
-               llvm::AliasAnalysis::Location(store_dest, 1));
-
-          num_checked++;
-          if (alias == llvm::AliasAnalysis::MayAlias) {
+          auto alias = aa.loadStoreAlias(cast<llvm::LoadInst>(li),
+              cast<llvm::StoreInst>(si));
+          if (alias) {
             num_may_alias++;
-          }
-
-          if (alias == llvm::AliasAnalysis::MustAlias) {
-            num_must_alias++;
-          }
-
-          if (alias == llvm::AliasAnalysis::NoAlias) {
+          } else {
             num_no_alias++;
           }
+
+          num_checked++;
         }
       }
     } else {
-      llvm::dbgs() << "AliasTest: Counting Aliases\n";
-      // Now, iterate the list
-      // For each value to check
-      {
-        util::PerfTimerPrinter t(llvm::dbgs(), "Counting Aliases");
-        for (auto it = std::begin(value_list), en = std::end(value_list);
-            it != en; ++it) {
-          auto base_val = *it;
-          // Check against all values not yet checked (O(n^2))
-          for (auto it2 = it+1; it2 != en; ++it2) {
-            auto check_val = *it2;
-            auto alias = aa.alias(llvm::AliasAnalysis::Location(base_val, 1),
-                 llvm::AliasAnalysis::Location(check_val, 1));
+      auto &aa = getAnalysis<llvm::AliasAnalysis>();
+      if (only_load_store) {
+        for (auto li : load_list) {
+          auto load_src = li->getOperand(0);
+          for (auto si : store_list) {
+            // Check if the load aliases with a store
+            auto store_dest = si->getOperand(1);
+
+            auto alias = aa.alias(llvm::AliasAnalysis::Location(load_src, 1),
+                 llvm::AliasAnalysis::Location(store_dest, 1));
 
             num_checked++;
             if (alias == llvm::AliasAnalysis::MayAlias) {
@@ -149,11 +145,43 @@ class AliasTest : public llvm::ModulePass {
             }
           }
         }
+      } else {
+        llvm::dbgs() << "AliasTest: Counting Aliases\n";
+        // Now, iterate the list
+        // For each value to check
+        {
+          util::PerfTimerPrinter t(llvm::dbgs(), "Counting Aliases");
+          for (auto it = std::begin(value_list), en = std::end(value_list);
+              it != en; ++it) {
+            auto base_val = *it;
+            // Check against all values not yet checked (O(n^2))
+            for (auto it2 = it+1; it2 != en; ++it2) {
+              auto check_val = *it2;
+              auto alias = aa.alias(llvm::AliasAnalysis::Location(base_val, 1),
+                   llvm::AliasAnalysis::Location(check_val, 1));
+
+              num_checked++;
+              if (alias == llvm::AliasAnalysis::MayAlias) {
+                num_may_alias++;
+              }
+
+              if (alias == llvm::AliasAnalysis::MustAlias) {
+                num_must_alias++;
+              }
+
+              if (alias == llvm::AliasAnalysis::NoAlias) {
+                num_no_alias++;
+              }
+            }
+          }
+        }
       }
     }
 
     llvm::dbgs() << "AliasTest results:\n";
     llvm::dbgs() << "  Num values:     " << num_values << "\n";
+    llvm::dbgs() << "  Num stores:     " << store_list.size() << "\n";
+    llvm::dbgs() << "  Num loads:      " << load_list.size() << "\n";
     llvm::dbgs() << "  Num checks:     " << num_checked << "\n";
     llvm::dbgs() << "  Num must alias: " << num_must_alias << "\n";
     llvm::dbgs() << "  Num may  alias: " << num_may_alias << "\n";

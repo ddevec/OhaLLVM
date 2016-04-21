@@ -11,10 +11,12 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <mutex>
 #include <unordered_map>
 #include <set>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -170,14 +172,16 @@ class AddressValue {
   bool gep_ = false;
 };
 
+std::mutex inst_lock;
 std::map<AddrRange, AddressValue> addr_to_objid;
 std::unordered_map<int32_t, std::set<int32_t>> valid_to_objids;
-std::vector<std::vector<void *>> stack_allocs;
+
+thread_local std::vector<std::vector<void *>> stack_allocs;
 // Used to pop jmp_env's from the stack on pop
 // std::vector<std::vector<std::map<void *, std::pair<std::vector<std::vector<void *>>::iterator, std::vector<void *>::iterator>>::iterator>> stack_longjmps;  // NOLINT
- std::vector<std::vector<std::map<void *, std::pair<size_t, size_t>>::iterator>> stack_longjmps;  // NOLINT
+thread_local std::vector<std::vector<std::map<void *, std::pair<size_t, size_t>>::iterator>> stack_longjmps;  // NOLINT
 // Used to lookup the stack location jumped to
-std::map<void *, std::pair<size_t, size_t>> longjmps;  // NOLINT
+thread_local std::map<void *, std::pair<size_t, size_t>> longjmps;  // NOLINT
 
 
 // GEP support
@@ -228,32 +232,32 @@ void __DynPtsto_do_finish() {
 
 void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
     void *addr);
-void __DynPtsto_main_init2(int32_t obj_id, int32_t argv_dest_id,
+void __DynPtsto_main_init2(int32_t argv_id, int32_t arg_id,
     int32_t /*envp_id*/, int32_t /*env_id*/,
     int argc, char **argv) {
   int i = 0;
   for (i = 0; i < argc; i++) {
-    __DynPtsto_do_malloc(argv_dest_id, (strlen(argv[i])+1), argv[i]);
+    __DynPtsto_do_malloc(arg_id, (strlen(argv[i])+1), argv[i]);
   }
 
-  __DynPtsto_do_malloc(obj_id, (sizeof(*argv)*(argc+1)), argv);
+  __DynPtsto_do_malloc(argv_id, (sizeof(*argv)*(argc+1)), argv);
 }
 
-void __DynPtsto_main_init3(int32_t obj_id, int32_t argv_dest_id,
+void __DynPtsto_main_init3(int32_t argv_id, int32_t arg_id,
     int32_t envp_id, int32_t env_id,
     int argc, char **argv, char **envp) {
   // Init envp
   int i;
   for (i = 0; envp[i] != nullptr; i++) {
-    __DynPtsto_do_malloc(envp_id, (strlen(envp[i])+1), envp[i]);
+    __DynPtsto_do_malloc(env_id, (strlen(envp[i])+1), envp[i]);
   }
   // Also do for the nullptr
-  __DynPtsto_do_malloc(envp_id, (1), envp[i]);
+  __DynPtsto_do_malloc(env_id, (1), envp[i]);
 
-  __DynPtsto_do_malloc(env_id, (sizeof(*envp)*(i+1)), envp);
+  __DynPtsto_do_malloc(envp_id, (sizeof(*envp)*(i+1)), envp);
 
   // Do std init
-  __DynPtsto_main_init2(obj_id, argv_dest_id, envp_id, env_id, argc, argv);
+  __DynPtsto_main_init2(argv_id, arg_id, envp_id, env_id, argc, argv);
 }
 
 void __DynPtsto_do_call() {
@@ -265,6 +269,7 @@ void __DynPtsto_do_call() {
 void __DynPtsto_do_gep(int32_t offs, void *base_addr,
     void *res_addr, int64_t size, int32_t /*gep_id*/) {
   static uint64_t gep_count = 0;
+  std::unique_lock<std::mutex> lk(inst_lock);
 
   gep_count++;
 
@@ -453,6 +458,7 @@ void __DynPtsto_do_alloca(int32_t obj_id, int64_t size,
   }
   */
 
+  std::unique_lock<std::mutex> lk(inst_lock);
   // Add ptstos to ptsto map
   auto ret =
     addr_to_objid.emplace(AddrRange(addr, size),
@@ -500,12 +506,15 @@ static bool do_free_addr(void *addr) {
 void __DynPtsto_do_ret() {
   // Remove all ptstos on stack from map
   const std::vector<void *> &cur_frame = stack_allocs.back();
-  for (auto addr : cur_frame) {
-    bool rc = do_free_addr(addr);
-    if (rc) {
-      // Do ret failed?
-      std::cerr << "Do ret failed to erase address: " << addr << std::endl;
-      assert(0 && "do_ret failed");
+  {
+    std::unique_lock<std::mutex> lk(inst_lock);
+    for (auto addr : cur_frame) {
+      bool rc = do_free_addr(addr);
+      if (rc) {
+        // Do ret failed?
+        std::cerr << "Do ret failed to erase address: " << addr << std::endl;
+        assert(0 && "do_ret failed");
+      }
     }
   }
   // Pop ptsto frame from stack
@@ -540,6 +549,7 @@ void __DynPtsto_do_longjmp(int32_t id, void *addr) {
 
   // Now, free the later frames from the vector
   // while (std::next(jump_pr.first) != std::end(stack_allocs))
+  std::unique_lock<std::mutex> lk(inst_lock);
   for (size_t i = stack_allocs.size()-1; i > jump_pr.first; --i) {
     const std::vector<void *> &cur_frame = stack_allocs[i];
     for (auto addr : cur_frame) {
@@ -616,6 +626,7 @@ void __DynPtsto_do_malloc(int32_t obj_id, int64_t size,
   }
   */
 
+  std::unique_lock<std::mutex> lk(inst_lock);
   auto ret = addr_to_objid.emplace(cur_range,
       AddressValue());
   // std::cout << "  do_malloc range: " << cur_range << std::endl;
@@ -670,6 +681,7 @@ void __DynPtsto_do_free(void *addr) {
   // std::cout << "freeing: " << addr << std::endl;
   // We shouldn't have double allocated anything except globals, which are never
   //   freed
+  std::unique_lock<std::mutex> lk(inst_lock);
   do_free_addr(addr);
 }
 
@@ -680,6 +692,7 @@ void __DynPtsto_do_visit(int32_t val_id, void *addr) {
   }
   */
   // Record that this val_id pts to this addr
+  std::unique_lock<std::mutex> lk(inst_lock);
   auto it = addr_to_objid.find(AddrRange(addr));
   if (it != std::end(addr_to_objid)) {
     for (int32_t obj_id : it->second) {

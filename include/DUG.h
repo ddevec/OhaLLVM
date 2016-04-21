@@ -68,15 +68,6 @@ class DUGNode : public SEG::Node {
     int32_t offset() const {
       return offset_;
     }
-
-    void setStrong() {
-      strong_ = true;
-    }
-
-    bool strong() const {
-      return strong_;
-    }
-
     //}}}
 
  protected:
@@ -84,7 +75,6 @@ class DUGNode : public SEG::Node {
     ObjectMap::ObjID dest_;
     ObjectMap::ObjID src_;
     int32_t offset_;
-    bool strong_ = false;
 
     // Our output ptsto can only be a subset of this set
     std::unique_ptr<Bitmap> dynConstraints_ = nullptr;
@@ -158,14 +148,12 @@ class DUG {
       // The node has:  src, dest, type
       // Here we will also have to keep track of which cg::NodeID maps to which
       //   DUG::NodeID so we can transfer the ObjectMap mappings afterwards
-      std::map<ObjID, bool> strongCons;
-
       // O(n*log(n)) ?
       int32_t consid = 0;
       {
         util::PerfTimerPrinter fill_timer(dbg, "fill loop");
         std::for_each(std::begin(cg), std::end(cg),
-            [this, &consid, &omap, &strongCons]
+            [this, &consid, &omap]
             (const ConstraintGraph::iter_type &pcons) {
           // Ignore nullptrs, they've been deleted
           if (pcons == nullptr) {
@@ -205,20 +193,9 @@ class DUG {
               {
                 dout("  node is AddressOf\n");
                 // Add AllocNode
-                bool strong = cons.strong();
                 // O(log(n))
-                node_id = DUG_.addNode<AllocNode>(dest, src, offs, strong);
+                node_id = DUG_.addNode<AllocNode>(dest, src, offs);
                 dout("  DUGid is " << node_id << "\n");
-
-                // FIXME: Should store strong information in ptsset for top lvl
-                //    variables...
-                // O(log(n))
-                auto it = strongCons.find(dest);
-                if (it == std::end(strongCons)) {
-                  strongCons.emplace(dest, strong);
-                } else {
-                  it->second &= strong;
-                }
               }
               break;
             case ConstraintType::Store:
@@ -236,8 +213,6 @@ class DUG {
                 node_id = DUG_.addNode<StoreNode>(st_id, dest, src, offs);
                 dout("  DUGid is " << node_id << "\n");
                 // logout("n " << ret << "\n");
-                assert(strongCons.find(st_id) == std::end(strongCons));
-                strongCons.emplace(st_id, cons.strong());
                 // logout("t " << 1 << "\n");
               }
               break;
@@ -250,7 +225,6 @@ class DUG {
                 node_id = DUG_.addNode<LoadNode>(ld_id, dest, src, offs);
                 // logout("n " << ret << "\n");
                 dout("  DUGid is " << node_id << "\n");
-                strongCons.emplace(ld_id, cons.strong());
                 // logout("t " << 2 << "\n");
               }
               break;
@@ -261,7 +235,6 @@ class DUG {
                   DUG_.addNode<CopyNode>(cons.rep(), dest, src, offs);
                 // logout("n " << ret << "\n");
                 dout("  DUGid is " << node_id << "\n");
-                strongCons.emplace(dest, cons.strong());
                 // logout("t " << 4 << "\n");
               }
               break;
@@ -276,22 +249,6 @@ class DUG {
           // logout("s " << src << "\n");
           // logout("d " << dest << "\n");
           consid++;
-        });
-      }
-
-      // Update strength for each store node
-      // O(n*log(n))
-      {
-        util::PerfTimerPrinter strong_timer(dbg, "strong loop");
-        std::for_each(std::begin(DUG_), std::end(DUG_),
-            [this, &strongCons] (SEG::node_iter_type &upnode) {
-          auto pnode = upnode.get();
-
-          if (auto pst = dyn_cast<DUG::StoreNode>(pnode)) {
-            if (strongCons[pst->src()]) {
-              pst->setStrong();
-            }
-          }
         });
       }
 
@@ -412,6 +369,7 @@ class DUG {
         DUG_.cleanEdges();
       }
       */
+      strong_ = std::vector<bool>(omap.strong_begin(), omap.strong_end());
     }
     //}}}
 
@@ -505,6 +463,10 @@ class DUG {
 
     const DUGNode &getNode(DUGid id) const {
       return DUG_.getNode<DUGNode>(id);
+    }
+
+    bool strong(ObjectMap::ObjID oid) const {
+      return strong_[oid.val()];
     }
     //}}}
 
@@ -639,11 +601,8 @@ class DUG {
       //{{{
      public:
         AllocNode(SEG::NodeID node_id, ObjectMap::ObjID dest,
-              ObjectMap::ObjID src, int32_t offset, bool strong) :
-            DUGNode(NodeKind::AllocNode, node_id, dest, src, offset) {
-          // FIXME: Hacky
-          strong_ = strong;
-        }
+              ObjectMap::ObjID src, int32_t offset) :
+            DUGNode(NodeKind::AllocNode, node_id, dest, src, offset) { }
 
         // NOTE: Process implemented in "Solve.cpp"
         void process(DUG &dug, TopLevelPtsto &pts, Worklist<DUGNode> &wl,
@@ -958,8 +917,6 @@ class DUG {
         PtstoGraph out_;
 
         ObjectMap::ObjID realDest_;
-
-        bool strong_ = false;
       //}}}
     };
 
@@ -988,6 +945,8 @@ class DUG {
     std::vector<PartID> revPartitionMap_;
     // std::map<ObjID, std::vector<DUGid>> partNodes_;
     std::vector<std::vector<DUGid>> partNodes_;
+
+    std::vector<bool> strong_;
 
     std::map<ObjID, SEG::NodeID> nodeMap_;
 

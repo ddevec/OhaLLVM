@@ -1035,6 +1035,7 @@ static llvm::RegisterPass<InstrDynAlias> X("insert-alias-profiling",
 
 // The dynamic ptsto pass loader {{{
 void DynAliasLoader::getAnalysisUsage(llvm::AnalysisUsage &au) const {
+  au.addRequired<llvm::AliasAnalysis>();
   au.addRequired<ConstraintPass>();
   au.addRequired<UnusedFunctions>();
   au.setPreservesAll();
@@ -1088,29 +1089,22 @@ bool DynAliasLoader::runOnModule(llvm::Module &) {
 
       int32_t obj_int_val;
       converter >> obj_int_val;
-      bool do_del = false;
       while (!converter.fail()) {
         auto obj_id = ObjectMap::ObjID(obj_int_val);
+
+        // If we have a universal value, we don't maintain dyn ptsto constraints
+        //   for this variable
+        if (obj_id == ObjectMap::UniversalValue) {
+          obj_id = ObjectMap::ObjID::invalid();
+        }
 
         // Don't add a ptsto for null value
         if (obj_id != ObjectMap::NullValue) {
           obj_set.insert(obj_id);
         }
 
-        // If we have a universal value, we don't maintain dyn ptsto constraints
-        //   for this variable
-        if (obj_id == ObjectMap::UniversalValue) {
-          do_del = true;
-          break;
-        }
 
         converter >> obj_int_val;
-      }
-
-      // If we have a universal value, we don't maintain dyn ptsto constraints
-      //   for this variable
-      if (do_del) {
-        valToObjs_.erase(call_id);
       }
     }
 

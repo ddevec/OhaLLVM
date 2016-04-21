@@ -1055,7 +1055,21 @@ class TopLevelPtsto {
     }
 
     PtstoSet &at(ObjID id) {
-      return at(id, 0);
+      int32_t offset = 0;
+      auto &vec = atVec(id);
+
+      assert(offset >= 0);
+      if (vec.size() < (uint32_t)offset+1) {
+        auto it = dynConstraints_.find(id);
+        if (it == std::end(dynConstraints_)) {
+          vec.resize(offset+1);
+        } else {
+          PtstoSet base_pts(it->second);
+          vec.resize(offset+1, PtstoSet(base_pts));
+        }
+      }
+
+      return vec[offset];
     }
 
     std::vector<PtstoSet> &atVec(ObjID id) {

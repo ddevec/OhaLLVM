@@ -350,7 +350,7 @@ class ObjectMap {
 
   // Top level variable/node
   ObjID addValueFunction(const llvm::Value *val) {
-    auto id = __do_add(val, valToID_, idToVal_, nullptr);
+    auto id = __do_add(val, valToID_, idToVal_, nullptr, false);
     functions_.push_back(std::make_pair(id, val));
     functionSet_.insert(id);
     return id;
@@ -361,10 +361,10 @@ class ObjectMap {
   }
 
   void addValue(const llvm::Value *val) {
-    __do_add(val, valToID_, idToVal_, nullptr);
+    __do_add(val, valToID_, idToVal_, nullptr, false);
   }
 
-  void addObjects(const llvm::Type *type, const llvm::Value *val) {
+  void addObjects(const llvm::Type *type, const llvm::Value *val, bool strong) {
     if (auto st = dyn_cast<llvm::StructType>(type)) {
       auto &struct_info = getStructInfo(st);
 
@@ -374,23 +374,23 @@ class ObjectMap {
       numObjs_++;
     }
 
-    __do_add_struct(type, val, objToID_, idToObj_, nullptr, &objSet_);
+    __do_add_struct(type, val, objToID_, idToObj_, nullptr, &objSet_, strong);
   }
 
   // Allocation site
-  void addObject(const llvm::Value *val) {
+  void addObject(const llvm::Value *val, bool strong) {
     numObjs_++;
-    __do_add(val, objToID_, idToObj_, &objSet_);
+    __do_add(val, objToID_, idToObj_, &objSet_, strong);
   }
 
   // Function return
   void addReturn(const llvm::Value *val) {
-    __do_add(val, retToID_, idToRet_, nullptr);
+    __do_add(val, retToID_, idToRet_, nullptr, false);
   }
 
   // Varadic Argument
   void addVarArg(const llvm::Value *val) {
-    __do_add(val, vargToID_, idToVararg_, nullptr);
+    __do_add(val, vargToID_, idToVararg_, nullptr, false);
   }
 
 
@@ -526,6 +526,10 @@ class ObjectMap {
   const llvm::Value *valueAtRep(ObjID id) const {
     auto rep = reps_.find(id);
     return mapping_.at(rep.val());
+  }
+
+  bool strong(ObjID id) const {
+    return strong_.at(id.val());
   }
 
   const llvm::Value *valueAtID(ObjID id) const {
@@ -825,6 +829,19 @@ class ObjectMap {
   typedef std::vector<std::pair<ObjID, const llvm::Value *>>::const_iterator
     const_function_iterator;
 
+  typedef std::vector<bool>::iterator
+    strong_iterator;
+  typedef std::vector<bool>::const_iterator
+    const_strong_iterator;
+
+  const_strong_iterator strong_begin() const {
+    return std::begin(strong_);
+  }
+
+  const_strong_iterator strong_end() const {
+    return std::end(strong_);
+  }
+
   function_iterator functions_begin() {
     return std::begin(functions_);
   }
@@ -978,6 +995,7 @@ class ObjectMap {
   // Private variables {{{
   // Forward mapping
   std::vector<const llvm::Value *> mapping_;
+  std::vector<bool> strong_;
   std::vector<std::pair<ObjID, const llvm::Value *>> functions_;
   std::set<ObjID> functionSet_;
 
@@ -1129,12 +1147,20 @@ class ObjectMap {
       functionSet_ = std::move(new_fcn_set);
     }
 
+    // Update the strong mappings:
+    std::vector<bool> new_strong(strong_.size());
+    for (ObjID i(0); i < ObjID(mapping_.size()); ++i) {
+      new_strong[remap[i].val()] = mapping_[i.val()];
+    }
+    strong_ = std::move(new_strong);
+
     // Finally redo the mappings
     std::vector<const llvm::Value *> new_mappings(mapping_.size());
     for (ObjID i(0); i < ObjID(mapping_.size()); ++i) {
       new_mappings[remap[i].val()] = mapping_[i.val()];
     }
     mapping_ = std::move(new_mappings);
+
 
     // Remap the reps...
     reps_.remap(remap);
@@ -1152,6 +1178,7 @@ class ObjectMap {
   ObjID createMapping(const llvm::Value *val, ObjID id) {
     ObjID ret = id;
     mapping_.emplace_back(val);
+    strong_.emplace_back(false);
     if_debug_enabled(auto rep_id =)
       reps_.add();
     assert(rep_id == ret);
@@ -1174,11 +1201,12 @@ class ObjectMap {
       const llvm::Value *val,
       std::unordered_map<const llvm::Value *, ObjID> &mp,
       idToValMap &pm, const std::vector<ObjID> *alias,
-      util::SparseBitmap<ObjID> *set) {
+      util::SparseBitmap<ObjID> *set, bool strong) {
     ObjID ret_id;
 
     // Strip away array references:
     while (auto at = dyn_cast<llvm::ArrayType>(type)) {
+      strong = false;
       type = at->getElementType();
     }
 
@@ -1191,13 +1219,12 @@ class ObjectMap {
       int cur_size = 0;
       // llvm::dbgs() << "Got StructInfo: " << struct_info << "\n";
       bool first = true;
-      std::for_each(struct_info.sizes_begin(), struct_info.sizes_end(),
-          [this, &ret_id, &alias, &pm, &mp, &first, &val, &num_sizes,
-            &cur_size, &set]
-          (int32_t) {
+      for (auto it = struct_info.sizes_begin(), en = struct_info.sizes_end();
+          it != en; ++it) {
         // This is logically reserving an ObjID for this index within the
         //   struct
         ObjID id = createMapping(val);
+        strong_[id.val()] = strong & struct_info.fieldStrong(cur_size);
 
         if (first) {
           ret_id = id;
@@ -1232,7 +1259,7 @@ class ObjectMap {
             aliasToObjs_[id] = obj_id;
           }
         }
-      });
+      }
 
       assert(ret_id != ObjID::invalid());
     // Not a struct
@@ -1260,12 +1287,14 @@ class ObjectMap {
 
   ObjID __do_add(const llvm::Value *val,
       std::unordered_map<const llvm::Value *, ObjID> &mp,
-      idToValMap &pm, util::SparseBitmap<ObjID> *set) {
+      idToValMap &pm, util::SparseBitmap<ObjID> *set,
+      bool strong) {
     ObjID id;
 
     assert(mp.find(val) == std::end(mp));
 
     id = createMapping(val);
+    strong_[id.val()] = strong;
 
     mp.emplace(val, id);
     pm.emplace(id, val);

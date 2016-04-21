@@ -127,9 +127,11 @@ SpecSFS::addDynPtstoInfo(llvm::Module &m, DUG &,
                 if (auto ci = dyn_cast<llvm::CallInst>(&instr)) {
                   auto fcn = LLVMHelper::getFcnFromCall(ci);
 
-                  auto &info = ext_info.getInfo(fcn->getName());
-                  if (fcn != nullptr && info.canAlloc()) {
-                    continue;
+                  if (fcn != nullptr) {
+                    auto &info = ext_info.getInfo(fcn->getName());
+                    if (info.canAlloc()) {
+                      continue;
+                    }
                   }
                 }
 

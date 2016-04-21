@@ -153,14 +153,6 @@ class Constraint {
       return offs_;
     }
 
-    bool strong() const {
-      return strong_;
-    }
-
-    void setStrong(bool strong) {
-      strong_ = strong;
-    }
-
     bool operator<(const Constraint &cons_rhs) const {
       if (type() != cons_rhs.type()) {
         return type() < cons_rhs.type();
@@ -238,8 +230,6 @@ class Constraint {
     ObjID src_;
     ObjID dest_;
     ObjID rep_;
-
-    bool strong_ = false;
 
     ConstraintType type_;
 

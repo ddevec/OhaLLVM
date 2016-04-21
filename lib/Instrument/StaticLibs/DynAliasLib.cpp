@@ -11,8 +11,10 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
-#include <memory>
 #include <map>
+#include <memory>
+#include <mutex>
+#include <thread>
 #include <unordered_map>
 #include <set>
 #include <sstream>
@@ -191,17 +193,19 @@ class AddressMap {
   //}}}
 };
 
+std::mutex inst_lock;
+
 static AddressMap<int32_t> map;
 
 std::unordered_map<int32_t, std::set<int32_t>> load_to_store_alias;
 
-std::vector<std::vector<void *>> stack_allocs;
-// Used to pop jmp_env's from the stack on pop
-std::vector<std::vector<std::map<void *, std::pair<size_t, size_t>>::iterator>> stack_longjmps;  // NOLINT
-// Used to lookup the stack location jumped to
-std::map<void *, std::pair<size_t, size_t>> longjmps;  // NOLINT
-
 std::unordered_map<void *, size_t> allocs;
+
+thread_local std::vector<std::vector<void *>> stack_allocs;
+// Used to pop jmp_env's from the stack on pop
+thread_local std::vector<std::vector<std::map<void *, std::pair<size_t, size_t>>::iterator>> stack_longjmps;  // NOLINT
+// Used to lookup the stack location jumped to
+thread_local std::map<void *, std::pair<size_t, size_t>> longjmps;  // NOLINT
 
 
 extern "C" {
@@ -248,32 +252,32 @@ void __DynAlias_do_finish() {
 
 void __DynAlias_do_malloc(int32_t obj_id, int64_t size,
     void *addr);
-void __DynAlias_main_init2(int32_t obj_id, int32_t argv_dest_id,
+void __DynAlias_main_init2(int32_t argv_id, int32_t arg_id,
     int32_t /*envp_id*/, int32_t /*env_id*/,
     int argc, char **argv) {
   int i = 0;
   for (i = 0; i < argc; i++) {
-    __DynAlias_do_malloc(argv_dest_id, (strlen(argv[i])+1), argv[i]);
+    __DynAlias_do_malloc(arg_id, (strlen(argv[i])+1), argv[i]);
   }
 
-  __DynAlias_do_malloc(obj_id, (sizeof(*argv)*(argc+1)), argv);
+  __DynAlias_do_malloc(argv_id, (sizeof(*argv)*(argc+1)), argv);
 }
 
-void __DynAlias_main_init3(int32_t obj_id, int32_t argv_dest_id,
+void __DynAlias_main_init3(int32_t argv_id, int32_t arg_id,
     int32_t envp_id, int32_t env_id,
     int argc, char **argv, char **envp) {
   // Init envp
   int i;
   for (i = 0; envp[i] != nullptr; i++) {
-    __DynAlias_do_malloc(envp_id, (strlen(envp[i])+1), envp[i]);
+    __DynAlias_do_malloc(env_id, (strlen(envp[i])+1), envp[i]);
   }
   // Also do for the nullptr
-  __DynAlias_do_malloc(envp_id, (1), envp[i]);
+  __DynAlias_do_malloc(env_id, (1), envp[i]);
 
-  __DynAlias_do_malloc(env_id, (sizeof(*envp)*(i+1)), envp);
+  __DynAlias_do_malloc(envp_id, (sizeof(*envp)*(i+1)), envp);
 
   // Do std init
-  __DynAlias_main_init2(obj_id, argv_dest_id, envp_id, env_id, argc, argv);
+  __DynAlias_main_init2(argv_id, arg_id, envp_id, env_id, argc, argv);
 }
 
 void __DynAlias_do_call() {
@@ -289,11 +293,21 @@ void __DynAlias_do_alloca(int32_t, int64_t size,
     return;
   }
 
+  if (addr == nullptr) {
+    return;
+  }
+
   // Handle alloca
   // Add addresses to stack frame
   // std::cout << "stacking: (" << obj_id << ") " << addr << std::endl;
   stack_allocs.back().push_back(addr);
 
+  std::unique_lock<std::mutex> lk(inst_lock);
+  /*
+  std::cerr << "alloca addr: " << addr << ", " <<
+    reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(addr) + size)
+    << "\n";
+  */
   allocs.emplace(addr, size);
 
   /*
@@ -312,9 +326,11 @@ void __DynAlias_do_alloca(int32_t, int64_t size,
 static bool do_free_addr(void *addr) {
   bool ret = false;
 
+  // std::cerr << "Finding addr: " << addr << "\n";
   auto it = allocs.find(addr);
 
   assert(it != std::end(allocs));
+
 
   map.set(AddressMap<int32_t>::InvalidValue, addr, it->second);
 
@@ -342,6 +358,7 @@ static bool do_free_addr(void *addr) {
 void __DynAlias_do_ret() {
   // Remove all ptstos on stack from map
   const std::vector<void *> &cur_frame = stack_allocs.back();
+  std::unique_lock<std::mutex> lk(inst_lock);
   for (auto addr : cur_frame) {
     bool rc = do_free_addr(addr);
     if (rc) {
@@ -380,6 +397,7 @@ void __DynAlias_do_longjmp(int32_t id, void *addr) {
   // Look up our jump in the map...
   auto jump_pr = longjmps.at(addr);
 
+  std::unique_lock<std::mutex> lk(inst_lock);
   // Now, free the later frames from the vector
   // while (std::next(jump_pr.first) != std::end(stack_allocs))
   for (size_t i = stack_allocs.size()-1; i > jump_pr.first; --i) {
@@ -498,6 +516,12 @@ void __DynAlias_do_malloc(int32_t, int64_t size,
   */
   // base_locs.emplace(addr, ret.first->first.addr());
 
+  std::unique_lock<std::mutex> lk(inst_lock);
+  /*
+  std::cerr << "malloc addr: " << addr << ", " <<
+    reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(addr) + size)
+    << "\n";
+  */
   allocs.emplace(addr, size);
   /*
   ret.first->second.addId(obj_id);
@@ -506,19 +530,25 @@ void __DynAlias_do_malloc(int32_t, int64_t size,
 }
 
 void __DynAlias_do_load(int32_t load_id, void *addr, size_t) {
+  std::unique_lock<std::mutex> lk(inst_lock);
   load_to_store_alias[load_id].insert(map.get(addr));
 }
 
 void __DynAlias_do_store(int32_t store_id, void *addr, size_t size) {
   // Convert from bits to bytes
+  std::unique_lock<std::mutex> lk(inst_lock);
   map.set(store_id, addr, size);
 }
 
 void __DynAlias_do_free(void *addr) {
+  if (addr == nullptr) {
+    return;
+  }
   // Remove ptsto from map
   // std::cout << "freeing: " << addr << std::endl;
   // We shouldn't have double allocated anything except globals, which are never
   //   freed
+  std::unique_lock<std::mutex> lk(inst_lock);
   do_free_addr(addr);
 }
 
