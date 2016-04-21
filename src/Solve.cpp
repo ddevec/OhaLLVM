@@ -116,7 +116,8 @@ void DUG::AllocNode::process(DUG &dug, TopLevelPtsto &pts_top,
     Worklist<DUGNode> &work, const std::vector<uint32_t> &priority) {
   dout("Process alloc start\n");
   // Update the top level variables for this alloc
-  PtstoSet &dest_pts = pts_top.at(dest(), offset());
+  PtstoSet &dest_pts = pts_top.at(dest());
+  assert(offset() == 0);
 
   logout("n " << id() << "\n");
   logout("t " << 0 << "\n");
@@ -654,7 +655,7 @@ void DUG::ConstNode::process(DUG &dug, TopLevelPtsto &pts_top,
 
     dout("Process const start\n");
     // Update the top level variables for this alloc
-    PtstoSet &dest_pts = pts_top.at(dest(), offset());
+    PtstoSet &dest_pts = pts_top.at(dest());
 
     logout("n " << id() << "\n");
     logout("t " << 6 << "\n");
@@ -695,7 +696,7 @@ void DUG::ConstPartNode::process(DUG &dug, TopLevelPtsto &pts_top,
 
     dout("Process const start\n");
     // Update the top level variables for this alloc
-    PtstoSet &dest_pts = pts_top.at(dest(), offset());
+    PtstoSet &dest_pts = pts_top.at(dest());
 
     logout("n " << id() << "\n");
     logout("t " << 6 << "\n");

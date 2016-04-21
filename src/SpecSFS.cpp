@@ -275,22 +275,15 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     llvm::dbgs() << "Printing ptsto for global variable: " << glbl_name << "\n";
     auto glbl = m.getNamedValue(glbl_name);
     auto val_id = omap.getValue(glbl);
-    auto &pts_set_vec = pts_top_.atVec(val_id);
+    auto &pts_set = pts_top_.at(val_id);
 
 
     llvm::dbgs() << "pts_top[" << val_id << "]: " << ValPrint(val_id) <<
       "\n";
 
-    for (uint32_t i = 0; i < pts_set_vec.size(); i++) {
-      llvm::dbgs() << "  Offset: " << i << "\n";
-
-      auto &ptsto = pts_set_vec[i];
-
-      std::for_each(ptsto.cbegin(), ptsto.cend(),
-          [&omap] (const ObjectMap::ObjID obj_id) {
-        llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
-            << "\n";
-      });
+    for (auto obj_id : pts_set) {
+      llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
+          << "\n";
     }
     //}}}
   }
@@ -301,22 +294,15 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
     ObjectMap::ObjID id(pid);
     auto rep_id = omap.getRep(id);
 
-    auto &pts_set_vec = pts_top_.atVec(rep_id);
+    auto &pts_set = pts_top_.at(rep_id);
 
 
     llvm::dbgs() << "pts_top[" << rep_id << "]: " << ValPrint(rep_id) <<
       "\n";
 
-    for (uint32_t i = 0; i < pts_set_vec.size(); i++) {
-      llvm::dbgs() << "  Offset: " << i << "\n";
-
-      auto &ptsto = pts_set_vec[i];
-
-      std::for_each(ptsto.cbegin(), ptsto.cend(),
-          [&omap] (const ObjectMap::ObjID obj_id) {
-        llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
-            << "\n";
-      });
+    for (auto obj_id : pts_set) {
+      llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
+          << "\n";
     }
     //}}}
   }
@@ -331,26 +317,14 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
         [this, &omap] (const llvm::Argument &arg) {
       if (llvm::isa<llvm::PointerType>(arg.getType())) {
         auto val_id = omap.getValueRep(&arg);
-        auto &pts_set_vec = pts_top_.atVec(val_id);
+        auto &pts_set = pts_top_.at(val_id);
 
         llvm::dbgs() << "pts_top[" << val_id << "]: " << ValPrint(val_id) <<
           "\n";
 
-        for (uint32_t i = 0; i < pts_set_vec.size(); i++) {
-          llvm::dbgs() << "  Offset: " << i << "\n";
+        auto &ptsto = pts_set;
 
-          auto &ptsto = pts_set_vec[i];
-
-          llvm::dbgs() << "  " << ptsto << "\n";
-
-          /*
-          std::for_each(ptsto.cbegin(), ptsto.cend(),
-              [&omap] (const ObjectMap::ObjID obj_id) {
-            llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
-                << "\n";
-          });
-          */
-        }
+        llvm::dbgs() << "  " << ptsto << "\n";
       }
     });
 
@@ -359,26 +333,14 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
         [this, &omap] (llvm::Instruction &inst) {
       if (llvm::isa<llvm::PointerType>(inst.getType())) {
         auto val_id = omap.getValueRep(&inst);
-        auto &pts_set_vec = pts_top_.atVec(val_id);
+        auto &pts_set = pts_top_.at(val_id);
 
         llvm::dbgs() << "pts_top[" << val_id << "]: " << inst <<
           "\n";
 
-        for (uint32_t i = 0; i < pts_set_vec.size(); i++) {
-          llvm::dbgs() << "  Offset: " << i << "\n";
+        auto &ptsto = pts_set;
 
-          auto &ptsto = pts_set_vec[i];
-
-          llvm::dbgs() << "  " << ptsto << "\n";
-
-          /*
-          std::for_each(ptsto.cbegin(), ptsto.cend(),
-              [&omap] (const ObjectMap::ObjID obj_id) {
-            llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
-                << "\n";
-          });
-          */
-        }
+        llvm::dbgs() << "  " << ptsto << "\n";
       }
     });
     //}}}
@@ -558,28 +520,24 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
         llvm::dbgs() << "(" << pr.id() << ") is: " << *top_val << "\n";
       }
 
-      for (uint32_t i = 0; i < pr.pts().size(); i++) {
-        llvm::dbgs() << "  Offset: " << i << "\n";
+      // Statistics
+      auto &ptsto = pr.pts();
 
-        // Statistics
-        auto &ptsto = pr.pts()[i];
+      // Printing
+      std::for_each(ptsto.cbegin(), ptsto.cend(),
+          [&omap] (const ObjectMap::ObjID obj_id) {
+        auto loc_val = omap.valueAtID(obj_id);
 
-        // Printing
-        std::for_each(ptsto.cbegin(), ptsto.cend(),
-            [&omap] (const ObjectMap::ObjID obj_id) {
-          auto loc_val = omap.valueAtID(obj_id);
-
-          if (loc_val == nullptr) {
-            llvm::dbgs() << "    Value is (id): " << obj_id << "\n";
-          } else if (auto gv = dyn_cast<llvm::GlobalValue>(loc_val)) {
-            llvm::dbgs() << "    " << obj_id << ": " << gv->getName() << "\n";
-          } else if (auto fcn = dyn_cast<llvm::Function>(loc_val)) {
-            llvm::dbgs() << "    " << obj_id << ": " << fcn->getName() << "\n";
-          } else {
-            llvm::dbgs() << "    " << obj_id << ": " << *loc_val << "\n";
-          }
-        });
-      }
+        if (loc_val == nullptr) {
+          llvm::dbgs() << "    Value is (id): " << obj_id << "\n";
+        } else if (auto gv = dyn_cast<llvm::GlobalValue>(loc_val)) {
+          llvm::dbgs() << "    " << obj_id << ": " << gv->getName() << "\n";
+        } else if (auto fcn = dyn_cast<llvm::Function>(loc_val)) {
+          llvm::dbgs() << "    " << obj_id << ": " << fcn->getName() << "\n";
+        } else {
+          llvm::dbgs() << "    " << obj_id << ": " << *loc_val << "\n";
+        }
+      });
     });
     //}}}
   }
@@ -779,15 +737,15 @@ llvm::AliasAnalysis::AliasResult SpecSFS::alias(const Location &L1,
     return NoAlias;
   }
 
-  if (pts1.front().singleton() && omap_.strong(*std::begin(pts1.front())) &&
-      pts2.front().singleton() && omap_.strong(*std::begin(pts2.front())) &&
-      *std::begin(pts1.front()) == *std::begin(pts2.front())) {
+  if (pts1.singleton() && omap_.strong(*std::begin(pts1)) &&
+      pts2.singleton() && omap_.strong(*std::begin(pts2)) &&
+      *std::begin(pts1) == *std::begin(pts2)) {
     return MustAlias;
   }
 
   // Check to see if the two pointers are known to not alias.  They don't alias
   // if their points-to sets do not intersect.
-  if (!pts1.front().intersectsIgnoring(pts2.front(),
+  if (!pts1.intersectsIgnoring(pts2,
         ObjectMap::NullValue)) {
     return NoAlias;
   }

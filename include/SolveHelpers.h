@@ -999,17 +999,17 @@ class TopLevelPtsto {
           return id() < rhs;
         }
 
-        std::vector<PtstoSet> &pts() {
+        PtstoSet &pts() {
           return pts_;
         }
 
-        const std::vector<PtstoSet> &pts() const {
+        const PtstoSet &pts() const {
           return pts_;
         }
 
      private:
         ObjID id_;
-        std::vector<PtstoSet> pts_;
+        PtstoSet pts_;
       //}}}
     };
 
@@ -1037,42 +1037,14 @@ class TopLevelPtsto {
     TopLevelPtsto &operator=(const TopLevelPtsto &) = delete;
     //}}}
 
-    PtstoSet &at(ObjID id, int32_t offset) {
-      auto &vec = atVec(id);
-
-      assert(offset >= 0);
-      if (vec.size() < (uint32_t)offset+1) {
-        auto it = dynConstraints_.find(id);
-        if (it == std::end(dynConstraints_)) {
-          vec.resize(offset+1);
-        } else {
-          PtstoSet base_pts(it->second);
-          vec.resize(offset+1, PtstoSet(base_pts));
-        }
-      }
-
-      return vec[offset];
+    const PtstoSet &at(ObjID id) const {
+      auto ret = std::lower_bound(std::begin(data_),
+          std::end(data_), id);
+      assert(ret != std::end(data_));
+      return ret->pts();
     }
 
     PtstoSet &at(ObjID id) {
-      int32_t offset = 0;
-      auto &vec = atVec(id);
-
-      assert(offset >= 0);
-      if (vec.size() < (uint32_t)offset+1) {
-        auto it = dynConstraints_.find(id);
-        if (it == std::end(dynConstraints_)) {
-          vec.resize(offset+1);
-        } else {
-          PtstoSet base_pts(it->second);
-          vec.resize(offset+1, PtstoSet(base_pts));
-        }
-      }
-
-      return vec[offset];
-    }
-
-    std::vector<PtstoSet> &atVec(ObjID id) {
       auto ret = std::lower_bound(std::begin(data_),
           std::end(data_), id);
       assert(ret != std::end(data_));
@@ -1082,7 +1054,7 @@ class TopLevelPtsto {
     void copy(ObjID src_id, ObjID dest_id) {
       auto it = find(dest_id);
       assert(it == std::end(data_));
-      it->pts() = atVec(src_id);
+      it->pts() = at(src_id);
     }
 
     // Bleh, this is slow
