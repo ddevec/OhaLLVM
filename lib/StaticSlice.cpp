@@ -1191,13 +1191,13 @@ class StaticSlice : public llvm::ModulePass {
               } else {
                 auto ret_it = ret_to_fcn.find(fcn);
                 if (ret_it != std::end(ret_to_fcn)) {
-                for (auto &rinst : ret_to_fcn.at(fcn)) {
-                  auto ret_inst = cast<llvm::ReturnInst>(rinst);
-                  auto new_stack = stackCache_.getChild(stack, ret_inst,
-                      fcnToNode_, fcnGraph_);
-                  ret.emplace_back(ret_inst, new_stack, omap_, stackCache_,
-                      callInfo_, fcnToNode_, fcnGraph_);
-                }
+                  for (auto &rinst : ret_to_fcn.at(fcn)) {
+                    auto ret_inst = cast<llvm::ReturnInst>(rinst);
+                    auto new_stack = stackCache_.getChild(stack, ret_inst,
+                        fcnToNode_, fcnGraph_);
+                    ret.emplace_back(ret_inst, new_stack, omap_, stackCache_,
+                        callInfo_, fcnToNode_, fcnGraph_);
+                  }
                 } else {
                   llvm::dbgs() << "WARNING: Couldn't find return inst for fcn: "
                     << cast<llvm::Function>(fcn)->getName() << "\n";
@@ -1258,6 +1258,9 @@ class StaticSlice : public llvm::ModulePass {
                   llvm::dbgs() << "FIXME: unsupported constexpr cast to int"
                     " then store\n";
                 }
+              } else {
+                llvm::dbgs() << "FIXME: unsupported load from non-ptr: " <<
+                  inst << "\n";
               }
             }
           }

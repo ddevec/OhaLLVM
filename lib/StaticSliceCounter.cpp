@@ -13,7 +13,9 @@
 #include "include/InstLabeler.h"
 #include "include/ObjectMap.h"
 #include "include/SpecSFS.h"
+#include "include/InstPrinter.h"
 #include "include/lib/UnusedFunctions.h"
+#include "include/lib/DynAlias.h"
 #include "include/lib/IndirFcnTarget.h"
 
 #include "llvm/Constants.h"
@@ -36,6 +38,11 @@ static llvm::cl::opt<std::string>
       llvm::cl::value_desc("string"),
       llvm::cl::desc("file containing static slice output numbers"));
 
+static llvm::cl::opt<std::string>
+  outfilename("slice-reconstruct-outfile", llvm::cl::init(""),
+      llvm::cl::value_desc("string"),
+      llvm::cl::desc("file containing reconstruction of static slice"));
+
 class StaticSliceCounter : public llvm::ModulePass {
  public:
   static char ID;
@@ -43,6 +50,7 @@ class StaticSliceCounter : public llvm::ModulePass {
 
   void getAnalysisUsage(llvm::AnalysisUsage &usage) const {
     usage.addRequired<UnusedFunctions>();
+    usage.addRequired<DynAliasLoader>();
     usage.addRequired<llvm::ProfileInfo>();
     usage.setPreservesAll();
   }
@@ -76,6 +84,19 @@ class StaticSliceCounter : public llvm::ModulePass {
 
     int i = 0;
     auto pr = InstReader::Read(in_file, lblr);
+
+    // std::map<const llvm::Function *, const llvm::Argument *> fcn_to_arg;
+    // std::set<const llvm::GlobalValue *> globals;
+    std::unique_ptr<llvm::raw_fd_ostream> poutfile = nullptr;
+    if (outfilename != "") {
+      std::string error;
+      poutfile =
+        std14::make_unique<llvm::raw_fd_ostream>(outfilename.c_str(), error);
+      if (!error.empty()) {
+        llvm::dbgs() << "Error opening file: " << error << "\n";
+      }
+    }
+
     while (pr.first != -1) {
       auto &insts = pr.second;
 
@@ -85,6 +106,13 @@ class StaticSliceCounter : public llvm::ModulePass {
       int64_t num_store_insts = 0;
       int64_t num_select_insts = 0;
       int64_t num_call_insts = 0;
+
+      std::map<const llvm::Function *,
+            std::set<const llvm::BasicBlock *>>
+        fcn_to_bb;
+      std::map<const llvm::BasicBlock *,
+            std::set<const llvm::Instruction *>>
+        bb_to_inst;
 
       // Okay, have the insts... now gather the bbs
       std::set<const llvm::BasicBlock *> bbs;
@@ -100,9 +128,23 @@ class StaticSliceCounter : public llvm::ModulePass {
         int64_t inc_amt = static_cast<int64_t>(pi.getExecutionCount(pbb) * 2);
         num_insts += inc_amt;
         num_bb_insts += inc_amt;
+        auto pr = fcn_to_bb.emplace(pbb->getParent(),
+            std::set<const llvm::BasicBlock *>());
+
+        auto it = pr.first;
+
+        it->second.emplace(pbb);
       }
 
       for (auto pinst : insts) {
+        // Add inst in bb to insts
+        auto pr = bb_to_inst.emplace(pinst->getParent(),
+            std::set<const llvm::Instruction *>());
+
+        auto it = pr.first;
+
+        it->second.emplace(pinst);
+
         if (llvm::isa<llvm::LoadInst>(pinst)) {
           int64_t inc_amt =
             static_cast<int64_t>(pi.getExecutionCount(pinst->getParent()));
@@ -137,9 +179,66 @@ class StaticSliceCounter : public llvm::ModulePass {
       llvm::dbgs() << "  num_select_insts: " << num_select_insts << "\n";
       */
 
+      if (poutfile != nullptr) {
+        auto &outfile = *poutfile;
+
+        auto &dyn_alias = getAnalysis<DynAliasLoader>();
+
+        outfile << "-----------------------------------------------------\n";
+        outfile << "Slice : " << i << "\n";
+        outfile << "-----------------------------------------------------\n";
+
+        for (auto &fcn_pr : fcn_to_bb) {
+          auto pfcn = fcn_pr.first;
+          auto &bb_set = fcn_pr.second;
+
+          outfile << "\n" << pfcn->getName() << "\n";
+          for (auto &bb : *pfcn) {
+            auto pbb = &bb;
+            // Don't print bbs not in our set
+            if (bb_set.find(&bb) == std::end(bb_set)) {
+              continue;
+            }
+
+            outfile << "  " << bb.getName() << ":\n";
+
+            auto bb_map_it = bb_to_inst.find(pbb);
+            auto &inst_set = bb_map_it->second;
+            for (auto &inst : bb) {
+              auto pinst = &inst;
+
+              if (inst_set.find(pinst) == std::end(inst_set)) {
+                continue;
+              }
+
+
+              outfile << "  " << InstPrinter(pinst) << "\n";
+
+              if (auto li = dyn_cast<llvm::LoadInst>(pinst)) {
+                outfile << "      Load Aliases with: " << "\n";
+                // Get all aliases from our dyn alias analysis
+                auto aliases = dyn_alias.getAliases(li);
+                if (aliases.size() == 1 && aliases[0] == nullptr) {
+                  outfile << "        Unknown alias set!\n";
+                } else {
+                  for (auto palias : aliases) {
+                    auto si = cast<llvm::StoreInst>(palias);
+                    outfile << "      " << FullInstPrinter(si) << "\n";
+                  }
+                }
+              }
+            }
+
+            outfile << "\n";
+          }
+        }
+      }
+
+
       pr = InstReader::Read(in_file, lblr);
       i++;
     }
+
 
     return false;
   }

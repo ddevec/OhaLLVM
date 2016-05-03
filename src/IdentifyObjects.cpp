@@ -162,6 +162,7 @@ ObjectMap::ObjID getConstValue(ConstraintGraph &cg, ObjectMap &omap,
 ObjectMap::ObjID getValue(ConstraintGraph &cg, ObjectMap &omap,
     const llvm::Value *val) {
   if (auto c = dyn_cast<const llvm::Constant>(val)) {
+    assert(!llvm::isa<llvm::GlobalAlias>(c));
     if (!llvm::isa<llvm::GlobalValue>(c)) {
       return getConstValue(cg, omap, c);
     }
@@ -1806,6 +1807,8 @@ bool ConstraintPass::identifyObjects(ObjectMap &omap, const llvm::Module &M) {
               dout("Found non-struct type\n");
             });
           omap.addObjects(inferred_type, &inst, false);
+          // llvm::dbgs() << "FIXME: forcing strong object for testing\n";
+          // omap.addObjects(inferred_type, &inst, true);
         }
       }
     });
@@ -2265,6 +2268,8 @@ bool addIndirectCalls(ConstraintGraph &cg, CFG &cfg,
           // llvm::dbgs() << "adding indirect objects: " << inst << "\n";
 
           omap.addObjects(inferred_type, &inst, false);
+          // llvm::dbgs() << "FIXME: forcing strong object for testing\n";
+          // omap.addObjects(inferred_type, &inst, true);
           auto src_obj_id = omap.getObject(&inst);
           /*
           llvm::dbgs() << "  got source object: " << src_obj_id << "\n";

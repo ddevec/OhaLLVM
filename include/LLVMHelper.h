@@ -27,7 +27,10 @@ class LLVMHelper {
 
   static const llvm::Function *getFcnFromCall(const llvm::CallInst *ci) {
     llvm::ImmutableCallSite cs(ci);
+    return getFcnFromCall(ci);
+  }
 
+  static const llvm::Function *getFcnFromCall(llvm::ImmutableCallSite &cs) {
     const llvm::Function *fcn = cs.getCalledFunction();
 
     if (fcn == nullptr) {

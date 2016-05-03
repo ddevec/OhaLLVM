@@ -567,6 +567,12 @@ class IDGenerator {
   //}}}
 };
 
+// Convert an id quickly:
+template <typename Tn, typename T>
+Tn convert_id(T old_id) {
+  return Tn(old_id.val());
+}
+
 #ifndef SPECSFS_IS_TEST
 template <typename T, class T2, T2 DV>
 llvm::raw_ostream &operator<<(llvm::raw_ostream &o,

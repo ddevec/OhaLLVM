@@ -24,6 +24,8 @@
 #include "include/SolveHelpers.h"
 #include "include/ObjectMap.h"
 
+#include "include/InstPrinter.h"
+
 class DynAliasLoader : public llvm::ModulePass {
  public:
   static char ID;
@@ -105,7 +107,7 @@ class DynAliasLoader : public llvm::ModulePass {
 
     auto &load_ptsto = load_it->second;
 
-    // If we have some unknown dynamic info, assume it aliases with everything
+    // If we have some unknown dynamic info, Fallback to a static alias analysis
     if (load_ptsto.find(ObjectMap::ObjID::invalid()) !=
         std::end(load_ptsto)) {
       auto &aa = getAnalysis<llvm::AliasAnalysis>();
@@ -115,6 +117,28 @@ class DynAliasLoader : public llvm::ModulePass {
     }
 
     return load_ptsto.find(sid) != std::end(load_ptsto);
+  }
+
+  std::vector<const llvm::Value *> getAliases(const llvm::LoadInst *li) {
+    auto lid = omap_.getValueC(li);
+    auto load_it = valToObjs_.find(lid);
+
+    if (load_it == std::end(valToObjs_)) {
+      return std::vector<const llvm::Value *>();
+    }
+
+    auto &load_ptsto = load_it->second;
+
+    std::vector<const llvm::Value *> ret;
+    for (auto sid : load_ptsto) {
+      if (sid == ObjectMap::ObjID::invalid()) {
+        return std::vector<const llvm::Value *>(1, nullptr);
+      }
+
+      ret.push_back(omap_.valueAtID(sid));
+    }
+
+    return ret;
   }
 
   const llvm::Value *valueAtID(ObjectMap::ObjID id) {

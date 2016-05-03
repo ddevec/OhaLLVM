@@ -136,6 +136,9 @@ set(SPECSFS_SOURCES
 
   src/InsertSpecAssumptions.cpp
 
+  # Helper to print instructions quickly
+  src/InstPrinter.cpp
+
   # Instrumentation passes
   lib/Instrument/IndirFcnTarget.cpp
   lib/Instrument/DynPtsto.cpp
