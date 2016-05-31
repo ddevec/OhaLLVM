@@ -1167,6 +1167,7 @@ class ObjectMap {
   }
 
   ObjID getNextID() const {
+    assert(mapping_.size() == strong_.size());
     return ObjID(mapping_.size());
   }
 
@@ -1179,6 +1180,8 @@ class ObjectMap {
     ObjID ret = id;
     mapping_.emplace_back(val);
     strong_.emplace_back(false);
+    assert(mapping_.size()-1 == static_cast<size_t>(id));
+    assert(strong_.size()-1 == static_cast<size_t>(id));
     if_debug_enabled(auto rep_id =)
       reps_.add();
     assert(rep_id == ret);
@@ -1224,6 +1227,7 @@ class ObjectMap {
         // This is logically reserving an ObjID for this index within the
         //   struct
         ObjID id = createMapping(val);
+        assert(strong_.size() > static_cast<size_t>(id));
         strong_[id.val()] = strong & struct_info.fieldStrong(cur_size);
 
         if (first) {
@@ -1295,6 +1299,7 @@ class ObjectMap {
 
     id = createMapping(val);
     strong_[id.val()] = strong;
+    assert(strong_.size() > static_cast<size_t>(id));
 
     mp.emplace(val, id);
     pm.emplace(id, val);

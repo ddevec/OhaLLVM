@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include <algorithm>
@@ -38,14 +39,24 @@ std::set<std::vector<int32_t>> all_stacks;
 thread_local std::vector<int32_t> stack;
 thread_local bool pushed;
 
-thread_local std::unordered_map<void *, size_t> addr_to_frame;
+thread_local std::unordered_map<void *, std::pair<size_t, int32_t>>
+    addr_to_frame;
 
 extern "C" {
 
 void __DynContext_do_init() { }
 
 void __DynContext_do_finish() {
-  std::ofstream ofil("dyn_calls.log");
+  const char *logname = "dyn_calls.log";
+
+  char *envname = getenv("SFS_LOGFILE");
+  if (envname != nullptr) {
+    logname = envname;
+  }
+
+  std::string outfilename(logname);
+
+  std::ofstream ofil(outfilename);
 
   std::unique_lock<std::mutex> lk(inst_lock);
 
@@ -101,7 +112,8 @@ void __DynContext_do_ret(int32_t id) {
     pushed = false;
   }
 
-  if (!stack.empty() && stack.back() == id) {
+  // if (!stack.empty() && stack.back() == id)
+  if (stack.back() == id) {
     stack.pop_back();
   }
 }
@@ -117,7 +129,15 @@ void __DynContext_do_longjmp_call(int32_t, void *jmpstruct) {
   auto it = addr_to_frame.find(jmpstruct);
   assert(it != std::end(addr_to_frame));
 
-  stack.resize(it->second);
+  // IF we returned to an element w/in an scc, stack.size() will be one less
+  // than the recorded size, in which case, we push the frame back on...
+  if (stack.size() < it->second.first) {
+    assert(stack.size() + 1 == it->second.first);
+    stack.push_back(it->second.second);
+  // In the expected case, we just dump the top of our stack
+  } else {
+    stack.resize(it->second.first);
+  }
 }
 
 // Never called
@@ -127,7 +147,16 @@ void __DynContext_do_longjmp_ret(int32_t, void *) {
 
 void __DynContext_do_setjmp_call(int32_t, void *jmpstruct) {
   // Save the stack, denote we just setjmp'd
-  addr_to_frame[jmpstruct] = stack.size();
+  /*
+  std::cout << "Dumping stack size: " << stack.size() << std::endl;
+  std::cout << "  stack:";
+  for (auto &elm : stack) {
+    std::cout << " " << elm;
+  }
+  std::cout << std::endl;
+  */
+
+  addr_to_frame[jmpstruct] = std::make_pair(stack.size(), stack.back());
 }
 
 void __DynContext_do_setjmp_ret(int32_t, void *) {

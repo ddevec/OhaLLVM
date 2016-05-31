@@ -22,7 +22,8 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/InstIterator.h"
 
-class InstLabeler { //{{{
+class InstLabeler {
+ //{{{
  public:
   InstLabeler(llvm::Module &m, const UnusedFunctions *dyn_info) {
     int64_t inst_id = 0;
@@ -30,14 +31,14 @@ class InstLabeler { //{{{
     int fcn_cnt = 0;
 
     for (auto &fcn : m) {
-      bool fcn_used = dyn_info == nullptr || dyn_info->isUsed(fcn);
+      bool fcn_used = dyn_info == nullptr || dyn_info->isReallyUsed(fcn);
       if (!fcn.isDeclaration() && fcn_used) {
         usedFcns_.push_back(&fcn);
         fcnToID_[&fcn] = usedInsts_.size();
         usedInsts_.push_back(std::vector<const llvm::Instruction *>());
 
         for (auto &bb : fcn) {
-          bool bb_used = dyn_info == nullptr || dyn_info->isUsed(bb);
+          bool bb_used = dyn_info == nullptr || dyn_info->isReallyUsed(bb);
           if (bb_used) {
             for (auto &inst : bb) {
               usedInsts_[fcn_cnt].push_back(&inst);
@@ -105,10 +106,14 @@ class InstLabeler { //{{{
 
   std::map<const llvm::Instruction *, int64_t> instToID_;
   std::map<int64_t, const llvm::Instruction *> idToInst_;
+
+  std::vector<std::vector<const llvm::Instruction *>> reallyUsedInsts_;
+  std::vector<const llvm::Function *> reallyUsedFcns_;
+  //}}}
 };
-//}}}
 
 class InstWriter {
+  //{{{
  public:
   template<typename iter_type>
   static void Write(std::ostream &os, int64_t header_id,
@@ -126,9 +131,11 @@ class InstWriter {
     }
     os << std::endl;
   }
+  //}}}
 };
 
 class InstReader {
+  //{{{
  public:
   static std::pair<int64_t, std::vector<const llvm::Instruction *>>
   Read(std::istream &is, const InstLabeler &l) {
@@ -161,6 +168,7 @@ class InstReader {
 
     return std::make_pair(header_id, std::move(ret_vec));
   }
+  //}}}
 };
 
 #endif  // INCLUDE_INSTLABELER_H_

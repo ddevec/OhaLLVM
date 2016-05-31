@@ -33,10 +33,19 @@ void __InstrIndirCalls_init_inst(void) {
 }
 
 void __InstrIndirCalls_finish_inst(void) {
+  const char *logname = "dyn_indir.log";
+
+  char *envname = getenv("SFS_LOGFILE");
+  if (envname != nullptr) {
+    logname = envname;
+  }
+
+  std::string outfilename(logname);
+
   // Print out my stuff...
   // First open and read the file, if it exists
   {
-    std::ifstream logfile("indir_fcns.log");
+    std::ifstream logfile(outfilename);
     if (logfile.is_open()) {
       for (std::string line; std::getline(logfile, line, ':'); ) {
         // First parse the first int till the :
@@ -58,7 +67,6 @@ void __InstrIndirCalls_finish_inst(void) {
   }
 
   // Now, create the outfile
-  std::string outfilename("indir_fcns.log");
   FILE *out = fopen(outfilename.c_str(), "w");
 
   for (size_t i = 0; i < called_fcns.size(); i++) {

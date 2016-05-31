@@ -222,8 +222,8 @@ class StaticSliceCounter : public llvm::ModulePass {
                   outfile << "        Unknown alias set!\n";
                 } else {
                   for (auto palias : aliases) {
-                    auto si = cast<llvm::StoreInst>(palias);
-                    outfile << "      " << FullInstPrinter(si) << "\n";
+                    auto inst = cast<llvm::Instruction>(palias);
+                    outfile << "      " << FullInstPrinter(inst) << "\n";
                   }
                 }
               }

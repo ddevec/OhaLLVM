@@ -931,8 +931,8 @@ void InstrDynAlias::addInitializationCalls(llvm::Module &m) {
   // While we're at it, we're going to add the args to main to our set of
   //   objs...
   {
-    auto i8_ptr_type = llvm::PointerType::get(
-        llvm::IntegerType::get(m.getContext(), 8), 0);
+    auto i8_type = llvm::IntegerType::get(m.getContext(), 8);
+    auto i8_ptr_type = llvm::PointerType::get(i8_type, 0);
     auto ce_null = llvm::ConstantPointerNull::get(i8_ptr_type);
 
     // Do one for IntValue
@@ -959,7 +959,7 @@ void InstrDynAlias::addInitializationCalls(llvm::Module &m) {
     });
 
     // Note all main_args size comps are +1 due to the obj_id arg
-    if (main_args.size() != 2) {
+    if (main_args.size() != 4) {
       llvm::Function *main_init_fcn;
 
       if (main_args.size() == 5) {

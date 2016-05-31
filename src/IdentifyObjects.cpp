@@ -535,7 +535,7 @@ void addCFGCallsite(CFG &cfg, ObjectMap &omap,
     CFG::CFGid *pcall_id) {
 
   // Ignore the llvm debug function...
-  if (fcn != nullptr && fcn->getName() == "llvm.dbg.declare") {
+  if (fcn != nullptr && fcn->isIntrinsic()) {
     return;
   }
 
@@ -2013,7 +2013,7 @@ bool ConstraintPass::createConstraints(ConstraintGraph &cg, CFG &cfg,
         //
         // Don't add unused function pieces for main or llvm.dbg.declare,
         //    they are special, and don't need to be tracked
-        if (fcn.getName() != "main" && fcn.getName() != "llvm.dbg.declare") {
+        if (fcn.getName() != "main" && !fcn.isIntrinsic()) {
           std::vector<ConstraintGraph::ConsID> con_ids;
           std::for_each(fcn.arg_begin(), fcn.arg_end(),
               [&cg, &cfg, &omap, &con_ids](const llvm::Argument &arg) {

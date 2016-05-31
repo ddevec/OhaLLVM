@@ -12,6 +12,7 @@
 #include <bitset>
 #include <chrono>
 #include <iterator>
+#include <initializer_list>
 #include <limits>
 #include <list>
 #include <memory>
@@ -63,6 +64,56 @@ constexpr bool is_divisible_by(size_t x, size_t y) {
 template<typename T>
 constexpr T div_round_up(T x, T y) {
   return (x + (y-1)) / y;
+}
+
+template<typename T>
+class IterPrintClass {
+ public:
+  explicit IterPrintClass(const T &vec) : vec_(vec) { }
+
+  friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+      const IterPrintClass &pr) {
+    os << "{";
+    for (auto &elm : pr.vec_) {
+      os << " " << elm;
+    }
+    os << " }";
+
+    return os;
+  }
+
+ private:
+  const T &vec_;
+};
+
+template <typename T>
+IterPrintClass<T> print_iter(const T &itr) {
+  return IterPrintClass<T>(itr);
+}
+
+template<typename T>
+class IterPrintCpyClass {
+ public:
+  explicit IterPrintCpyClass(const T &vec) : vec_(vec) { }
+
+  friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+      const IterPrintCpyClass &pr) {
+    os << "{";
+    for (auto elm : pr.vec_) {
+      os << " " << elm;
+    }
+    os << " }";
+
+    return os;
+  }
+
+ private:
+  const T &vec_;
+};
+
+template <typename T>
+IterPrintCpyClass<T> print_iter_cpy(const T &itr) {
+  return IterPrintCpyClass<T>(itr);
 }
 //}}}
 
@@ -524,12 +575,16 @@ class ID {
 #ifndef SPECSFS_IS_TEST
     template <typename T, class T2, T2 DV>
     friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
-         ID<T, T2, DV> id);
+         const ID<T, T2, DV> &id);
 #endif
 
     template <typename T, class T2, T2 DV>
     friend std::ostream &operator<<(std::ostream &o,
-        ID<T, T2, DV> id);
+        const ID<T, T2, DV> &id);
+
+    template <typename T, class T2, T2 DV>
+    friend std::istream &operator>>(std::istream &o,
+        ID<T, T2, DV> &id);
 
  private:
     impl val_ = invalid_value;
@@ -562,6 +617,16 @@ class IDGenerator {
       return ret;
     }
 
+    id_type peek() const {
+      auto ret = id_type(val_);
+      return ret;
+    }
+
+    void consume(id_type id) {
+      assert(val_ == id);
+      val_++;
+    }
+
  private:
     typename id_type::base_type val_ = initial_value;
   //}}}
@@ -576,7 +641,7 @@ Tn convert_id(T old_id) {
 #ifndef SPECSFS_IS_TEST
 template <typename T, class T2, T2 DV>
 llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
-    ID<T, T2, DV> id) {
+    const ID<T, T2, DV> &id) {
   o << id.val_;
   return o;
 }
@@ -584,9 +649,16 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
 
 template <typename T, class T2, T2 DV>
 std::ostream &operator<<(std::ostream &o,
-    ID<T, T2, DV> id) {
+    const ID<T, T2, DV> &id) {
   o << id.val_;
   return o;
+}
+
+template <typename T, class T2, T2 DV>
+std::istream &operator>>(std::istream &in,
+    ID<T, T2, DV> &id) {
+  in >> id.val_;
+  return in;
 }
 
 template<typename id_type>
@@ -763,6 +835,56 @@ class UnionFindNoRank {
 
  private:
   std::vector<id_type> ids_;
+};
+//}}}
+
+// Worklist {{{
+template <typename val_type>
+class Worklist {
+ public:
+  typedef val_type value_type;
+
+  Worklist() = default;
+  explicit Worklist(val_type initial) : work_(1, initial) { }
+  Worklist(std::initializer_list<val_type> &&ilist) :  // NOLINT -- allow non-explicit w/ initializer list
+    work_(std::forward<std::initializer_list<val_type>>(ilist)) { }
+
+  template <typename input_iter>
+  Worklist(input_iter begin, input_iter end) :
+    work_(begin, end) { }
+
+
+  template <typename input_iter>
+  void push(input_iter start, input_iter end) {
+    workNext_.insert(std::end(workNext_), start, end);
+  }
+
+  void push(val_type val) {
+    workNext_.push_back(val);
+  }
+
+  val_type peek() {
+    if (work_.empty()) {
+      work_.swap(workNext_);
+      assert(!work_.empty());
+    }
+    auto ret = work_.back();
+    return ret;
+  }
+
+  val_type pop() {
+    auto ret = peek();
+    work_.pop_back();
+    return ret;
+  }
+
+  bool empty() const {
+    return work_.empty() && workNext_.empty();
+  }
+
+ private:
+  std::vector<val_type> work_;
+  std::vector<val_type> workNext_;
 };
 //}}}
 
@@ -2096,6 +2218,14 @@ struct hash<util::SparseBitmap<>> {
     return util::SparseBitmap<>::hasher()(map);
   }
 };
+
+template<typename T, typename A, A B>
+struct hash<util::ID<T, A, B>> {
+  std::size_t operator()(const util::ID<T, A, B> &id) const {
+    return typename util::ID<T, A, B>::hasher()(id);
+  }
+};
+
 }  // namespace std
 
 #endif  // INCLUDE_UTIL_H_

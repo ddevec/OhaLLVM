@@ -20,7 +20,7 @@ class UnusedFunctions : public llvm::ModulePass {
  public:
     static char ID;
 
-    UnusedFunctions() : llvm::ModulePass(ID) { }
+    UnusedFunctions();
 
     bool runOnModule(llvm::Module &m) override;
 
@@ -35,6 +35,18 @@ class UnusedFunctions : public llvm::ModulePass {
     }
 
     bool isUsed(const llvm::Function *fcn) const {
+      if (ignoreUnused_) {
+        return true;
+      }
+
+      return isReallyUsed(fcn);
+    }
+
+    bool isReallyUsed(const llvm::Function &fcn) const {
+      return isReallyUsed(&fcn);
+    }
+
+    bool isReallyUsed(const llvm::Function *fcn) const {
       if (allUsed_) {
         return true;
       }
@@ -64,6 +76,18 @@ class UnusedFunctions : public llvm::ModulePass {
     }
 
     bool isUsed(const llvm::BasicBlock *bb) const {
+      if (ignoreUnused_) {
+        return true;
+      }
+
+      return isReallyUsed(bb);
+    }
+
+    bool isReallyUsed(const llvm::BasicBlock &bb) const {
+      return isReallyUsed(&bb);
+    }
+
+    bool isReallyUsed(const llvm::BasicBlock *bb) const {
       if (allUsed_) {
         return true;
       }
@@ -86,6 +110,45 @@ class UnusedFunctions : public llvm::ModulePass {
     std::set<const llvm::BasicBlock *>visitedBB_;
 
     bool allUsed_ = false;
+    const bool ignoreUnused_;
 };
+
+template <typename visit>
+void foreach_used_fcn(llvm::Module &m, const UnusedFunctions &dyn_info,
+    visit visit_fcn) {
+  for (auto &fcn : m) {
+    if (!dyn_info.isUsed(fcn)) {
+      continue;
+    }
+
+    visit_fcn(&fcn);
+  }
+}
+
+template <typename visit>
+void foreach_used_bb(llvm::Module &m, const UnusedFunctions &dyn_info,
+    visit visit_fcn) {
+  foreach_used_fcn(m, dyn_info,
+    [&visit_fcn, &dyn_info](auto pfcn) {
+      for (auto &bb : *pfcn) {
+        if (!dyn_info.isUsed(bb)) {
+          continue;
+        }
+
+        visit_fcn(&bb);
+      }
+    });
+}
+
+template <typename visit>
+void foreach_used_inst(llvm::Module &m, const UnusedFunctions &dyn_info,
+    visit visit_fcn) {
+  foreach_used_bb(m, dyn_info,
+      [&visit_fcn](auto pbb) {
+        for (auto &inst : *pbb) {
+          visit_fcn(&inst);
+        }
+      });
+}
 
 #endif  // INCLUDE_LIB_UNUSEDFUNCTIONS_H__

@@ -5,8 +5,9 @@
 #include <cstdlib>
 #include <cstdio>
 
-#include <iostream>
 #include <fstream>
+#include <iostream>
+#include <iterator>
 #include <list>
 #include <map>
 #include <set>
@@ -20,28 +21,23 @@ int main(int argc, char **argv) {
     std::cerr << "ERROR: Usage: " << argv[0] << " <input files>" << std::endl;
   }
 
-  std::unordered_map<int32_t, std::set<int32_t>> valid_to_objids;
+  std::set<std::vector<int32_t>> stacks;
 
+  // For each input file
   for (int i = 1; i < argc; i++) {
     std::string filename(argv[i]);
 
     std::ifstream logfile(filename);
 
+    // Read in all inputs from that file
     if (logfile.is_open()) {
-      for (std::string line; std::getline(logfile, line, ':'); ) {
-        int32_t call_id = stoi(line);
-
-        auto &fcn_set = valid_to_objids[call_id];
-
-        std::getline(logfile, line);
+      for (std::string line; std::getline(logfile, line);) {
         std::stringstream converter(line);
 
-        int32_t fcn_id;
-        converter >> fcn_id;
-        while (!converter.fail()) {
-          fcn_set.insert(fcn_id);
-          converter >> fcn_id;
-        }
+        // Add the new elements to stacks
+        stacks.emplace(
+            std::istream_iterator<int32_t>(converter),
+            std::istream_iterator<int32_t>());
       }
     } else {
       std::cerr << "Couldn't open input file: " << filename << std::endl;
@@ -50,11 +46,18 @@ int main(int argc, char **argv) {
   }
 
   // Print to the logfile
-  for (auto &val_pr : valid_to_objids) {
-    std::cout << val_pr.first << ":";
+  for (auto &stack : stacks) {
+    auto it = std::begin(stack);
+    auto en = std::end(stack);
+    if (it == en) {
+      continue;
+    }
 
-    for (auto &obj_id : val_pr.second) {
-      std::cout << " " << obj_id;
+    std::cout << *it;
+    ++it;
+
+    for (; it != en; ++it) {
+      std::cout << " " << *it;
     }
     std::cout << std::endl;
   }

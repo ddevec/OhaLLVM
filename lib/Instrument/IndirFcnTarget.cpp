@@ -299,12 +299,18 @@ bool IndirFunctionInfo::runOnModule(llvm::Module &m) {
     std::vector<llvm::Value *> insert_list;
 
     // Iterate each instruction in the function
-    std::for_each(inst_begin(fcn), inst_end(fcn),
-        [&m, &insert_list]
-        (const llvm::Instruction &inst) {
+    for (auto it = inst_begin(fcn), en = inst_end(fcn); it != en;
+        ++it) {
+      auto &inst = *it;
       // Okay, lets get to work..
       if (auto cci = dyn_cast<llvm::CallInst>(&inst)) {
         auto ci = const_cast<llvm::CallInst *>(cci);
+
+        llvm::ImmutableCallSite cs(ci);
+        auto cv = cs.getCalledValue();
+        if (dyn_cast_or_null<llvm::InlineAsm>(cv)) {
+          continue;
+        }
 
         auto fcn = LLVMHelper::getFcnFromCall(ci);
 
@@ -312,7 +318,7 @@ bool IndirFunctionInfo::runOnModule(llvm::Module &m) {
           insert_list.push_back(ci);
         }
       }
-    });
+    }
 
     for (auto v : insert_list) {
       id_to_call[call_count] = v;
@@ -332,7 +338,12 @@ bool IndirFunctionInfo::runOnModule(llvm::Module &m) {
       // First parse the first int till the :
       int32_t call_id = stoi(line);
       auto call = id_to_call[call_id];
+      /*
+      llvm::dbgs() << "Parsing indir id: " << call_id << ": " <<
+        ValPrinter(call) << "\n";
+      */
 
+      /*
       auto it = callToTarget_.find(call);
       if (it == std::end(callToTarget_)) {
         // llvm::dbgs() << "Adding call to targets: " << *call << "\n";
@@ -342,18 +353,23 @@ bool IndirFunctionInfo::runOnModule(llvm::Module &m) {
         assert(ret.second);
         it = ret.first;
       }
+      */
+      auto rc = callToTarget_.emplace(call,
+          std::vector<const llvm::Value *>());
+      auto it = rc.first;
       auto &fcn_vec = it->second;
 
       std::getline(logfile, line);
       // Now split the line...
       std::stringstream converter(line);
-      int32_t fcn_id;
-      converter >> fcn_id;
-      while (!converter.fail()) {
+      for (auto it = std::istream_iterator<uint32_t>(converter),
+                en = std::istream_iterator<uint32_t>();
+                it != en;
+                ++it) {
+        auto fcn_id = *it;
         auto fcn = cast<llvm::Function>(id_to_fcn[fcn_id]);
 
         fcn_vec.push_back(fcn);
-        converter >> fcn_id;
       }
     }
   }

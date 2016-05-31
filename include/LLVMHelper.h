@@ -5,8 +5,11 @@
 #ifndef INCLUDE_LLVMHELPER_H_
 #define INCLUDE_LLVMHELPER_H_
 
+#include <unordered_set>
+
 #include "include/Debug.h"
 #include "include/ObjectMap.h"
+#include "include/lib/UnusedFunctions.h"
 
 #include "llvm/BasicBlock.h"
 #include "llvm/Constants.h"
@@ -14,20 +17,105 @@
 #include "llvm/Function.h"
 #include "llvm/GlobalVariable.h"
 #include "llvm/Instructions.h"
+#include "llvm/IntrinsicInst.h"
 #include "llvm/Module.h"
 #include "llvm/Pass.h"
 #include "llvm/PassManager.h"
 #include "llvm/Support/CallSite.h"
+#include "llvm/Support/CFG.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/InstIterator.h"
 
 class LLVMHelper {
  public:
   // No constructor -- static only
   LLVMHelper() = delete;
 
+  static bool isValidCall(llvm::ImmutableCallSite &cs) {
+    auto cv = cs.getCalledValue();
+    if (llvm::isa<llvm::InlineAsm>(cv)) {
+      return false;
+    }
+
+    auto cf = cs.getCalledFunction();
+    if (cf != nullptr && cf->isIntrinsic()) {
+      return false;
+    }
+
+    return true;
+  }
+
   static const llvm::Function *getFcnFromCall(const llvm::CallInst *ci) {
     llvm::ImmutableCallSite cs(ci);
-    return getFcnFromCall(ci);
+    return getFcnFromCall(cs);
+  }
+
+  template <typename inst_filter>
+  static std::vector<const llvm::Instruction *> findAllPreds(
+      const llvm::Instruction *start_inst,
+      const UnusedFunctions *dyn_info,
+      inst_filter include_inst) {
+    std::unordered_set<const llvm::BasicBlock *> visited;
+
+    std::vector<const llvm::Instruction *> ret;
+
+    // First iterate all instructions prior to inst
+    auto start_bb = start_inst->getParent();
+
+    util::Worklist<const llvm::BasicBlock *> worklist(
+        pred_begin(start_bb), pred_end(start_bb));
+
+    // First, find all instructions before [start(bb), start_inst]
+    //     NOTE: start_inst is inclusive
+    for (auto it = std::begin(*start_bb),
+              en = ++llvm::BasicBlock::const_iterator(start_inst);
+        it != en;
+        ++it) {
+      auto &inst = *it;
+      if (include_inst(&inst)) {
+        ret.push_back(&inst);
+      }
+    }
+
+    // Now, iterate all basic blocks in the function prior to start_bb
+    while (!worklist.empty()) {
+      auto bb = worklist.pop();
+
+      // Only consider used bbs
+      if (dyn_info && !dyn_info->isUsed(bb)) {
+        continue;
+      }
+
+      // Only consider unvisited bbs
+      auto rc = visited.emplace(bb);
+      if (!rc.second) {
+        continue;
+      }
+
+      // For the start bb only get btwn start_inst and end
+      if (bb == start_bb) {
+        for (auto it = ++llvm::BasicBlock::const_iterator(start_inst),
+                  en = std::end(*bb);
+            it != en;
+            ++it) {
+          auto &inst = *it;
+          if (include_inst(&inst)) {
+            ret.push_back(&inst);
+          }
+        }
+        // Don't bother to add preds to worklist for start block...
+      } else {
+        for (auto &inst : *bb) {
+          if (include_inst(&inst)) {
+            ret.push_back(&inst);
+          }
+        }
+
+        worklist.push(pred_begin(bb), pred_end(bb));
+      }
+    }
+
+    return std::move(ret);
   }
 
   static const llvm::Function *getFcnFromCall(llvm::ImmutableCallSite &cs) {
@@ -168,10 +256,104 @@ class LLVMHelper {
     return ret;
   }
 
+  static bool callAtExit(llvm::Module &m, llvm::Function *to_call) {
+    // Get atexit
+    auto at_exit = m.getFunction("atexit");
+    if (at_exit == nullptr) {
+      // Cast to_call to voidptr...
+      auto void_type = llvm::Type::getVoidTy(m.getContext());
+
+      std::vector<llvm::Type *> type_no_args;
+      auto void_fcn_type = llvm::FunctionType::get(
+          void_type,
+          type_no_args,
+          false);
+
+      std::vector<llvm::Type *> atexit_args { void_fcn_type->getPointerTo() };
+      auto atexit_type = llvm::FunctionType::get(
+          void_type,
+          atexit_args,
+          false);
+
+      at_exit = llvm::Function::Create(
+          atexit_type,
+          llvm::GlobalValue::ExternalLinkage,
+          "atexit", &m);
+    }
+
+    std::vector<llvm::Value *> call_args = { to_call };
+
+    auto first_inst =
+      m.getFunction("main")->getEntryBlock().getFirstNonPHIOrDbg();
+    llvm::CallInst::Create(at_exit, call_args, "", first_inst);
+
+    return true;
+  }
+
+  static bool callAtEntry(llvm::Module &m, llvm::Function *to_call,
+      std::initializer_list<llvm::Value *> args) {
+    // Get atexit
+    std::vector<llvm::Value *> call_args = args;
+
+    auto first_inst =
+      m.getFunction("main")->getEntryBlock().getFirstNonPHIOrDbg();
+    llvm::CallInst::Create(to_call, call_args, "", first_inst);
+
+    return true;
+  }
+
+  static llvm::Function *getOrCreateLibFcn(llvm::Module &m,
+      const std::string &name,
+      llvm::FunctionType *type) {
+    auto fcn = m.getFunction(name.c_str());
+    if (fcn == nullptr) {
+      fcn = llvm::Function::Create(type,
+          llvm::GlobalValue::ExternalLinkage,
+          name, &m);
+    }
+    assert(fcn != nullptr);
+
+    return fcn;
+  }
+      
+
   /*
   static bool isStructGep(llvm::GetElementPtrInst *) {
   }
   */
+};
+
+class ValPrinter {
+ public:
+  ValPrinter(const llvm::Value *val) : val_(val) { }
+
+  friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
+      const ValPrinter &pr) {
+    // If its not in the map, its probably been added later as an indirect
+    // object...
+    auto val = pr.val_;
+
+    if (val != nullptr) {
+      if (auto gv = dyn_cast<const llvm::GlobalValue>(val)) {
+        o << gv->getName();
+      } else if (auto fcn = dyn_cast<const llvm::Function>(val)) {
+        o << fcn->getName();
+      } else if (auto bb = dyn_cast<const llvm::BasicBlock>(val)) {
+        o << bb->getParent()->getName() << ": " << bb->getName();
+      } else if (auto inst = dyn_cast<const llvm::Instruction>(val)) {
+        o << inst->getParent()->getParent()->getName() + ", " +
+          inst->getParent()->getName() << ": " << *inst;
+      } else {
+        o << *val;
+      }
+    } else {
+      o << "(null)";
+    }
+    return o;
+  }
+
+ private:
+  const llvm::Value *val_;
 };
 
 #endif  // INCLUDE_LLVMHELPER_H_

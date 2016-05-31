@@ -10,6 +10,8 @@
 #include <utility>
 #include <vector>
 
+#include "include/lib/BddSet.h"
+
 // BddPtstoSet statics {{{
 bool BddPtstoSet::bddInitd_ = false;
 std::vector<bdd> BddPtstoSet::geps_;
@@ -35,17 +37,8 @@ void BddPtstoSet::bddInit(ObjectMap &omap, const ConstraintGraph &cg) {
     static_cast<int>(omap.getNumObjs()+1) };
   llvm::dbgs() << "bdd domain size is: " << omap.getNumObjs()+1 << "\n";
 
-  // Now, we initialize the bdd library
-  bdd_init((1<<23), 1000);
-
-  // We set some performance variables
-  bdd_setcacheratio(8);
-  bdd_setminfreenodes(40);
-  bdd_setmaxnodenum(0);
-  bdd_gbc_hook(NULL);
-
-  // We disable reordering, because we rely on ordering
-  bdd_disable_reorder();
+  // In lib/BddSet.cpp
+  bdd_init_once(2);
 
   // We expand the domain to encompass our realm of possible object values
   fdd_extdomain(domain, 2);
@@ -53,7 +46,7 @@ void BddPtstoSet::bddInit(ObjectMap &omap, const ConstraintGraph &cg) {
   // Get our points to domain for later geps operations
   ptsDom_ = fdd_ithset(0);
 
-  // Also, setup oru gep2pts transformation
+  // Also, setup our gep2pts transformation
   gepToPts_ = bdd_newpair();
   fdd_setpair(gepToPts_, 1, 0);
 

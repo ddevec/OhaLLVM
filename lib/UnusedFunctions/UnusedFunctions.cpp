@@ -4,10 +4,19 @@
 
 #include "lib/UnusedFunctions.h"
 
-#include "llvm/Support/Debug.h"
+#include "llvm/Function.h"
 #include "llvm/Analysis/ProfileInfo.h"
 #include "llvm/Analysis/ProfileInfoLoader.h"
-#include "llvm/Function.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Debug.h"
+
+static llvm::cl::opt<bool>
+  IgnoreDynInfo("ignore-unused", llvm::cl::init(false),
+      llvm::cl::value_desc("bool"),
+      llvm::cl::desc("If set, analyses will ignore unused function info"));
+
+UnusedFunctions::UnusedFunctions() : llvm::ModulePass(ID),
+  ignoreUnused_(IgnoreDynInfo) { }
 
 void UnusedFunctions::getAnalysisUsage(llvm::AnalysisUsage &AU) const {
   AU.setPreservesAll();

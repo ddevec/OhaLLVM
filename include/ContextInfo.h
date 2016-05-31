@@ -16,9 +16,13 @@
 #include "include/util.h"
 #include "include/SEG.h"
 #include "include/ObjectMap.h"
+#include "include/lib/BBNumber.h"
+#include "include/lib/BddSet.h"
+#include "include/lib/CallContextPass.h"
 #include "include/lib/CallDests.h"
-#include "include/lib/FcnCFG.h"
 #include "include/lib/CsCFG.h"
+#include "include/lib/FcnCFG.h"
+#include "include/lib/StoreNumber.h"
 #include "include/lib/UnusedFunctions.h"
 
 #include "llvm/Pass.h"
@@ -35,20 +39,27 @@ class ContextInfo : public llvm::ModulePass {
  private:
   struct cons_id_tag {};
   struct stack_id_tag {};
-
-  struct ExternalInfo {
-    const UnusedFunctions *dyn_info = nullptr;
-    mutable ObjectMap omap;
-    const CallDests *call_info = nullptr;
-    const FcnCFG *cfg = nullptr;
-    // const DynStackLoader &stack_info;
-  };
+  struct store_bdd_tag { };
+  struct bb_bdd_tag { };
 
   class StackCache;
 
  public:
+  // FIXME: Technically not part of the external interface...
+  struct ExternalInfo {
+    const UnusedFunctions *dyn_info = nullptr;
+    const CallDests *call_info = nullptr;
+    const FcnCFG *cfg = nullptr;
+    const CallContextLoader *stack_info = nullptr;
+    const BBNumber *bb_num = nullptr;
+    const StoreNumber *si_num = nullptr;
+  };
+
   typedef util::ID<cons_id_tag, uint32_t, -1> ContextId;
   typedef util::ID<stack_id_tag, uint32_t, -1> StackId;
+
+  typedef BddSet<StoreNumber::Id, store_bdd_tag> StoreBddSet;
+  typedef BddSet<BBNumber::Id, bb_bdd_tag> BBBddSet;
 
   class StackInfo {
     //{{{
@@ -110,7 +121,7 @@ class ContextInfo : public llvm::ModulePass {
       return id_;
     }
 
-    const util::SparseBitmap<ObjectMap::ObjID> &predBBs() const {
+    const BBBddSet &predBBs() const {
       if (!predsPopulated_) {
         populatePreds();
         predsPopulated_ = true;
@@ -119,7 +130,7 @@ class ContextInfo : public llvm::ModulePass {
       return predBBs_;
     }
 
-    const std::set<const llvm::StoreInst *> &predStores() const {
+    const StoreBddSet &predStores() const {
       if (!predsPopulated_) {
         populatePreds();
         predsPopulated_ = true;
@@ -132,7 +143,7 @@ class ContextInfo : public llvm::ModulePass {
     void populatePreds() const;
     void populateLocal() const;
 
-    util::SparseBitmap<ObjectMap::ObjID> &getLocalPredBBs() const {
+    const BBBddSet &getLocalPredBBs() const {
       // Populate only the current and any callee's BBs / SIs
       if (!localPopulated_) {
         populateLocal();
@@ -141,7 +152,7 @@ class ContextInfo : public llvm::ModulePass {
       return localPredBBs_;
     }
 
-    std::set<const llvm::StoreInst *> &getLocalPredStores() const {
+    const StoreBddSet &getLocalPredStores() const {
       // Populate only the current and any callee's BBs / SIs
       if (!localPopulated_) {
         populateLocal();
@@ -160,11 +171,15 @@ class ContextInfo : public llvm::ModulePass {
 
     // Cached data
     mutable bool predsPopulated_ = false;
-    mutable util::SparseBitmap<ObjectMap::ObjID> predBBs_;
-    mutable std::set<const llvm::StoreInst *> predStores_;
+    mutable BBBddSet predBBs_;
+    mutable StoreBddSet predStores_;
+    // mutable util::SparseBitmap<ObjectMap::ObjID> predBBs_;
+    // mutable std::set<const llvm::StoreInst *> predStores_;
     mutable bool localPopulated_ = false;
-    mutable util::SparseBitmap<ObjectMap::ObjID> localPredBBs_;
-    mutable std::set<const llvm::StoreInst *> localPredStores_;
+    // mutable util::SparseBitmap<ObjectMap::ObjID> localPredBBs_;
+    // mutable std::set<const llvm::StoreInst *> localPredStores_;
+    mutable BBBddSet localPredBBs_;
+    mutable StoreBddSet localPredStores_;
     mutable std::vector<llvm::ImmutableCallSite> calls_;
     //}}}
   };
@@ -270,7 +285,7 @@ class ContextInfo : public llvm::ModulePass {
   class StackCache {
     //{{{
    public:
-    static const size_t MaxStacks = 10000;
+    static const size_t MaxStacks = 5000000;
 
     StackCache() :
       stackMem_(new int8_t[sizeof(StackInfo) * MaxStacks]),

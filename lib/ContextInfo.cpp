@@ -64,20 +64,22 @@ ContextInfo::ContextInfo() : llvm::ModulePass(ID), cache_(info_) { }
  */
 
 static void traverse_bb(const llvm::BasicBlock *bb,
-    ObjectMap &omap,
-    util::SparseBitmap<ObjectMap::ObjID> &bbs,
-    std::set<const llvm::StoreInst *> &stores,
+    const ContextInfo::ExternalInfo &ei,
+    ContextInfo::BBBddSet &bbs,
+    ContextInfo::StoreBddSet &stores,
     std::vector<llvm::ImmutableCallSite> &calls,
     const UnusedFunctions &dyn_info) {
   util::Worklist<const llvm::BasicBlock *> worklist({bb});
+  auto &bb_num = *ei.bb_num;
+  auto &si_num = *ei.si_num;
 
   while (!worklist.empty()) {
     auto bb = worklist.pop();
-    auto bb_id = omap.getValue(bb);
+    auto bb_id = bb_num.getId(bb);
 
     // If we haven't visited this bb yet
     //   (NOTE: implicitly inserts into bb_list)
-    if (bbs.test_and_set(bb_id)) {
+    if (bbs.set(bb_id)) {
       // Insert its preds into our worklist
       assert(dyn_info.isUsed(bb));
       for (auto it = pred_begin(bb), en = pred_end(bb);
@@ -99,7 +101,7 @@ static void traverse_bb(const llvm::BasicBlock *bb,
           llvm::dbgs() << "Invoke unsupporeted: " << *ii << "\n";
           llvm_unreachable("inboke unsupported");
         } else if (auto si = dyn_cast<llvm::StoreInst>(&inst)) {
-          stores.insert(si);
+          stores.set(si_num.getId(si));
         }
       }
     }
@@ -120,14 +122,14 @@ void ContextInfo::Context::populatePreds() const {
     */
 
   predBBs_ |= localPredBBs_;
-  predStores_.insert(std::begin(localPredStores_), std::end(localPredStores_));
+  predStores_ |= localPredStores_;
 
   auto caller_ctx_vec = info_.stackPop(id());
   for (auto caller_ctx_id : caller_ctx_vec) {
     auto &caller_ctx = info_.getContext(caller_ctx_id);
     predBBs_ |= caller_ctx.predBBs();
     auto &caller_stores = caller_ctx.predStores();
-    predStores_.insert(std::begin(caller_stores), std::end(caller_stores));
+    predStores_ |= caller_stores;
   }
 }
 
@@ -145,44 +147,66 @@ void ContextInfo::Context::populateLocal() const {
   auto fcn = bb->getParent();
 
   auto &fcn_cfg = *info_.info_.cfg;
-  auto &omap = info_.info_.omap;
   auto &dyn_info = *info_.info_.dyn_info;
+  auto &bb_num = *info_.info_.bb_num;
+  auto &si_num = *info_.info_.si_num;
 
-  auto &scc = fcn_cfg.getSCC(fcn);
-  // Add all bbs in the scc
-  if (scc.size() != 1) {
-    for (auto cfg_fcn : scc) {
-      if (!dyn_info.isUsed(cfg_fcn)) {
-        continue;
-      }
-      for (auto &bb : *cfg_fcn) {
-        if (!dyn_info.isUsed(bb)) {
+  // FIXME: Super hacky
+  struct LocalInfo {
+    std::vector<llvm::ImmutableCallSite> calls;
+    BBBddSet bbs;
+    StoreBddSet stores;
+  };
+  static std::unordered_map<const llvm::Function *, LocalInfo> local_info;
+
+  auto local_it = local_info.find(fcn);
+
+  if (local_it == std::end(local_info)) {
+    LocalInfo info;
+
+    auto &scc = fcn_cfg.getSCC(fcn);
+    // Add all bbs in the scc
+    if (scc.size() != 1) {
+      for (auto cfg_fcn : scc) {
+        if (!dyn_info.isUsed(cfg_fcn)) {
           continue;
         }
-        localPredBBs_.set(omap.getValue(&bb));
+        for (auto &bb : *cfg_fcn) {
+          if (!dyn_info.isUsed(bb)) {
+            continue;
+          }
+          info.bbs.set(bb_num.getId(&bb));
 
-        for (auto &inst : bb) {
-          if (auto si = dyn_cast<llvm::StoreInst>(&inst)) {
-            localPredStores_.insert(si);
-          } else if (auto ci = dyn_cast<llvm::CallInst>(&inst)) {
-            // Filter out inline asm and intrinsics
-            llvm::ImmutableCallSite cs(ci);
-            if (LLVMHelper::isValidCall(cs)) {
-              calls_.emplace_back(ci);
+          for (auto &inst : bb) {
+            if (auto si = dyn_cast<llvm::StoreInst>(&inst)) {
+              info.stores.set(si_num.getId(si));
+            } else if (auto ci = dyn_cast<llvm::CallInst>(&inst)) {
+              // Filter out inline asm and intrinsics
+              llvm::ImmutableCallSite cs(ci);
+              if (LLVMHelper::isValidCall(cs)) {
+                info.calls.emplace_back(ci);
+              }
+            } else if (auto ii = dyn_cast<llvm::InvokeInst>(&inst)) {
+              llvm::dbgs() << "Unexpected invoke: " << *ii << "\n";
+              llvm_unreachable("Unsupported invoke inst");
             }
-          } else if (auto ii = dyn_cast<llvm::InvokeInst>(&inst)) {
-            llvm::dbgs() << "Unexpected invoke: " << *ii << "\n";
-            llvm_unreachable("Unsupported invoke inst");
           }
         }
       }
+    } else {
+      // Actually figure out what bbs are predecessors to this bb...
+      traverse_bb(bb, info_.info_, info.bbs, info.stores, info.calls,
+        dyn_info);
     }
-  } else {
-    // Actually figure out what bbs are predecessors to this bb...
-    traverse_bb(bb, omap, localPredBBs_, localPredStores_, calls_,
-      dyn_info);
+
+    auto rc = local_info.emplace(fcn, std::move(info));
+    assert(rc.second);
+    local_it = rc.first;
   }
 
+  calls_ = local_it->second.calls;
+  localPredBBs_ |= local_it->second.bbs;
+  localPredStores_ |= local_it->second.stores;
 
   // We've now populated all callsites, handle that nonsense:
   for (auto &cs : calls_) {
@@ -206,7 +230,7 @@ void ContextInfo::Context::populateLocal() const {
       localPredBBs_ |= callee_ctx.getLocalPredBBs();
 
       auto &callee_sts = callee_ctx.getLocalPredStores();
-      localPredStores_.insert(std::begin(callee_sts), std::end(callee_sts));
+      localPredStores_ |= callee_sts;
     }
   }
 }
@@ -260,7 +284,7 @@ StackId ContextInfo::StackInfo::parentId(
     if (parent_stack.size() > 0) {
       parent_stack.pop_back();
 
-      llvm::dbgs() << "stack is: " << util::print_iter(parent_stack) << "\n";
+      // llvm::dbgs() << "stack is: " << util::print_iter(parent_stack) << "\n";
       parentId_ = cache.find(parent_stack);
     } else {
       parentId_ = id();
@@ -306,6 +330,17 @@ ContextInfo::stackPush(ContextId context_id,
   // Add the instruction to the stack
   stack_vec.push_back(new_id);
 
+  // Make sure the stack is dynamically valid...
+  if (info_.stack_info->hasDynData()) {
+    if (!info_.stack_info->isValid(stack_vec)) {
+      /*
+      llvm::dbgs() << "have dynamically invalid push: " <<
+        util::print_iter(stack_vec) << "\n";
+      */
+      return std::vector<ContextId>();
+    }
+  }
+
   auto new_stack_id = stackCache_.find(stack_vec);
   /*
   llvm::dbgs() << "Got stack " << new_stack_id << " with vec:" <<
@@ -336,43 +371,30 @@ ContextInfo::getAllContexts(const llvm::Instruction *inst) const {
   //     This means we convert inst to all callsites which call inst's function
 
   // First, find all callsites before inst in this function
-  // WRONG: Actually, find all callsites which may call this function...
-  /*
-  auto pred_vec = LLVMHelper::findAllPreds(inst,
-      info_.dyn_info,
-      [](const llvm::Instruction *val) {
-        if (auto ci = dyn_cast<llvm::CallInst>(val)) {
-          llvm::ImmutableCallSite cs(ci);
-          auto fcn = cs.getCalledFunction();
-          if (fcn != nullptr && fcn->isIntrinsic()) {
-            return false;
-          }
-          auto cv = cs.getCalledValue();
-          if (llvm::isa<llvm::InlineAsm>(cv)) {
-            return false;
-          }
-          return true;
-        }
-        return false;
-      });
-
-  llvm::dbgs() << "pred_vec len: " << pred_vec.size() << "\n";
-  for (auto pred : pred_vec) {
-    llvm::dbgs() << "pred is: " << *pred << "\n";
-  }
-  */
   auto callers =
     info_.call_info->getCallers(inst->getParent()->getParent());
 
-  llvm::dbgs() << "have: " << callers.size() << " callers\n";
+  // llvm::dbgs() << "have: " << callers.size() << " callers\n";
   for (auto &ci : callers) {
     assert(llvm::isa<llvm::CallInst>(ci));
     auto &cs_paths = csCFG_->findPathsFromMain(csCFG_->getId(ci));
-    llvm::dbgs() << "  caller has: " << cs_paths.size() << " paths\n";
+    // llvm::dbgs() << "  caller has: " << cs_paths.size() << " paths\n";
 
     // Now, iterate each path in fcn_paths
-    for (auto path : cs_paths) {
-      // llvm::dbgs() << "Path is: " << util::print_iter(path) << "\n";
+    // llvm::dbgs() << "cs_paths:\n";
+    for (auto &path : cs_paths) {
+      // llvm::dbgs() << "  " << util::print_iter(path) << "\n";
+
+      if (info_.stack_info->hasDynData()) {
+        if (!info_.stack_info->isValid(path)) {
+          /*
+          llvm::dbgs() << "    Path dynamically invalid:" <<
+              util::print_iter(path) << "\n";
+          */
+          continue;
+        }
+      }
+
       // Create a stack for this path -- note, since the path is in functions,
       //    this can return a set of stacks
       auto stack_id = stackCache_.find(path);
@@ -381,8 +403,8 @@ ContextInfo::getAllContexts(const llvm::Instruction *inst) const {
         continue;
       }
 
-      auto &stack = stackCache_.getStack(stack_id);
       /*
+      auto &stack = stackCache_.getStack(stack_id);
       llvm::dbgs() << "stack (" << stack_id << ") is:" <<
           util::print_iter(stack.stack()) << "\n"
       */
@@ -390,7 +412,21 @@ ContextInfo::getAllContexts(const llvm::Instruction *inst) const {
       // Now, add the context to my return set
       ret.emplace(getContext(inst, stack_id));
     }
+
+    /*
+    if (info_.stack_info->hasDynData()) {
+      auto contexts = info_.stack_info->getAllContexts(csCFG_->getId(ci));
+      llvm::dbgs() << "dyn_info:\n";
+      for (auto &ppath : contexts) {
+        auto &path = *ppath;
+        llvm::dbgs() << "  " << util::print_iter(path) << "\n";
+      }
+    }
+    */
   }
+
+  // Compare contexts vs those in dyn:
+  // First, get contexts from dyn
 
   return std::move(ret);
 }
@@ -461,16 +497,25 @@ void ContextInfo::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   usage.addRequired<CsCFG>();
   usage.addRequired<FcnCFG>();
   usage.addRequired<CallDests>();
+  usage.addRequired<CallContextLoader>();
+  usage.addRequired<BBNumber>();
+  usage.addRequired<StoreNumber>();
+
   usage.setPreservesAll();
 }
 
 bool ContextInfo::runOnModule(llvm::Module &m) {
   info_.dyn_info = &getAnalysis<UnusedFunctions>();
-  info_.omap = getAnalysis<ConstraintPass>().getObjectMap();
   csCFG_ = &getAnalysis<CsCFG>();
   info_.cfg = &getAnalysis<FcnCFG>();
   callDests_ = &getAnalysis<CallDests>();
+  info_.stack_info = &getAnalysis<CallContextLoader>();
   info_.call_info = callDests_;
+  info_.si_num = &getAnalysis<StoreNumber>();
+  info_.bb_num = &getAnalysis<BBNumber>();
+
+  BBBddSet::Setup(info_.bb_num->numBBs());
+  StoreBddSet::Setup(info_.si_num->numStores());
 
   mainFcn_ = m.getFunction("main");
 

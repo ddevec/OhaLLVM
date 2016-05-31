@@ -101,9 +101,9 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O4 -DNDEBUG -DSPECSFS_NODEBUG")
 set(CMAKE_CXX_FLAGS_DEBUG "-Og -g")
 
 #set(CMAKE_CXX_COMPILER "g++-5")
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -flto -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -std=c++11 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -flto -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -std=c++14 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
 #set(CMAKE_CXX_LINKER_FLAGS "${CMAKE_CXX_LINKER_FLAGS} -flto")
 #set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -flto")
 
@@ -143,7 +143,16 @@ set(SPECSFS_SOURCES
   lib/Instrument/IndirFcnTarget.cpp
   lib/Instrument/DynPtsto.cpp
   lib/Instrument/DynAlias.cpp
+  lib/Instrument/CallContextPass.cpp
   # lib/Instrument/DynPtstoCheck.cpp
+ 
+  lib/StoreNumber.cpp
+  lib/BBNumber.cpp
+  lib/BddSet.cpp
+  lib/ContextInfo.cpp
+  lib/FcnCFG.cpp
+  lib/CsCFG.cpp
+  lib/CallDests.cpp
 
   lib/StaticSlice.cpp
   lib/StaticSliceCounter.cpp
@@ -169,6 +178,17 @@ set(SPECSFS_HEADERS
 
   ObjectMap.h
   DUG.h
+
+  ContextInfo.h
+
+  lib/SlicePosition.h
+  lib/StoreNumber.h
+  lib/BBNumber.h
+  lib/BddSet.h
+  lib/FcnCFG.h
+  lib/CsCFG.h
+  lib/CallContextPass.h
+  lib/CallDests.h
   )
 
 add_llvm_loadable_module(SpecSFS
@@ -210,6 +230,14 @@ add_library(prof_alias STATIC
   )
 add_cpplint_target(prof_alias ${PROF_DYNALIAS_SOURCES})
 
+set(PROF_DYNCALLSTACK_SOURCES
+  lib/Instrument/StaticLibs/DynCallStackLib.cpp
+  )
+add_library(prof_callstack STATIC
+  ${PROF_DYNCALLSTACK_SOURCES}
+  )
+add_cpplint_target(prof_callstack ${PROF_DYNCALLSTACK_SOURCES})
+
 set(CHECK_DYNPTSTO_SOURCES
   lib/Instrument/StaticLibs/DynPtstoCheckLib.cpp
   )
@@ -243,6 +271,11 @@ add_executable(merge_logfiles
   tools/merge_logfiles.cpp
   )
 add_cpplint_target(merge_logfiles tools/merge_logfiles.cpp)
+
+add_executable(merge_callstacks
+  tools/merge_callstacks.cpp
+  )
+add_cpplint_target(merge_callstacks tools/merge_callstacks.cpp)
 
 add_subdirectory(test)
 #add_subdirectory(unit_test)

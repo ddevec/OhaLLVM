@@ -262,71 +262,71 @@ bool CallContextLoader::runOnModule(llvm::Module &) {
   // Open the loader-file
   std::ifstream logfile(DynCallGraphFilename);
 
-  auto &cfg = getAnalysis<CsCFG>();
+  // If we actually managed to get data...
+  if (logfile.is_open()) {
+    llvm::dbgs() << "CallContextLoader: Successfully Loaded!\n";
+    loaded_ = true;
 
-  // Then, load the lines of callstacks
-  for (std::string line; std::getline(logfile, line); ) {
-    std::stringstream converter(line);
+    auto &cfg = getAnalysis<CsCFG>();
+
+    // Then, load the lines of callstacks
+    for (std::string line; std::getline(logfile, line); ) {
+      std::stringstream converter(line);
 
 
-    callsites_.emplace_back(
-        std::istream_iterator<CsCFG::Id>(converter),
-        std::istream_iterator<CsCFG::Id>());
-    /*
-    llvm::dbgs() << "Got stack:";
-    for (auto elm : callsites_.back()) {
-      llvm::dbgs() << " " << elm;
+      // All vectors start with 0 id...
+      std::vector<CsCFG::Id> vec(1, CsCFG::Id(0));
+
+      vec.insert(std::end(vec),
+          std::istream_iterator<CsCFG::Id>(converter),
+          std::istream_iterator<CsCFG::Id>());
+
+      callsites_.emplace_back(std::move(vec));
+
+      /*
+      callsites_.emplace_back(
+          std::istream_iterator<CsCFG::Id>(converter),
+          std::istream_iterator<CsCFG::Id>());
+      */
+      /*
+      llvm::dbgs() << "Got stack:";
+      for (auto elm : callsites_.back()) {
+        llvm::dbgs() << " " << elm;
+      }
+      llvm::dbgs() << "\n";
+      */
     }
-    llvm::dbgs() << "\n";
-    */
-  }
 
-  // Then, sort them
-  std::sort(std::begin(callsites_), std::end(callsites_),
-      [](const std::vector<CsCFG::Id> &lhs, const std::vector<CsCFG::Id> &rhs) {
-        auto rhs_it = std::begin(rhs);
-        auto rhs_en = std::end(rhs);
+    // Then, sort them
+    std::sort(std::begin(callsites_), std::end(callsites_));
 
-        for (auto lhs_elm : lhs) {
-          auto rhs_elm = *rhs_it;
-          if (rhs_it == rhs_en) {
-            return false;
-          }
-
-          if (lhs_elm < rhs_elm) {
-            return true;
-          } else if (lhs_elm > rhs_elm) {
-            return false;
-          }
-          ++rhs_it;
-        }
-
-        return rhs_it != rhs_en;
-      });
-
-  // Then, index them
-  // Here I can assume there will be no repeated entries (that would be a cycle)
-  for (auto &vec : callsites_) {
-    std::set<CsCFG::Id> contained_ids;
-    for (auto elm : vec) {
-      auto rc = contained_ids.emplace(elm);
-      if (!rc.second) {
-        llvm::dbgs() << "Have repeated id: " << elm << "\n";
-        llvm::dbgs() << "stack is:";
-        for (auto elm2 : vec) {
-          llvm::dbgs() << "ELM :" << elm2 << "\n";
-          for (auto scc_inst : cfg.getSCC(elm2)) {
-            llvm::dbgs() << "  " << *scc_inst << "\n";
+    // Then, index them
+    // Here I can assume there will be no repeated entries
+    //   (that would be a cycle)
+    for (auto &vec : callsites_) {
+      std::set<CsCFG::Id> contained_ids;
+      for (auto elm : vec) {
+        auto rc = contained_ids.emplace(elm);
+        if (!rc.second) {
+          llvm::dbgs() << "Have repeated id: " << elm << "\n";
+          llvm::dbgs() << "stack is:";
+          for (auto elm2 : vec) {
+            llvm::dbgs() << "ELM :" << elm2 << "\n";
+            for (auto scc_inst : cfg.getSCC(elm2)) {
+              llvm::dbgs() << "  " << *scc_inst << "\n";
+            }
+            llvm::dbgs() << "\n";
           }
           llvm::dbgs() << "\n";
+
+
+          llvm_unreachable("Shouldn't have happened");
         }
-        llvm::dbgs() << "\n";
-
-
-        llvm_unreachable("Shouldn't have happened");
+        index_[elm].emplace_back(&vec);
       }
-      index_.emplace(elm, &vec);
     }
+  } else {
+    llvm::dbgs() << "CallContextLoader: no logfile loaded!\n";
   }
 
   return false;

@@ -193,7 +193,14 @@ extern "C" {
 void __DynPtsto_do_init() { }
 
 void __DynPtsto_do_finish() {
-  std::string outfilename("dyn_ptsto.log");
+  const char *logname = "dyn_ptsto.log";
+
+  char *envname = getenv("SFS_LOGFILE");
+  if (envname != nullptr) {
+    logname = envname;
+  }
+
+  std::string outfilename(logname);
 
   // If there is already an outfilename, merge the two
   {

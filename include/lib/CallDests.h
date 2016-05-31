@@ -2,8 +2,13 @@
  * Copyright (C) 2015 David Devecsery
  */
 
-#ifndef INCLUDE_CALLDESTS_H_
-#define INCLUDE_CALLDESTS_H_
+#ifndef INCLUDE_LIB_CALLDESTS_H_
+#define INCLUDE_LIB_CALLDESTS_H_
+
+#include <functional>
+#include <map>
+#include <unordered_map>
+#include <vector>
 
 #include "include/util.h"
 #include "include/DUG.h"
@@ -19,20 +24,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 
-
-#include <functional>
-#include <unordered_map>
-#include <vector>
-
 extern llvm::cl::opt<bool> do_spec;
-
-/*
-struct icsHasher {
-  size_t operator()(const llvm::ImmutableCallSite &cs) const {
-    return std::hash<llvm::Instruction *>()(cs.getInstruction());
-  }
-};
-*/
 
 class CallDests : public llvm::ModulePass {
  public:
@@ -53,7 +45,7 @@ class CallDests : public llvm::ModulePass {
       fillCallers();
     }
 
-    return callers_.at(fcn);
+    return callers_[fcn];
   }
 
   const std::vector<const llvm::Function *> &
@@ -110,4 +102,4 @@ class CallDests : public llvm::ModulePass {
     std::vector<const llvm::Instruction *>> callers_;
 };
 
-#endif  // INCLUDE_CALLDESTS_H_
+#endif  // INCLUDE_LIB_CALLDESTS_H_

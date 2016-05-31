@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include <algorithm>
@@ -213,7 +214,14 @@ extern "C" {
 void __DynAlias_do_init() { }
 
 void __DynAlias_do_finish() {
-  std::string outfilename("dyn_alias.log");
+  const char *logname = "dyn_alias.log";
+
+  char *envname = getenv("SFS_LOGFILE");
+  if (envname != nullptr) {
+    logname = envname;
+  }
+
+  std::string outfilename(logname);
 
   // If there is already an outfilename, merge the two
   {
@@ -255,6 +263,7 @@ void __DynAlias_do_malloc(int32_t obj_id, int64_t size,
 void __DynAlias_main_init2(int32_t argv_id, int32_t arg_id,
     int32_t /*envp_id*/, int32_t /*env_id*/,
     int argc, char **argv) {
+
   int i = 0;
   for (i = 0; i < argc; i++) {
     __DynAlias_do_malloc(arg_id, (strlen(argv[i])+1), argv[i]);
@@ -531,12 +540,29 @@ void __DynAlias_do_malloc(int32_t, int64_t size,
 
 void __DynAlias_do_load(int32_t load_id, void *addr, size_t) {
   std::unique_lock<std::mutex> lk(inst_lock);
-  load_to_store_alias[load_id].insert(map.get(addr));
+
+  auto id = map.get(addr);
+  /*
+  if (load_id == 11061) {
+    std::cerr << "Loading from: " << load_id << " at: " << addr << " size: " <<
+      size << std::endl;
+    std::cerr << "  got id: " << id << std::endl;
+  }
+  */
+
+  load_to_store_alias[load_id].insert(id);
 }
 
 void __DynAlias_do_store(int32_t store_id, void *addr, size_t size) {
   // Convert from bits to bytes
   std::unique_lock<std::mutex> lk(inst_lock);
+
+  /*
+  if (store_id == 10923) {
+    std::cerr << "Storing to: " << store_id << " at: " << addr << " size: " <<
+      size << std::endl;
+  }
+  */
   map.set(store_id, addr, size);
 }
 

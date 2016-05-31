@@ -243,7 +243,7 @@ const std::vector<std::vector<CsCFG::Id>> &CsCFG::findPathsFromMain(Id end)
 
   auto rc = pathCache_.emplace(end, std::move(ret));
 
-  llvm::dbgs() << "have paths of size: " << rc.first->second.size() << "\n";
+  // llvm::dbgs() << "have paths of size: " << rc.first->second.size() << "\n";
   return rc.first->second;
 }
 
