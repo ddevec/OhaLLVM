@@ -41,8 +41,10 @@ class ContextInfo : public llvm::ModulePass {
   struct stack_id_tag {};
   struct store_bdd_tag { };
   struct bb_bdd_tag { };
+  struct stack_set_tag { };
 
   class StackCache;
+
 
  public:
   // FIXME: Technically not part of the external interface...
@@ -60,6 +62,7 @@ class ContextInfo : public llvm::ModulePass {
 
   typedef BddSet<StoreNumber::Id, store_bdd_tag> StoreBddSet;
   typedef BddSet<BBNumber::Id, bb_bdd_tag> BBBddSet;
+  typedef BddSet<CsCFG::Id, stack_set_tag> StackSet;
 
   class StackInfo {
     //{{{
@@ -69,8 +72,8 @@ class ContextInfo : public llvm::ModulePass {
     }
 
     StackInfo() = delete;
-    StackInfo(std::vector<CsCFG::Id> stack,
-        StackId id) : stack_(std::move(stack)), id_(id) { }
+    StackInfo(std::vector<CsCFG::Id> stack, StackSet set,
+        StackId id) : stack_(std::move(stack)), set_(set), id_(id) { }
 
     const std::vector<CsCFG::Id> &stack() const {
       return stack_;
@@ -88,6 +91,8 @@ class ContextInfo : public llvm::ModulePass {
 
    private:
     std::vector<CsCFG::Id> stack_;
+
+    StackSet set_;
 
     // Cache of ParentId?
     mutable StackId parentId_;
@@ -173,11 +178,7 @@ class ContextInfo : public llvm::ModulePass {
     mutable bool predsPopulated_ = false;
     mutable BBBddSet predBBs_;
     mutable StoreBddSet predStores_;
-    // mutable util::SparseBitmap<ObjectMap::ObjID> predBBs_;
-    // mutable std::set<const llvm::StoreInst *> predStores_;
     mutable bool localPopulated_ = false;
-    // mutable util::SparseBitmap<ObjectMap::ObjID> localPredBBs_;
-    // mutable std::set<const llvm::StoreInst *> localPredStores_;
     mutable BBBddSet localPredBBs_;
     mutable StoreBddSet localPredStores_;
     mutable std::vector<llvm::ImmutableCallSite> calls_;
@@ -196,7 +197,7 @@ class ContextInfo : public llvm::ModulePass {
   }
 
   // Context Creations/acquisition functions {{{
-  std::set<ContextId> getAllContexts(const llvm::Instruction *) const;
+  std::vector<ContextId> getAllContexts(const llvm::Instruction *) const;
 
   std::vector<ContextId> getContexts(CsCFG::Id val, StackId id) const {
     std::vector<ContextId> ret;
@@ -315,8 +316,7 @@ class ContextInfo : public llvm::ModulePass {
       }
     };
 
-    std::unordered_map<std::vector<CsCFG::Id>, size_t,
-      StackHasher> cache_;
+    std::unordered_map<int, size_t> cache_;  // NOLINT
     // std::vector<StackInfo> stacks_;
     size_t stackSize_ = 0;
     std::unique_ptr<int8_t[]> stackMem_;

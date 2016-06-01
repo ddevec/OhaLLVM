@@ -57,7 +57,7 @@ class CsCFG : public llvm::ModulePass {
   };
 
  public:
-  typedef util::ID<id_tag, uint32_t, -1> Id;
+  typedef util::ID<id_tag, int32_t, -1> Id;
 
   static char ID;
   CsCFG();
@@ -88,6 +88,10 @@ class CsCFG : public llvm::ModulePass {
 
   const std::vector<std::vector<Id>> &findPathsFromMain(Id end) const;
 
+  size_t size() const {
+    return csMap_.size();
+  }
+
  private:
   void findPath(const CsNode &node, Id end,
       std::unordered_map<Id, std::vector<std::vector<Id>>, Id::hasher> &cache)
@@ -98,7 +102,6 @@ class CsCFG : public llvm::ModulePass {
   Id mainNode_;
 
   std::unordered_map<const llvm::Instruction *, SEG::NodeID> csMap_;
-  std::vector<const llvm::Instruction *> idToCs_;
 
   mutable std::unordered_map<Id, std::vector<std::vector<Id>>, Id::hasher>
     pathCache_;

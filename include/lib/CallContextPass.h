@@ -42,6 +42,7 @@ class CallContextLoader : public llvm::ModulePass {
   }
 
   bool isValid(const std::vector<CsCFG::Id> &check) const {
+    assert(hasDynData());
     auto it = std::lower_bound(std::begin(callsites_), std::end(callsites_),
         check);
 

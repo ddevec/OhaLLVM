@@ -258,15 +258,23 @@ ContextId ContextInfo::ContextCache::find(
 
 StackId ContextInfo::StackCache::find(
     const std::vector<CsCFG::Id> &stack) {
+  // Construct a bdd out of it?
+  StackSet s;
+  // llvm::dbgs() << "Making set\n";
+  for (auto &elm : stack) {
+    s.set(elm);
+  }
+  // llvm::dbgs() << "Done making set\n";
+
   auto val = stackSize_;
-  auto rc = cache_.emplace(stack, val);
+  auto rc = cache_.emplace(s.id(), val);
   if (rc.second) {
     // Make entry in stacks_
     /*
     stacks_.emplace_back(stack, StackId(val));
     assert(stacks_.size() == val+1);
     */
-    new (&stacks_[stackSize_]) StackInfo(stack, StackId(val));
+    new (&stacks_[stackSize_]) StackInfo(stack, s, StackId(val));
     stackSize_++;
     assert(stackSize_ < MaxStacks);
     assert(stackSize_ == val+1);
@@ -358,10 +366,9 @@ ContextInfo::stackPush(ContextId context_id,
   return std::move(ret);
 }
 
-std::set<ContextId>
+std::vector<ContextId>
 ContextInfo::getAllContexts(const llvm::Instruction *inst) const {
   // Return all possible contexts for inst...
-  std::set<ContextId> ret;
 
   // This should require visiting each node once, but keeping a listing of all
   // possible paths through the graph per node O(n^2), so, O(n^3)... ugh
@@ -370,65 +377,86 @@ ContextInfo::getAllContexts(const llvm::Instruction *inst) const {
   //   possible stacks for inst:
   //     This means we convert inst to all callsites which call inst's function
 
-  // First, find all callsites before inst in this function
-  auto callers =
-    info_.call_info->getCallers(inst->getParent()->getParent());
+  static std::unordered_map<const llvm::Function *, std::vector<StackId>>
+    fcn_to_stacks;
 
-  // llvm::dbgs() << "have: " << callers.size() << " callers\n";
-  for (auto &ci : callers) {
-    assert(llvm::isa<llvm::CallInst>(ci));
-    auto &cs_paths = csCFG_->findPathsFromMain(csCFG_->getId(ci));
-    // llvm::dbgs() << "  caller has: " << cs_paths.size() << " paths\n";
+  static std::unordered_map<const llvm::Instruction *, std::vector<ContextId>>
+    inst_to_context;
 
-    // Now, iterate each path in fcn_paths
-    // llvm::dbgs() << "cs_paths:\n";
-    for (auto &path : cs_paths) {
-      // llvm::dbgs() << "  " << util::print_iter(path) << "\n";
+  auto con_it = inst_to_context.find(inst);
 
-      if (info_.stack_info->hasDynData()) {
-        if (!info_.stack_info->isValid(path)) {
-          /*
-          llvm::dbgs() << "    Path dynamically invalid:" <<
-              util::print_iter(path) << "\n";
-          */
-          continue;
+  if (con_it == std::end(inst_to_context)) {
+    std::set<ContextId> ret;
+
+    auto it = fcn_to_stacks.find(inst->getParent()->getParent());
+
+    if (it == std::end(fcn_to_stacks)) {
+      std::vector<StackId> vec;
+
+      // First, find all callsites before inst in this function
+      auto callers =
+        info_.call_info->getCallers(inst->getParent()->getParent());
+
+      // llvm::dbgs() << "have: " << callers.size() << " callers\n";
+      for (auto &ci : callers) {
+        assert(llvm::isa<llvm::CallInst>(ci));
+        auto &cs_paths = csCFG_->findPathsFromMain(csCFG_->getId(ci));
+        // llvm::dbgs() << "  caller has: " << cs_paths.size() << " paths\n";
+
+        // Now, iterate each path in fcn_paths
+        // llvm::dbgs() << "cs_paths:\n";
+        for (auto &path : cs_paths) {
+          // llvm::dbgs() << "  " << util::print_iter(path) << "\n";
+
+          if (info_.stack_info->hasDynData()) {
+            if (!info_.stack_info->isValid(path)) {
+              /*
+              llvm::dbgs() << "    Path dynamically invalid:" <<
+                  util::print_iter(path) << "\n";
+              */
+              continue;
+            }
+          }
+
+          // Create a stack for this path -- note, since the path is
+          //   in functions, this can return a set of stacks
+          auto stack_id = stackCache_.find(path);
+
+          if (stack_id == StackId::invalid()) {
+            continue;
+          }
+
+          // Now, add the context to my return set
+          vec.emplace_back(stack_id);
         }
       }
 
-      // Create a stack for this path -- note, since the path is in functions,
-      //    this can return a set of stacks
-      auto stack_id = stackCache_.find(path);
+      auto rc = fcn_to_stacks.emplace(inst->getParent()->getParent(),
+          std::move(vec));
+      assert(rc.second);
+      it = rc.first;
+    }
 
+    auto &stacks = it->second;
+    for (auto &stack_id : stacks) {
       if (stack_id == StackId::invalid()) {
         continue;
       }
-
-      /*
-      auto &stack = stackCache_.getStack(stack_id);
-      llvm::dbgs() << "stack (" << stack_id << ") is:" <<
-          util::print_iter(stack.stack()) << "\n"
-      */
 
       // Now, add the context to my return set
       ret.emplace(getContext(inst, stack_id));
     }
 
-    /*
-    if (info_.stack_info->hasDynData()) {
-      auto contexts = info_.stack_info->getAllContexts(csCFG_->getId(ci));
-      llvm::dbgs() << "dyn_info:\n";
-      for (auto &ppath : contexts) {
-        auto &path = *ppath;
-        llvm::dbgs() << "  " << util::print_iter(path) << "\n";
-      }
-    }
-    */
+    auto rc = inst_to_context.emplace(std::piecewise_construct,
+        std::make_tuple(inst),
+        std::make_tuple(std::begin(ret), std::end(ret)));
+    assert(rc.second);
+    con_it = rc.first;
   }
 
   // Compare contexts vs those in dyn:
   // First, get contexts from dyn
-
-  return std::move(ret);
+  return con_it->second;
 }
 
 std::vector<ContextId>
@@ -516,6 +544,8 @@ bool ContextInfo::runOnModule(llvm::Module &m) {
 
   BBBddSet::Setup(info_.bb_num->numBBs());
   StoreBddSet::Setup(info_.si_num->numStores());
+  llvm::dbgs() << "providing size: " << csCFG_->size() << "\n";
+  StackSet::Setup(csCFG_->size());
 
   mainFcn_ = m.getFunction("main");
 

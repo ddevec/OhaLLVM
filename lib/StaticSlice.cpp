@@ -666,9 +666,9 @@ class StaticSlice : public llvm::ModulePass {
     return std::move(ret);
   }
 
-  std::set<const llvm::Value *>
+  std::unordered_set<const llvm::Value *>
   getSlice(const std::vector<Position> &positions) {
-    std::set<const llvm::Value *> ret;
+    std::unordered_set<const llvm::Value *> ret;
     // Add v to our set, and do some work
     util::Worklist<Position> worklist(
         std::begin(positions), std::end(positions));

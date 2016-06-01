@@ -43,6 +43,12 @@ class BddSet {
   BddSet &operator=(BddSet &&) = default;
   //}}}
 
+  // Misc {{{
+  int id() const {
+    return ptsto_.id();
+  }
+  //}}}
+
   // Set, reset, insert, assign, clear, test {{{
   bool set(value_type id) {
     assert(static_cast<int32_t>(id) < domainSize_);
@@ -465,6 +471,7 @@ std::map<uint32_t, std::pair<bool,
 // Static setup function {{{
 template <typename id_type, typename tag>
 void BddSet<id_type, tag>::Setup(int32_t domain_size) {
+  assert(bddDom_ == -1);
   // add one dom
   bdd_init_once(1);
   bddInitd_ = true;

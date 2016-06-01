@@ -260,12 +260,11 @@ void CallContextLoader::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
 // Here is where the magic happens
 bool CallContextLoader::runOnModule(llvm::Module &) {
   // Open the loader-file
-  std::ifstream logfile(DynCallGraphFilename);
+  std::ifstream logfile(DynCallGraphFilename, std::ifstream::in);
 
   // If we actually managed to get data...
-  if (logfile.is_open()) {
+  if (logfile.good()) {
     llvm::dbgs() << "CallContextLoader: Successfully Loaded!\n";
-    loaded_ = true;
 
     auto &cfg = getAnalysis<CsCFG>();
 
@@ -295,6 +294,7 @@ bool CallContextLoader::runOnModule(llvm::Module &) {
       }
       llvm::dbgs() << "\n";
       */
+      loaded_ = true;
     }
 
     // Then, sort them

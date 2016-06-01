@@ -6,6 +6,7 @@
 #define INCLUDE_LIB_UNUSEDFUNCTIONS_H__
 
 #include <set>
+#include <unordered_set>
 
 #include "llvm/Pass.h"
 #include "llvm/Module.h"
@@ -106,8 +107,8 @@ class UnusedFunctions : public llvm::ModulePass {
     }
 
  private:
-    std::set<const llvm::Function *> visited_;
-    std::set<const llvm::BasicBlock *>visitedBB_;
+    std::unordered_set<const llvm::Function *> visited_;
+    std::unordered_set<const llvm::BasicBlock *>visitedBB_;
 
     bool allUsed_ = false;
     const bool ignoreUnused_;
