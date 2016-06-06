@@ -177,6 +177,30 @@ bool SpecSFS::runOnModule(llvm::Module &m) {
   extInfo_ = cons_pass.getLibInfo();
   ObjectMap &omap = omap_;
 
+  /*
+  for (auto &pcons : cg) {
+    if (pcons != nullptr) {
+      if (static_cast<int32_t>(pcons->rep()) == 210796) {
+        llvm::dbgs() << __LINE__ << ": Have node: " << pcons->rep() << "!\n";
+      }
+    }
+  }
+  */
+
+  // check the CG for non-reps
+  /*
+  for (auto &pcons : cg) {
+    if (pcons == nullptr) {
+      continue;
+    }
+
+    auto &cons = *pcons;
+    assert(omap_.isRep(cons.src()));
+    assert(omap_.isRep(cons.dest()));
+    assert(omap_.isRep(cons.rep()));
+  }
+  */
+
   // Initial optimization pass
   // Runs HU on the graph as it stands, w/ only top level info filled in
   // Removes any nodes deemed to be non-ptr (definitely null), and merges nodes

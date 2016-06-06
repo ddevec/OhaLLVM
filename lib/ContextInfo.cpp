@@ -325,7 +325,7 @@ ContextInfo::stackPush(ContextId context_id,
 
   auto &context = getContext(context_id);
   auto stack_id = context.stack();
-  auto stack = stackCache_.getStack(stack_id);
+  auto &stack = stackCache_.getStack(stack_id);
   auto stack_vec = stack.stack();
 
   // Sometimes we can have backpointers... ensure we don't make a stack with

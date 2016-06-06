@@ -152,21 +152,26 @@ class DUG {
       int32_t consid = 0;
       {
         util::PerfTimerPrinter fill_timer(dbg, "fill loop");
-        std::for_each(std::begin(cg), std::end(cg),
-            [this, &consid, &omap]
-            (const ConstraintGraph::iter_type &pcons) {
+        for (auto &pcons : cg) {
           // Ignore nullptrs, they've been deleted
           if (pcons == nullptr) {
             consid++;
-            return;
+            continue;
           }
 
           // O(1)
-          auto &cons = cast<Constraint>(*pcons);
+          auto &cons = *pcons;
           // Insert the node into the seg
           auto dest = cons.dest();
           auto src = cons.src();
           auto offs = cons.offs();
+          if (!omap.isRep(dest)) {
+            llvm::dbgs() << "dest not rep! Constraint is: " << cons << "\n";
+          }
+          if (!omap.isRep(src)) {
+            llvm::dbgs() << "src not rep! Constraint is: " << cons << "\n";
+            llvm::dbgs() << "rep is: " << omap.getRep(cons.src()) << "\n";
+          }
           assert(omap.isRep(dest));
           assert(omap.isRep(src));
 
@@ -178,7 +183,8 @@ class DUG {
           dout("  node src_obj_id: " << src << ": " <<
               ValPrint(src) << "\n");
 
-          if (cons.rep() == ObjectMap::ObjID(101165)) {
+          /*
+          if (cons.rep() == ObjectMap::ObjID(210796)) {
             llvm::dbgs() << "  load_rep is: (" << cons.rep() << ") " <<
               FullValPrint(cons.rep()) << "\n";
             llvm::dbgs() << "  src is: (" << cons.src() << ") " <<
@@ -187,6 +193,7 @@ class DUG {
               FullValPrint(cons.dest()) << "\n";
             llvm::dbgs() << "  offs is: " << offs << "\n";
           }
+          */
 
           switch (cons.type()) {
             case ConstraintType::AddressOf:
@@ -243,13 +250,13 @@ class DUG {
           }
 
           auto &nd = DUG_.getNode<DUGNode>(node_id);
-          // llvm::dbgs() << "  Creating node: " << nd.rep() << "\n";
+          assert(omap.isRep(nd.rep()));
           nodeMap_.emplace(nd.rep(), node_id);
 
           // logout("s " << src << "\n");
           // logout("d " << dest << "\n");
           consid++;
-        });
+        }
       }
 
       // for each node in DUG:

@@ -170,7 +170,10 @@ bool SpecSFS::computePartitions(DUG &dug, CFG &cfg, SpecAnders &aux,
       assert(omap.getRep(pr.first) == pr.first);
 
 
-      // llvm::dbgs() << "Getting node: " << pr.first << "\n";
+      /*
+      llvm::dbgs() << "Getting node: " << pr.first << "\n";
+      llvm::dbgs() << "node: " << FullValPrint(pr.first) << "\n";
+      */
       auto &node = dug.getNode(pr.first);
 
       ObjectMap::ObjID val_id;

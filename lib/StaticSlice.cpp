@@ -212,6 +212,7 @@ class StaticSlice : public llvm::ModulePass {
     std::ofstream out_file(outfilename, std::ofstream::out);
 
     if (do_rand_slice) {
+      util::PerfTimerPrinter X(llvm::dbgs(), "Random Slicing");
       llvm::dbgs() << "Total Insts: " << lblr.totalInsts() << "\n";
       llvm::dbgs() << "Total USED Insts: " << lblr.totalUsedInsts() << "\n";
 
@@ -552,6 +553,22 @@ class StaticSlice : public llvm::ModulePass {
         // Add the pointed to struct to our op list
         auto id = info.getContext(gep->getOperand(0), pos.stack());
         ret.emplace_back(info, id);
+      } else if (auto iv = dyn_cast<llvm::InsertValueInst>(pinst)) {
+        // Add the previous struct to our op list
+        auto id = info.getContext(iv->getOperand(0), pos.stack());
+        ret.emplace_back(info, id);
+        // Add the inserted value to our op list
+        auto id2 = info.getContext(iv->getOperand(1), pos.stack());
+        ret.emplace_back(info, id2);
+      } else if (auto ev = dyn_cast<llvm::ExtractValueInst>(pinst)) {
+        // Add the previous struct to our op list
+        auto id = info.getContext(ev->getOperand(0), pos.stack());
+        ret.emplace_back(info, id);
+        /*
+        // Add the extraced value to our op list
+        auto id2 = info.getContext(iv->getOperand(1));
+        ret.emplace_back(info, id2);
+        */
       } else if (auto si = dyn_cast<llvm::SelectInst>(pinst)) {
         auto id = info.getContext(si->getOperand(1), pos.stack());
         ret.emplace_back(info, id);

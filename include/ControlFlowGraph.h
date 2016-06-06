@@ -446,6 +446,10 @@ class CFG {
     // Def/use/global tracking {{{
     // Setters {{{
     bool addUse(CFGid cfg_id, ObjectMap::ObjID load_dest_id) {
+      if (static_cast<int32_t>(load_dest_id) == 210796) {
+        llvm::dbgs() << "HAVE NODE: " << load_dest_id << "!\n";
+        assert(0);
+      }
       auto &node = CFG_.getNode<Node>(cfg_id);
 
       node.addUse(load_dest_id);
@@ -456,6 +460,10 @@ class CFG {
     }
 
     bool addDef(CFGid cfg_id, ObjectMap::ObjID store_id) {
+      if (static_cast<int32_t>(store_id) == 210796) {
+        llvm::dbgs() << "HAVE DEF NODE: " << store_id << "!\n";
+        assert(0);
+      }
       auto &node = CFG_.getNode<Node>(cfg_id);
 
       node.addDef(store_id);

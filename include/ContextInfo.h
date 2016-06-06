@@ -237,7 +237,7 @@ class ContextInfo : public llvm::ModulePass {
   class ContextCache {
     //{{{
    public:
-    static const size_t MaxContexts = 10000000;
+    static const size_t MaxContexts = 50000000;
 
     explicit ContextCache(ExternalInfo &info) : info_(info),
       contextMem_(new int8_t[sizeof(Context) * MaxContexts]),
@@ -286,7 +286,7 @@ class ContextInfo : public llvm::ModulePass {
   class StackCache {
     //{{{
    public:
-    static const size_t MaxStacks = 5000000;
+    static const size_t MaxStacks = 50000000;
 
     StackCache() :
       stackMem_(new int8_t[sizeof(StackInfo) * MaxStacks]),

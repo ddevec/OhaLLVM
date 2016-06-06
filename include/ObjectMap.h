@@ -949,6 +949,12 @@ class ObjectMap {
       remap_id++;
     }
 
+    for (ObjID i(0); i < ObjID(mapping_.size()); i++) {
+      if (remap[i] == ObjID(210796)) {
+        llvm::dbgs() << "Remap: " << i << "  to: " << remap[i] << "\n";
+      }
+    }
+
     assert(static_cast<size_t>(remap_id) == mapping_.size());
 
     objSet_.clear();

@@ -79,7 +79,7 @@ ObjectMap::ObjID getConstValue(ConstraintGraph &cg, ObjectMap &omap,
       llvm::isa<const llvm::UndefValue>(c)) {
     return ObjectMap::NullValue;
   } else if (auto gv = dyn_cast<llvm::GlobalValue>(c)) {
-    return omap.getValue(gv);
+    return omap.getValueRep(gv);
   } else if (auto ce = dyn_cast<llvm::ConstantExpr>(c)) {
     switch (ce->getOpcode()) {
       case llvm::Instruction::GetElementPtr:
@@ -115,7 +115,7 @@ ObjectMap::ObjID getConstValue(ConstraintGraph &cg, ObjectMap &omap,
           // Now, if we cast from a struct to a non-struct, we need to merge
           //   nodes...
 
-          /* FIXME: THis is unsound????
+          // /* FIXME: THis is unsound????
           auto base_type = ce->getOperand(0)->getType();
           assert(llvm::isa<llvm::PointerType>(base_type));
           auto base_nptr_type = base_type->getContainedType(0);
@@ -141,7 +141,7 @@ ObjectMap::ObjID getConstValue(ConstraintGraph &cg, ObjectMap &omap,
             // Now, return the structure type
             return ret_id;
           }
-          */
+          // */
 
           return base_id;
         }
@@ -593,11 +593,9 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
   if (C->getType()->isSingleValueType()) {
     if (llvm::isa<llvm::PointerType>(C->getType())) {
       auto const_id = getConstValue(cg, omap, C);
-      /*
       dbg << "Adding global init for: (" << dest << ") " <<
           ValPrint(dest) << " to (" << const_id << ") " << ValPrint(const_id)
           << "\n";
-      */
 
       /*
       llvm::dbgs() << "Assigning constant: " << *C << "\n";
@@ -623,10 +621,8 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
         llvm::isa<llvm::ConstantStruct>(C) ||
         llvm::isa<llvm::ConstantDataSequential>(C));
 
-    /*
     dbg << "Adding STRUCT global init for: (" << dest << ") " <<
       ValPrint(dest) << "\n";
-    */
     // For each field of the initializer, add a constraint for the field
     // This is done differently for structs than for array
     if (auto cs = dyn_cast<llvm::ConstantStruct>(C)) {
@@ -643,7 +639,7 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
     } else {
       if_debug_enabled(int32_t first_offs = -1);
 
-      // llvm::dbgs() << "Arraying constant: " << *C << "\n";
+      llvm::dbgs() << "Arraying constant: " << *C << "\n";
       std::for_each(C->op_begin(), C->op_end(),
           [&offset, &cg, &cfg, &cs, &omap, &dest
           if_debug_enabled(, &first_offs)]
@@ -652,17 +648,17 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
         offset = addGlobalInitializerConstraints(cg, cfg, omap,
           dest, field_cons);
 
+        /*
         if_debug_enabled(
           if (first_offs < 0) {
             first_offs = offset;
           });
 
         // Each array field should have the same size
-        /*
         llvm::dbgs() << "offset: " << offset << ", first_offs " << first_offs <<
             "\n";
+        assert(offset == first_offs);
         */
-        // assert(offset == first_offs);
       });
     }
   } else {
@@ -979,7 +975,6 @@ static bool addConstraintsForCall(ConstraintGraph &cg, CFG &cfg,
   // If this is direct && is external
   if (F && F->isDeclaration()) {
     // Add it as an external function
-    // llvm::dbgs() << "External call\n";
     addConstraintsForExternalCall(cg, cfg, omap, cs, F, next_id, ext_info);
     return false;
   }

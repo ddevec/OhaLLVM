@@ -184,6 +184,20 @@ class Constraint {
     void remap(const util::ObjectRemap<ObjID> &remap) {
       src_ = remap[src_];
       dest_ = remap[dest_];
+      if (remap[rep_] == ObjID(210796)) {
+        llvm::dbgs() << "cg Remapping: " << rep_ << " to " << remap[rep_] <<
+          "\n";
+      }
+      
+      if (rep_ == ObjID(210796)) {
+        llvm::dbgs() << "??cg Remapping: " << rep_ << " to " << remap[rep_] <<
+          "\n";
+      }
+
+      if (rep_ == ObjID(87170)) {
+        llvm::dbgs() << "cg Remapping: " << rep_ << " to " << remap[rep_] <<
+          "\n";
+      }
       rep_ = remap[rep_];
     }
     // }}}
@@ -336,6 +350,7 @@ class ConstraintGraph {
         constraints_.emplace_back(new Constraint(s, d, type, o));
 
         auto id = ConsID(constraints_.size()-1);
+
         return id;
       }
     }
@@ -363,12 +378,16 @@ class ConstraintGraph {
     }
 
     void removeConstraint(std::unique_ptr<Constraint> &pcons) {
+      if (pcons->rep() == ObjID(210796)) {
+        llvm::dbgs() << "Removing cons: " << *pcons << "\n";
+        assert(0);
+      }
       pcons.reset(nullptr);
     }
 
     void removeConstraint(ConsID id) {
       // Reset the ptr to nullptr
-      constraints_.at(id.val()).reset(nullptr);
+      removeConstraint(constraints_.at(static_cast<size_t>(id)));
     }
 
     void updateObjIDs(const util::ObjectRemap<ObjID> &remap) {

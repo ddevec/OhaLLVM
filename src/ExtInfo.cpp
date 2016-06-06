@@ -199,6 +199,7 @@ struct ReturnArgOrStaticCons {
     // First, handle the static return case
     // Add objects to the graph
     auto inst = cs.getInstruction();
+    llvm::dbgs() << "get named: " << name << "\n";
     auto ci_obj = omap.getNamedObject(name);
     auto ci_id = omap.getValue(inst);
     cg.add(ConstraintType::AddressOf,
@@ -1077,6 +1078,7 @@ void ExtLibInfo::init(llvm::Module &m, ObjectMap &omap) {  //  NOLINT
   omap.addNamedObject(nullptr, "ctype");
   omap.addNamedObject(m.getTypeByName("struct.tm"), "datetime_static");
   omap.addNamedObject(nullptr, "textdomain_static");
+  omap.addNamedObject(nullptr, "gettext_static");
   omap.addNamedObject(nullptr, "terminfo");
   omap.addNamedObject(nullptr, "clib");
   omap.addNamedObject(nullptr, "locale");

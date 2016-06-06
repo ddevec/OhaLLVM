@@ -71,8 +71,10 @@ class CsCFG : public llvm::ModulePass {
   }
 
   Id getId(const llvm::Instruction *fcn) const {
-    return util::convert_id<Id>(
+    auto ret = util::convert_id<Id>(
         csGraph_.getNode(csMap_.at(fcn)).id());
+    assert(static_cast<size_t>(ret) < csGraph_.getNumNodes());
+    return ret;
   }
 
   const std::set<const llvm::Instruction *> &
@@ -89,7 +91,7 @@ class CsCFG : public llvm::ModulePass {
   const std::vector<std::vector<Id>> &findPathsFromMain(Id end) const;
 
   size_t size() const {
-    return csMap_.size();
+    return csGraph_.getNumNodes();
   }
 
  private:

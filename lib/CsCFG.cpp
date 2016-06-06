@@ -4,9 +4,11 @@
 
 #include "include/lib/CsCFG.h"
 
+#include <algorithm>
 #include <iterator>
 #include <map>
 #include <vector>
+#include <unordered_set>
 
 #include "include/lib/CallDests.h"
 #include "include/Tarjans.h"
@@ -148,9 +150,16 @@ bool CsCFG::runOnModule(llvm::Module &m) {
     RunTarjans<> X(csGraph_);
   }
 
+  // Tarjans can leave some duplicated edges, we don't want to deal with those
+  csGraph_.cleanGraph();
+
   // Done
   return false;
 }
+
+static size_t num_added = 0;
+static size_t num_vecs_added = 0;
+static size_t most_preds = 0;
 
 void CsCFG::findPath(const CsNode &node, Id end,
     std::unordered_map<Id, std::vector<std::vector<Id>>, Id::hasher> &cache)
@@ -167,6 +176,19 @@ void CsCFG::findPath(const CsNode &node, Id end,
     std::vector<std::vector<Id>> rets;
 
     auto &preds = node.preds();
+    /*
+    // most_preds = std::max(static_cast<size_t>(preds.size()), most_preds);
+    if (most_preds <= static_cast<size_t>(preds.size())) {
+      llvm::dbgs() << "Have most preds: " << preds.size() << "\n";
+      llvm::dbgs() << "Fcns:\n";
+      for (auto inst : node.reps()) {
+        llvm::dbgs() << "  " << ValPrinter(inst) << "\n";
+      }
+      most_preds = preds.size();
+    }
+    */
+
+    std::unordered_set<SEG::NodeID> dedup_set;
 
     for (auto &pred_id : preds) {
       auto &pred_node = csGraph_.getNode<CsNode>(pred_id);
@@ -174,6 +196,10 @@ void CsCFG::findPath(const CsNode &node, Id end,
       if (util::convert_id<Id>(pred_node.id()) == node_id) {
         continue;
       }
+
+      auto rc = dedup_set.emplace(pred_node.id());
+      assert(rc.second);
+
       findPath(pred_node, end, cache);
 
       auto it = cache.find(util::convert_id<Id>(pred_node.id()));
@@ -182,19 +208,30 @@ void CsCFG::findPath(const CsNode &node, Id end,
       auto &pred_vec = it->second;
 
       // Copy all of the cached nodes into rets
+      /*
       auto ins_it = rets.insert(std::end(rets),
           std::begin(pred_vec), std::end(pred_vec));
       for (auto en = std::end(rets); ins_it != en; ++ins_it) {
         ins_it->emplace_back(node_id);
       }
+      */
+      // Handle sizing appropriately...
+      for (auto &vec : pred_vec) {
+        rets.emplace_back(vec.size()+1);
+        auto &new_vec = rets.back();
+        std::copy(std::begin(vec), std::end(vec), std::begin(new_vec));
+        new_vec[vec.size()] = node_id;
+      }
     }
 
+    num_added++;
+    num_vecs_added += rets.size();
     cache.emplace(node_id, std::move(rets));
   }
 }
 
-const std::vector<std::vector<CsCFG::Id>> &CsCFG::findPathsFromMain(Id end)
-    const {
+const std::vector<std::vector<CsCFG::Id>> &
+CsCFG::findPathsFromMain(Id end) const {
   // Ugh, this is uglytown
   // Optimizations
   // Use DP algorithm,
@@ -226,10 +263,20 @@ const std::vector<std::vector<CsCFG::Id>> &CsCFG::findPathsFromMain(Id end)
     return it->second;
   }
 
+  llvm::dbgs() << "Find path with graph size: " << csGraph_.getNumNodes() <<
+    "\n";
+
+  num_added = 0;
+  num_vecs_added = 0;
+  most_preds = 0;
   auto &end_node = csGraph_.getNode<CsNode>(
       util::convert_id<SEG::NodeID>(end));
   findPath(end_node, mainNode_,
       result_cache);
+
+  llvm::dbgs() << "total num added: " << num_added << "\n";
+  llvm::dbgs() << "total num vecs added: " << num_vecs_added << "\n";
+  llvm::dbgs() << "most preds: " << most_preds << "\n";
 
   auto rc_it = result_cache.find(util::convert_id<Id>(end_node.id()));
 
