@@ -106,8 +106,8 @@ ObjectMap::ObjID getConstValue(ConstraintGraph &cg, ObjectMap &omap,
         // llvm::dbgs() << "getConstValue returns IntValue\n";
         return ObjectMap::IntValue;
       case llvm::Instruction::PtrToInt:
-        llvm::dbgs() << __LINE__ << ": getConstValue returns IntValue\n";
-        assert(0);
+        // llvm::dbgs() << __LINE__ << ": getConstValue returns IntValue\n";
+        // assert(0);
         return ObjectMap::IntValue;
       case llvm::Instruction::BitCast:
         {
@@ -593,9 +593,11 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
   if (C->getType()->isSingleValueType()) {
     if (llvm::isa<llvm::PointerType>(C->getType())) {
       auto const_id = getConstValue(cg, omap, C);
+      /*
       dbg << "Adding global init for: (" << dest << ") " <<
           ValPrint(dest) << " to (" << const_id << ") " << ValPrint(const_id)
           << "\n";
+      */
 
       /*
       llvm::dbgs() << "Assigning constant: " << *C << "\n";
@@ -621,8 +623,10 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
         llvm::isa<llvm::ConstantStruct>(C) ||
         llvm::isa<llvm::ConstantDataSequential>(C));
 
+    /*
     dbg << "Adding STRUCT global init for: (" << dest << ") " <<
       ValPrint(dest) << "\n";
+      */
     // For each field of the initializer, add a constraint for the field
     // This is done differently for structs than for array
     if (auto cs = dyn_cast<llvm::ConstantStruct>(C)) {
@@ -639,7 +643,7 @@ static int32_t addGlobalInitializerConstraints(ConstraintGraph &cg, CFG &cfg,
     } else {
       if_debug_enabled(int32_t first_offs = -1);
 
-      llvm::dbgs() << "Arraying constant: " << *C << "\n";
+      // llvm::dbgs() << "Arraying constant: " << *C << "\n";
       std::for_each(C->op_begin(), C->op_end(),
           [&offset, &cg, &cfg, &cs, &omap, &dest
           if_debug_enabled(, &first_offs)]
@@ -949,6 +953,10 @@ static bool addConstraintsForExternalCall(ConstraintGraph &cg, CFG &cfg,
     CFG::CFGid *next_id, const ExtLibInfo &ext_info) {
   // Get the exteral
   auto &info = ext_info.getInfo(F->getName());
+  if (ext_info.isUnknownFunction((info))) {
+    llvm::dbgs() << "WARNING: Unknwon external function: " <<
+      ValPrinter(cs.getInstruction()) << "\n";
+  }
 
   return info.insertCallCons(cs, omap, cg, cfg, next_id);
 }
@@ -1248,6 +1256,7 @@ static void idStoreInst(ConstraintGraph &cg, CFG &cfg, ObjectMap &omap,
         llvm::dbgs() << "No object for store dest: " << dest << " : " <<
           ValPrint(dest) << "\n";
       }
+      llvm::dbgs() << "Store on inst: " << ValPrinter(&inst) << "\n";
       cg.add(ConstraintType::Store,
           st_id,
           getValue(cg, omap, st.getOperand(0)),

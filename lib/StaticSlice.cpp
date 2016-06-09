@@ -75,6 +75,11 @@ static llvm::cl::opt<bool>
       llvm::cl::value_desc("bool"),
       llvm::cl::desc("Disables control-flow tracking for slices"));
 
+static llvm::cl::opt<bool>
+  non_context_sensitive("slice-no-context", llvm::cl::init(false),
+      llvm::cl::value_desc("bool"),
+      llvm::cl::desc("Disables context sensitive tracking for slices"));
+
 static llvm::cl::opt<std::string>
   rand_slice_count_str("slice-random-count", llvm::cl::init("10"),
       llvm::cl::value_desc("string"),
@@ -239,14 +244,7 @@ class StaticSlice : public llvm::ModulePass {
         // Create a slice of this instruction:
         llvm::dbgs() << "Slicing: " << inst << "\n";
 
-        // Get all contexts for this Instruction
-        auto contexts = contextInfo_->getAllContexts(&inst);
-        std::vector<Position> positions;
-        positions.reserve(contexts.size());
-
-        for (auto id : contexts) {
-          positions.emplace_back(*contextInfo_, id);
-        }
+        auto positions = getInitialPositions(&inst);
         llvm::dbgs() << "Slice has: " << positions.size() <<
           " initial positions\n";
 
@@ -296,14 +294,7 @@ class StaticSlice : public llvm::ModulePass {
         // Create a slice of this instruction:
         llvm::dbgs() << "Slicing: " << *inst << "\n";
 
-        // Get all contexts for this Instruction
-        auto contexts = contextInfo_->getAllContexts(inst);
-        std::vector<Position> positions;
-        positions.reserve(contexts.size());
-
-        for (auto id : contexts) {
-          positions.emplace_back(*contextInfo_, id);
-        }
+        auto positions = getInitialPositions(inst);
         llvm::dbgs() << "Slice has: " << positions.size() <<
           " initial positions\n";
 
@@ -343,13 +334,7 @@ class StaticSlice : public llvm::ModulePass {
         for (auto &inst : bb) {
           // Create a slice of this instruction:
           llvm::dbgs() << "Slicing: " << inst << "\n";
-          auto contexts = contextInfo_->getAllContexts(&inst);
-          std::vector<Position> positions;
-          positions.reserve(contexts.size());
-
-          for (auto id : contexts) {
-            positions.emplace_back(*contextInfo_, id);
-          }
+          auto positions = getInitialPositions(&inst);
 
           auto slice_set = getSlice(positions);
           llvm::dbgs() << "Have slice:\n";
@@ -462,7 +447,9 @@ class StaticSlice : public llvm::ModulePass {
         auto &bb_set = pos.predBBs();
         /*
         llvm::dbgs() << "predBBs is: " << util::print_iter_cpy(bb_set) << "\n";
+        llvm::dbgs() << "pos.stack() is : " << pos.stack() << "\n";
         */
+        // llvm::dbgs() << "bb_set size: " << bb_set.count() << "\n";
         auto &visited_set = inst_to_checked_bbs[pinst];
         auto to_visit = bb_set - visited_set;
 
@@ -478,7 +465,7 @@ class StaticSlice : public llvm::ModulePass {
           */
 
         // Now visit all the bbs we need to
-        // llvm::dbgs() << "bbNum_ size: " << bbNum_->numBBs() << "\n";
+        // llvm::dbgs() << "to_visit size: " << to_visit.count() << "\n";
         for (auto bb_id : to_visit) {
           // llvm::dbgs() << "bb_id: " << bb_id << "\n";
           auto bb = bbNum_->getBB(bb_id);
@@ -735,6 +722,24 @@ class StaticSlice : public llvm::ModulePass {
   }
 
  private:
+  std::vector<Position> getInitialPositions(const llvm::Instruction *inst) {
+    std::vector<Position> positions;
+    if (non_context_sensitive) {
+      auto id = contextInfo_->getNonCons(inst);
+      positions.emplace_back(*contextInfo_, id);
+    } else {
+      // Get all contexts for this Instruction
+      auto contexts = contextInfo_->getAllContexts(inst);
+      positions.reserve(contexts.size());
+
+      for (auto id : contexts) {
+        positions.emplace_back(*contextInfo_, id);
+      }
+    }
+
+    return std::move(positions);
+  }
+
   const UnusedFunctions *dynInfo_;
 
   ObjectMap omap_;

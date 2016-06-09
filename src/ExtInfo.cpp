@@ -1100,6 +1100,9 @@ void ExtLibInfo::init(llvm::Module &m, ObjectMap &omap) {  //  NOLINT
       std::make_tuple("valloc"),
       std::make_tuple(new Alloc<0>()));
   info_.emplace(std::piecewise_construct,
+      std::make_tuple("memalign"),
+      std::make_tuple(new Alloc<1>()));
+  info_.emplace(std::piecewise_construct,
       std::make_tuple("calloc"),
       std::make_tuple(new AllocOp<0, 1, llvm::Instruction::Mul>()));
 
@@ -1247,7 +1250,7 @@ void ExtLibInfo::init(llvm::Module &m, ObjectMap &omap) {  //  NOLINT
   // Ugh Relpath
   info_.emplace(std::piecewise_construct,
       std::make_tuple("realpath"),
-      std::make_tuple(new ReturnArgOrMallocNS<1>()));
+      std::make_tuple(new ReturnArg<1>()));
 
   // Gettext
   info_.emplace(std::piecewise_construct,

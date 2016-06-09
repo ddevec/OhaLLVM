@@ -71,6 +71,10 @@ class ContextInfo : public llvm::ModulePass {
       return emptyStack_;
     }
 
+    static StackId NonCons() {
+      return StackId(0);
+    }
+
     StackInfo() = delete;
     StackInfo(std::vector<CsCFG::Id> stack, StackSet set,
         StackId id) : stack_(std::move(stack)), set_(set), id_(id) { }
@@ -109,10 +113,13 @@ class ContextInfo : public llvm::ModulePass {
    public:
     Context() = delete;
     Context(const llvm::Value *inst, StackId id, ContextId cid,
-        const ContextInfo &info) :
-      inst_(inst), stack_(id), id_(cid), info_(info) {
-        assert(inst != nullptr);
-      }
+          const ContextInfo &info) :
+        inst_(inst), stack_(id), id_(cid), info_(info) {
+      assert(inst != nullptr);
+      assert(!llvm::isa<llvm::Instruction>(inst) ||
+          info_.info_.dyn_info->isUsed(
+            cast<llvm::Instruction>(inst)->getParent()));
+    }
 
     const llvm::Value *inst() const {
       return inst_;
@@ -199,6 +206,10 @@ class ContextInfo : public llvm::ModulePass {
   // Context Creations/acquisition functions {{{
   std::vector<ContextId> getAllContexts(const llvm::Instruction *) const;
 
+  ContextId getNonCons(const llvm::Instruction *inst) const {
+    return getContext(inst, StackInfo::NonCons());
+  }
+
   std::vector<ContextId> getContexts(CsCFG::Id val, StackId id) const {
     std::vector<ContextId> ret;
     for (auto ins : csCFG_->getSCC(val)) {
@@ -239,11 +250,13 @@ class ContextInfo : public llvm::ModulePass {
    public:
     static const size_t MaxContexts = 50000000;
 
-    explicit ContextCache(ExternalInfo &info) : info_(info),
-      contextMem_(new int8_t[sizeof(Context) * MaxContexts]),
-      contexts_(reinterpret_cast<Context *>(contextMem_.get())) { }
+    explicit ContextCache(ExternalInfo &info);
 
     ContextId find(const llvm::Value *, StackId, const ContextInfo &info);
+
+    ContextId getNoContext() const {
+      return noContext_;
+    }
 
     const Context &getContext(ContextId id) const {
       assert(static_cast<size_t>(id) < contextSize_);
@@ -280,6 +293,8 @@ class ContextInfo : public llvm::ModulePass {
     size_t contextSize_ = 0;
     std::unique_ptr<int8_t[]> contextMem_;
     Context *contexts_;
+
+    ContextId noContext_;
     //}}}
   };
 
@@ -318,7 +333,7 @@ class ContextInfo : public llvm::ModulePass {
 
     std::unordered_map<int, size_t> cache_;  // NOLINT
     // std::vector<StackInfo> stacks_;
-    size_t stackSize_ = 0;
+    size_t stackSize_ = 1;
     std::unique_ptr<int8_t[]> stackMem_;
     StackInfo *stacks_;
     //}}}

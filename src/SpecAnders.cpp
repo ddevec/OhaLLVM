@@ -786,14 +786,18 @@ llvm::AliasAnalysis::AliasResult SpecAnders::alias(const Location &L1,
   auto pnode2 = graph_.tryGetNode(obj_id2);
 
   if (pnode1 == nullptr) {
+    /*
     llvm::dbgs() << "Anders couldn't find node: " << obj_id1 <<
-      FullValPrint(obj_id1, omap_) << "\n";
+      << " " << FullValPrint(obj_id1, omap_) << "\n";
+    */
     return AliasAnalysis::alias(L1, L2);
   }
 
   if (pnode2 == nullptr) {
+    /*
     llvm::dbgs() << "Anders couldn't find node: " << obj_id2 <<
-      FullValPrint(obj_id2, omap_) << "\n";
+      << " " << FullValPrint(obj_id2, omap_) << "\n";
+    */
     return AliasAnalysis::alias(L1, L2);
   }
 

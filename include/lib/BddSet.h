@@ -43,9 +43,21 @@ class BddSet {
   BddSet &operator=(BddSet &&) = default;
   //}}}
 
+  // Static methods {{{
+  static BddSet tautology() {
+    BddSet ret;
+    ret.ptsto_ = bddtrue;
+    return std::move(ret);
+  }
+  //}}}
+
   // Misc {{{
   int id() const {
     return ptsto_.id();
+  }
+
+  bool isTautology() const {
+    return ptsto_ == bddtrue;
   }
   //}}}
 
@@ -324,6 +336,13 @@ class BddSet {
     assert(rc.second);
     std::sort(std::begin(*rc.first->second.second),
         std::end(*rc.first->second.second));
+
+    auto upper_bound = std::lower_bound(std::begin(*rc.first->second.second),
+        std::end(*rc.first->second.second), value_type(domainSize_));
+    rc.first->second.second->erase(upper_bound,
+        std::end(*rc.first->second.second));
+
+    // Remove anything above upper_bound
 
     // Return our newly allocated vector
     return rc.first->second.second;

@@ -41,11 +41,14 @@ bool CallDests::runOnModule(llvm::Module &m) {
   // Load all of our used analysis
   alias_ = &getAnalysis<AliasAnalysis>();
   indirInfo_ = &getAnalysis<IndirFunctionInfo>();
+  auto &dyn_info = getAnalysis<UnusedFunctions>();
 
   m_ = &m;
 
   for (auto &fcn : m) {
-    fcns_.push_back(&fcn);
+    if (dyn_info.isUsed(&fcn)) {
+      fcns_.push_back(&fcn);
+    }
   }
 
   return false;
@@ -54,11 +57,14 @@ bool CallDests::runOnModule(llvm::Module &m) {
 const std::vector<const llvm::ReturnInst *> &
 CallDests::populateRets(const llvm::Function *fcn) const {
   std::vector<const llvm::ReturnInst *> ret;
+  auto &dyn_info = getAnalysis<UnusedFunctions>();
 
   for (auto &bb : *fcn) {
-    for (auto &inst : bb) {
-      if (auto ri = dyn_cast<llvm::ReturnInst>(&inst)) {
-        ret.push_back(ri);
+    if (dyn_info.isUsed(bb)) {
+      for (auto &inst : bb) {
+        if (auto ri = dyn_cast<llvm::ReturnInst>(&inst)) {
+          ret.push_back(ri);
+        }
       }
     }
   }

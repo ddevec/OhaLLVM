@@ -69,6 +69,7 @@ static void traverse_bb(const llvm::BasicBlock *bb,
     ContextInfo::StoreBddSet &stores,
     std::vector<llvm::ImmutableCallSite> &calls,
     const UnusedFunctions &dyn_info) {
+  assert(dyn_info.isUsed(bb));
   util::Worklist<const llvm::BasicBlock *> worklist({bb});
   auto &bb_num = *ei.bb_num;
   auto &si_num = *ei.si_num;
@@ -113,6 +114,13 @@ void ContextInfo::Context::populatePreds() const {
   //   greatness and prosperity
   // llvm::dbgs() << "populatePreds(): " << id() << "\n";
 
+
+  if (stack() == StackInfo::NonCons()) {
+    predBBs_ = BBBddSet::tautology();
+    predStores_ = StoreBddSet::tautology();
+    return;
+  }
+
   // First get localpredbbs for this inst:
   populateLocal();
 
@@ -136,6 +144,12 @@ void ContextInfo::Context::populatePreds() const {
 void ContextInfo::Context::populateLocal() const {
   localPopulated_ = true;
 
+  if (stack() == StackInfo::NonCons()) {
+    localPredBBs_ = BBBddSet::tautology();
+    localPredStores_ = StoreBddSet::tautology();
+    return;
+  }
+
   if (llvm::isa<llvm::Argument>(inst_)) {
     llvm::dbgs() << "argument?\n";
     return;
@@ -151,7 +165,8 @@ void ContextInfo::Context::populateLocal() const {
   auto &bb_num = *info_.info_.bb_num;
   auto &si_num = *info_.info_.si_num;
 
-  // FIXME: Super hacky
+  // FIXME: Super hacky memoization table
+  //   -- Should be struct local
   struct LocalInfo {
     std::vector<llvm::ImmutableCallSite> calls;
     BBBddSet bbs;
@@ -234,6 +249,11 @@ void ContextInfo::Context::populateLocal() const {
     }
   }
 }
+
+// Constructor... setup noContext_ context
+ContextInfo::ContextCache::ContextCache(ExternalInfo &info) : info_(info),
+    contextMem_(new int8_t[sizeof(Context) * MaxContexts]),
+    contexts_(reinterpret_cast<Context *>(contextMem_.get())) { }
 
 ContextId ContextInfo::ContextCache::find(
     const llvm::Value *val,
@@ -325,31 +345,37 @@ ContextInfo::stackPush(ContextId context_id,
 
   auto &context = getContext(context_id);
   auto stack_id = context.stack();
-  auto &stack = stackCache_.getStack(stack_id);
-  auto stack_vec = stack.stack();
+  auto new_stack_id = stack_id;
 
-  // Sometimes we can have backpointers... ensure we don't make a stack with
-  //   those...
-  auto new_id = csCFG_->getId(cs.getInstruction());
-  if (stack_vec.back() == new_id) {
-    return std::vector<ContextId>();
-  }
+  // If we don't have a non-context sensitive analysis, figure out what our
+  //   next possible stacks are
+  if (stack_id != StackInfo::NonCons()) {
+    auto &stack = stackCache_.getStack(stack_id);
+    auto stack_vec = stack.stack();
 
-  // Add the instruction to the stack
-  stack_vec.push_back(new_id);
-
-  // Make sure the stack is dynamically valid...
-  if (info_.stack_info->hasDynData()) {
-    if (!info_.stack_info->isValid(stack_vec)) {
-      /*
-      llvm::dbgs() << "have dynamically invalid push: " <<
-        util::print_iter(stack_vec) << "\n";
-      */
+    // Sometimes we can have backpointers... ensure we don't make a stack with
+    //   those...
+    auto new_id = csCFG_->getId(cs.getInstruction());
+    if (stack_vec.back() == new_id) {
       return std::vector<ContextId>();
     }
-  }
 
-  auto new_stack_id = stackCache_.find(stack_vec);
+    // Add the instruction to the stack
+    stack_vec.push_back(new_id);
+
+    // Make sure the stack is dynamically valid...
+    if (info_.stack_info->hasDynData()) {
+      if (!info_.stack_info->isValid(stack_vec)) {
+        /*
+        llvm::dbgs() << "have dynamically invalid push: " <<
+          util::print_iter(stack_vec) << "\n";
+        */
+        return std::vector<ContextId>();
+      }
+    }
+
+    new_stack_id = stackCache_.find(stack_vec);
+  }
   /*
   llvm::dbgs() << "Got stack " << new_stack_id << " with vec:" <<
     util::print_iter(stack_vec) << "\n";
@@ -471,16 +497,20 @@ ContextInfo::getPriorContexts(const llvm::Instruction *inst,
   auto &cur_context = getContext(cur_context_id);
   auto predBBs = cur_context.predBBs();
 
-  auto possible_contexts = getAllContexts(inst);
+  if (cur_context.stack() == StackInfo::NonCons()) {
+    ret.push_back(getContext(inst, cur_context.stack()));
+  } else {
+    auto possible_contexts = getAllContexts(inst);
 
-  // Now trim contexts which don't include our cur_contexts prevbb's
-  // if context.prevBBs is not subset
-  for (auto context_id : possible_contexts) {
-    // auto &context = getContext(context_id);
+    // Now trim contexts which don't include our cur_contexts prevbb's
+    // if context.prevBBs is not subset
+    for (auto context_id : possible_contexts) {
+      // auto &context = getContext(context_id);
 
-    // if ((context.predBBs() - (predBBs)).empty()) {
-      ret.push_back(context_id);
-    // }
+      // if ((context.predBBs() - (predBBs)).empty()) {
+        ret.push_back(context_id);
+      // }
+    }
   }
 
   return std::move(ret);
@@ -498,6 +528,25 @@ ContextInfo::stackPop(ContextId context_id) const {
   // llvm::dbgs() << "Have stack_id: " << stack_id << "\n";
   if (stack_id == StackId::invalid()) {
     return ret;
+  }
+
+  // If we don't need context sensitive info, handle that specially
+  if (stack_id == StackInfo::NonCons()) {
+    // Get all callsites which can call our current function:
+    auto arg = cast<llvm::Argument>(context.inst());
+
+    // Get inst's function:
+    auto fcn = arg->getParent();
+
+    // Get all callers of fcn:
+    auto &callers = info_.call_info->getCallers(fcn);
+
+    // Return a vector of all possible callers:
+    for (auto &ci : callers) {
+      ret.push_back(cache_.find(ci, stack_id, *this));
+    }
+
+    return std::move(ret);
   }
 
   auto &stack = stackCache_.getStack(stack_id);
