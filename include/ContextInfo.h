@@ -15,7 +15,7 @@
 
 #include "include/util.h"
 #include "include/SEG.h"
-#include "include/ObjectMap.h"
+#include "include/ValueMap.h"
 #include "include/lib/BBNumber.h"
 #include "include/lib/BddSet.h"
 #include "include/lib/CallContextPass.h"

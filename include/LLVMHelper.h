@@ -8,7 +8,7 @@
 #include <unordered_set>
 
 #include "include/Debug.h"
-#include "include/ObjectMap.h"
+#include "include/ModInfo.h"
 #include "include/lib/UnusedFunctions.h"
 
 #include "llvm/BasicBlock.h"
@@ -191,7 +191,7 @@ class LLVMHelper {
     return true;
   }
 
-  static int32_t getGEPOffs(ObjectMap &omap, const llvm::User &gep) {
+  static int32_t getGEPOffs(ModInfo &info, const llvm::User &gep) {
     int32_t offs = 0;
 
     // This loop is essentially to handle the nested nature of
@@ -207,7 +207,7 @@ class LLVMHelper {
         continue;
       }
 
-      auto &si = omap.getStructInfo(cast<llvm::StructType>(type));
+      auto &si = info.getStructInfo(cast<llvm::StructType>(type));
 
       auto operand = gi.getOperand();
 

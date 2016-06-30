@@ -113,28 +113,36 @@ set(SPECSFS_SOURCES
 
   src/ConstraintPass.cpp
 
-  src/SpecSFS.cpp
-  src/SpecAnders.cpp
+  #src/SpecSFS.cpp
+  #src/SpecAnders.cpp
+  src/SpecAndersCS.cpp
 
   src/Debug.cpp
 
-  src/ObjectMap.cpp
-  src/ControlFlowGraph.cpp
+  #src/ObjectMap.cpp
+  #src/ControlFlowGraph.cpp
 
-  src/IdentifyObjects.cpp
+  #src/IdentifyObjects.cpp
   src/ExtInfo.cpp
-  src/Optimize.cpp
-  src/ComputeSSA.cpp
-  src/Partition.cpp
-  src/Solve.cpp
+  #src/Optimize.cpp
+  #src/ComputeSSA.cpp
+  #src/Partition.cpp
+  #src/Solve.cpp
+  src/CsSolve.cpp
+  src/Cg.cpp
+  src/CgOptimize.cpp
+  src/ValueMap.cpp
+  src/CallInfo.cpp
+  src/AndersGraph.cpp
+  src/CsFcnCFG.cpp
 
   src/SolveHelpers.cpp
 
   # Dynamic assumption stuff
   src/Assumptions.cpp
-  src/DynPtstoOpt.cpp
+  #src/DynPtstoOpt.cpp
 
-  src/InsertSpecAssumptions.cpp
+  #src/InsertSpecAssumptions.cpp
 
   # Helper to print instructions quickly
   src/InstPrinter.cpp
@@ -146,10 +154,12 @@ set(SPECSFS_SOURCES
   lib/Instrument/CallContextPass.cpp
   # lib/Instrument/DynPtstoCheck.cpp
  
+  lib/PtsNumberPass.cpp
   lib/StoreNumber.cpp
   lib/BBNumber.cpp
   lib/BddSet.cpp
   lib/ContextInfo.cpp
+  lib/BasicFcnCFG.cpp
   lib/FcnCFG.cpp
   lib/CsCFG.cpp
   lib/CallDests.cpp
@@ -163,8 +173,7 @@ set(SPECSFS_SOURCES
   )
 
 set(SPECSFS_HEADERS
-  SpecSFS.h
-  SpecAnders.h
+  SpecAndersCS.h
 
   util.h
   SEG.h
@@ -176,11 +185,16 @@ set(SPECSFS_HEADERS
 
   ExtInfo.h
 
-  ObjectMap.h
-  DUG.h
+  ValueMap.h
+  Cg.h
+  CgOpt.h
+  RunTarjans.h
+  CallInfo.h
+  CsFcnCFG.h
 
   ContextInfo.h
 
+  lib/PtsNumberPass.h
   lib/SlicePosition.h
   lib/StoreNumber.h
   lib/BBNumber.h

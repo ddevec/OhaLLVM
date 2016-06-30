@@ -7,6 +7,7 @@
 
 #include <cassert>
 
+#include <map>
 #include <tuple>
 #include <unordered_map>
 #include <utility>
@@ -17,9 +18,10 @@
 #include "llvm/Instructions.h"
 #include "llvm/Module.h"
 
-#include "include/ObjectMap.h"
-#include "include/ConstraintGraph.h"
-#include "include/ControlFlowGraph.h"
+#include "include/CallInfo.h"
+#include "include/Cg.h"
+#include "include/ModInfo.h"
+#include "include/ValueMap.h"
 
 typedef decltype(llvm::Instruction::Mul) Opcode;
 typedef ExtInfo::AllocInfo AllocInfo;
@@ -39,31 +41,102 @@ char datetime_name[] = "datetime_static";
 char textdomain_name[] = "textdomain_static";
 char gettext_name[] = "gettext_static";
 
-// External helper functions from IdentifyObjects
-extern void addCFGStore(CFG &graph, CFG::CFGid *store_cfg_id,
-    ConstraintGraph::ObjID store_obj_id);
-extern void addCFGLoad(CFG &graph, CFG::CFGid load_id,
-    ConstraintGraph::ObjID dest);
+typedef ValueMap::Id Id;
 
+
+// Gets the type of a value, stripping the first layer of bitcasts if needed
+// NOTE: Does not strip away pointer type
+static const llvm::Type *getTypeOfVal(const llvm::Value *val) {
+  auto ret = val->getType();
+
+  if (auto ce = dyn_cast<llvm::ConstantExpr>(val)) {
+    if (ce->getOpcode() == llvm::Instruction::BitCast) {
+      // Also strip away pointer type
+      ret = ce->getOperand(0)->getType();
+    }
+  }
+
+  return ret;
+}
+
+// called from malloc-like allocations, to find the largest strcuture size the
+// untyped allocation is cast to.
+static const llvm::Type *findLargestType(ModInfo &info,
+    const llvm::Instruction &ins) {
+  auto biggest_type = ins.getType()->getContainedType(0);
+
+  bool found = false;
+  int32_t max_size = 0;
+
+  // Strip any array qualifiers
+  while (auto at = dyn_cast<llvm::ArrayType>(biggest_type)) {
+    biggest_type = at->getElementType();
+  }
+
+  // If its a struct type, update our lragest size
+  if (auto st = dyn_cast<llvm::StructType>(biggest_type)) {
+    max_size = info.getStructInfo(st).size();
+  }
+
+  // now, see how each use is cast...
+  std::for_each(ins.use_begin(), ins.use_end(),
+      [&max_size, &found, &biggest_type, &info]
+      (const llvm::User *use) {
+    auto cast_inst = dyn_cast<llvm::CastInst>(use);
+
+    if (cast_inst && llvm::isa<llvm::PointerType>(cast_inst->getType())) {
+      found = true;
+
+      // this is the type were casting to
+      auto cast_type = cast_inst->getType()->getContainedType(0);
+
+      int32_t size = 0;
+
+      // strip off array qualifiers
+      while (auto at = dyn_cast<llvm::ArrayType>(cast_type)) {
+        cast_type = at->getElementType();
+      }
+
+      // if we're casting to a strucutre
+      if (auto st = dyn_cast<llvm::StructType>(cast_type)) {
+        size = info.getStructInfo(st).size();
+      }
+
+      if (size > max_size) {
+        max_size = size;
+        biggest_type = cast_type;
+      }
+    }
+  });
+
+  if (!found && max_size == 0) {
+    return info.getMaxStructInfo().type();
+  }
+
+  return biggest_type;
+}
 
 // Constraint Helpers {{{
 struct NoopCons {
-  bool operator()(llvm::ImmutableCallSite &, ObjectMap &,
-      ConstraintGraph &, CFG &, CFG::CFGid *) const {
+  bool operator()(Cg &, llvm::ImmutableCallSite &,
+      const CallInfo &) const {
     return true;
   }
 };
 
 struct AllocCons {
-  bool operator()(llvm::ImmutableCallSite &cs, ObjectMap &omap,
-      ConstraintGraph &cg, CFG &, CFG::CFGid *) const {
+  bool operator()(Cg &cg, llvm::ImmutableCallSite &cs,
+      const CallInfo &ci) const {
     auto inst = cs.getInstruction();
 
-    auto dest_id = omap.getValue(inst);
+    auto dest_id = ci.ret();
 
-    auto src_obj_id = omap.getObject(inst);
+    auto type = findLargestType(cg.modInfo(), *inst);
+    auto size = cg.modInfo().getSizeOfType(type);
 
-    cg.add(ConstraintType::AddressOf, dest_id, src_obj_id);
+    auto src_obj_id = cg.vals().createAlloc(inst, size);
+
+    cg.add(ConstraintType::AddressOf, src_obj_id, dest_id);
 
     return true;
   }
@@ -71,13 +144,16 @@ struct AllocCons {
 
 // Non-structure -- for example, strdup, where strs are not structs
 struct AllocNSCons {
-  bool operator()(llvm::ImmutableCallSite &cs, ObjectMap &omap,
-      ConstraintGraph &cg, CFG &, CFG::CFGid *) const {
+  bool operator()(Cg &cg, llvm::ImmutableCallSite &cs,
+      const CallInfo &ci) const {
     auto inst = cs.getInstruction();
-    auto dest = omap.getValue(inst);
-    auto src = omap.getObject(inst);
+
+    auto dest = ci.ret();
+
+    auto src = cg.vals().createAlloc(inst, 1);
+
     // No type info, can just do simple cg add...
-    cg.add(ConstraintType::AddressOf, dest, src);
+    cg.add(ConstraintType::AddressOf, src, dest);
 
     return true;
   }
@@ -85,14 +161,18 @@ struct AllocNSCons {
 
 template <const char *type_name>
 struct AllocTypeCons {
-  bool operator()(llvm::ImmutableCallSite &cs, ObjectMap &omap,
-      ConstraintGraph &cg, CFG &, CFG::CFGid *) const {
+  bool operator()(Cg &cg, llvm::ImmutableCallSite &cs,
+      const CallInfo &ci) const {
     auto inst = cs.getInstruction();
-    auto dest = omap.getValue(inst);
-    auto src = omap.getObject(inst);
+    auto m = inst->getParent()->getParent()->getParent();
+
+    auto dest = ci.ret();
+    auto type = m->getTypeByName(type_name);
+    auto size = cg.modInfo().getSizeOfType(type);
+    auto src = cg.vals().createAlloc(inst, size);
 
     // Add constraints for the alloc type...
-    cg.add(ConstraintType::AddressOf, dest, src);
+    cg.add(ConstraintType::AddressOf, src, dest);
 
     return true;
   }
@@ -100,17 +180,14 @@ struct AllocTypeCons {
 
 template <size_t arg_num>
 struct ReturnCons {
-  bool operator()(llvm::ImmutableCallSite &cs, ObjectMap &omap,
-      ConstraintGraph &cg, CFG &, CFG::CFGid *) const {
+  bool operator()(Cg &cg, llvm::ImmutableCallSite &,
+      const CallInfo &ci) const {
     // The function returns arg(arg_num)
-    auto ci = cs.getInstruction();
-    auto arg0 = cs.getArgument(arg_num);
-
-    auto ci_id = omap.getValue(ci);
-    auto arg0_id = omap.getValueC(arg0);
+    auto ci_id = ci.ret();
+    auto arg0_id = ci.args()[arg_num];
 
     // Copy the arg into CI
-    cg.add(ConstraintType::Copy, ci_id, arg0_id);
+    cg.add(ConstraintType::Copy, arg0_id, ci_id);
 
     return true;
   }
@@ -118,17 +195,15 @@ struct ReturnCons {
 
 template <const char *name, const char *type_name>
 struct ReturnNamedStructCons {
-  bool operator()(llvm::ImmutableCallSite &cs, ObjectMap &omap,
-      ConstraintGraph &cg, CFG &, CFG::CFGid *) const {
-    // The function returns arg(arg_num)
-    auto ci = cs.getInstruction();
+  bool operator()(Cg &cg, llvm::ImmutableCallSite &,
+      const CallInfo &ci) const {
+    // The function return
+    auto ci_id = ci.ret();
 
-    auto ci_id = omap.getValue(ci);
-    // ins -> bb -> fcn -> module
-    auto named_obj_id = omap.getNamedObject(name);
+    auto named_obj_id = cg.vals().getNamed(name);
 
     // Copy the arg into CI
-    cg.add(ConstraintType::AddressOf, ci_id, named_obj_id);
+    cg.add(ConstraintType::AddressOf, named_obj_id, ci_id);
 
     return true;
   }
@@ -136,17 +211,15 @@ struct ReturnNamedStructCons {
 
 template <const char *name>
 struct ReturnNamedNSCons {
-  bool operator()(llvm::ImmutableCallSite &cs, ObjectMap &omap,
-      ConstraintGraph &cg, CFG &, CFG::CFGid *) const {
-    // The function returns arg(arg_num)
-    auto ci = cs.getInstruction();
+  bool operator()(Cg &cg, llvm::ImmutableCallSite &,
+      const CallInfo &ci) const {
+    // The function return
+    auto ci_id = ci.ret();
 
-    auto ci_id = omap.getValue(ci);
-    // ins -> bb -> fcn -> module
-    auto named_obj_id = omap.getNamedObject(name);
+    auto named_obj_id = cg.vals().getNamed(name);
 
     // Copy the arg into CI
-    cg.add(ConstraintType::AddressOf, ci_id, named_obj_id);
+    cg.add(ConstraintType::Copy, named_obj_id, ci_id);
 
     return true;
   }
@@ -154,15 +227,15 @@ struct ReturnNamedNSCons {
 
 template <size_t src, size_t dest>
 struct StoreCons {
-  bool operator()(llvm::ImmutableCallSite &cs, ObjectMap &omap,
-      ConstraintGraph &cg, CFG &cfg, CFG::CFGid *next_id) const {
+  bool operator()(Cg &cg, llvm::ImmutableCallSite &,
+      const CallInfo &ci) const {
     // The function returns arg(arg_num)
-    auto st_id = omap.createPhonyID();
+    auto st_id = cg.vals().createPhonyID();
+    auto &args = ci.args();
 
     cg.add(ConstraintType::Store, st_id,
-        omap.getValueC(cs.getArgument(src)),
-        omap.getValueC(cs.getArgument(dest)));
-    addCFGStore(cfg, next_id, st_id);
+        args[src],
+        args[dest]);
 
     return true;
   }
@@ -170,22 +243,24 @@ struct StoreCons {
 
 template <size_t arg_num>
 struct ReturnArgOrMallocCons {
-  bool operator()(llvm::ImmutableCallSite &cs, ObjectMap &omap,
-      ConstraintGraph &cg, CFG &, CFG::CFGid *) const {
+  bool operator()(Cg &cg, llvm::ImmutableCallSite &cs,
+      const CallInfo &ci) const {
     // The function returns arg(arg_num) or allocates a new set of data
     // First, handle the allocation
     // Add objects to the graph
     auto inst = cs.getInstruction();
-    auto ci_obj = omap.getObject(inst);
-    auto ci_id = omap.getValue(inst);
-    cg.add(ConstraintType::AddressOf,
-        ci_id, ci_obj);
+    auto type = findLargestType(cg.modInfo(), *inst);
+    auto size = cg.modInfo().getSizeOfType(type);
 
-    auto arg = cs.getArgument(arg_num);
-    auto arg_id = omap.getValueC(arg);
+    auto ci_obj = cg.vals().createAlloc(inst, size);
+    auto ci_id = ci.ret();
+    cg.add(ConstraintType::AddressOf,
+        ci_obj, ci_id);
+
+    auto &args = ci.args();
+    auto arg_id = args[arg_num];
     // Now, handle the arg copy
-    cg.add(ConstraintType::Copy,
-        ci_id, arg_id);
+    cg.add(ConstraintType::Copy, arg_id, ci_id);
 
     return true;
   }
@@ -193,98 +268,75 @@ struct ReturnArgOrMallocCons {
 
 template <size_t arg_num, const char *name>
 struct ReturnArgOrStaticCons {
-  bool operator()(llvm::ImmutableCallSite &cs, ObjectMap &omap,
-      ConstraintGraph &cg, CFG &, CFG::CFGid *) const {
+  bool operator()(Cg &cg, llvm::ImmutableCallSite &,
+      const CallInfo &ci) const {
     // The function returns arg(arg_num) or allocates a new set of data
     // First, handle the static return case
     // Add objects to the graph
-    auto inst = cs.getInstruction();
     llvm::dbgs() << "get named: " << name << "\n";
-    auto ci_obj = omap.getNamedObject(name);
-    auto ci_id = omap.getValue(inst);
+    auto ci_obj = cg.vals().getNamed(name);
+    auto ci_id = ci.ret();
     cg.add(ConstraintType::AddressOf,
-        ci_id, ci_obj);
+        ci_obj, ci_id);
 
     // Now, handle the arg copy
-    auto arg = cs.getArgument(arg_num);
-    auto arg_id = omap.getValueC(arg);
-    cg.add(ConstraintType::Copy,
-        ci_id, arg_id);
+    auto &args = ci.args();
+    auto arg_id = args[arg_num];
+    cg.add(ConstraintType::Copy, arg_id, ci_id);
 
     return true;
   }
 };
 
 struct MemcpyCons {
-  bool operator()(llvm::ImmutableCallSite &cs, ObjectMap &omap,
-      ConstraintGraph &cg, CFG &cfg, CFG::CFGid *next_id) const {
+  bool operator()(Cg &cg, llvm::ImmutableCallSite &cs,
+      const CallInfo &ci) const {
     auto dest = cs.getArgument(0);
-    auto src = cs.getArgument(1);
+    // auto src = cs.getArgument(1);
 
-    auto first_arg = omap.getValueC(dest);
-    auto second_arg = omap.getValueC(src);
+    auto &args = ci.args();
+    auto first_arg = args[0];
+    auto second_arg = args[1];
 
     auto type = getTypeOfVal(dest);
 
     if (auto st = dyn_cast<llvm::StructType>(type)) {
       // Okay, for each field of the structure...
-      auto &si = omap.getStructInfo(st);
-
-      // Setup the base of our CFG node, we need all stores to proceed in
-      //   parallel...
-      auto base_id = next_id;
-      auto merge_id = cfg.nextNode();
+      auto &si = cg.modInfo().getStructInfo(st);
 
       // Now iterate each field, and add a copy for each field
       int32_t i = 0;
-      std::for_each(si.sizes_begin(), si.sizes_end(),
-          [&cfg, &cg, &i, &omap, &first_arg, &second_arg, &base_id,
-            &merge_id, &cs] (int32_t) {
-        auto node_id = cfg.nextNode();
-        auto load_dest = omap.createPhonyID();
+      for (auto it = si.sizes_begin(), en = si.sizes_end();
+          it != en; ++it) {
+        auto load_dest = cg.vals().createPhonyID();
         // The gep dests have equivalent ptsto as the argumens
-        auto load_gep_dest = omap.createPhonyID(cs.getArgument(1));
-        auto store_gep_dest = omap.createPhonyID(cs.getArgument(0));
-        auto store_id = omap.createPhonyID();
+        auto load_gep_dest = cg.vals().createPhonyID(cs.getArgument(1));
+        auto store_gep_dest = cg.vals().createPhonyID(cs.getArgument(0));
+        auto store_id = cg.vals().createPhonyID();
 
         // Okay, now create the constraints
         // The load_dest is the destination address of the load:
-        cg.add(ConstraintType::Copy, load_gep_dest, second_arg, i);
+        cg.add(ConstraintType::Copy, second_arg, load_gep_dest, i);
         cg.add(ConstraintType::Load, load_dest, load_gep_dest, load_dest);
 
-        cg.add(ConstraintType::Copy, store_gep_dest, first_arg, i);
+        cg.add(ConstraintType::Copy, first_arg, store_gep_dest, i);
 
         cg.add(ConstraintType::Store, store_id, load_dest,
           store_gep_dest);
 
-        cfg.addPred(node_id, *base_id);
-        cfg.addPred(merge_id, node_id);
-
         // Create a load at this id
         dout("Adding load: " << load_dest << " and store: " <<
           store_id << "\n");
-        addCFGLoad(cfg, node_id, load_dest);
-        addCFGStore(cfg, &node_id, store_id);
 
         i++;
-      });
-
-      // Advance the merge_id to next_id
-      *next_id = merge_id;
-
+      }
     // If this isn't a struct, handle it normally
     } else {
-      auto load_id = omap.createPhonyID();
-      auto store_id = omap.createPhonyID();
+      auto load_id = cg.vals().createPhonyID();
+      auto store_id = cg.vals().createPhonyID();
 
       cg.add(ConstraintType::Load, load_id, second_arg, load_id);
       cg.add(ConstraintType::Store, store_id, load_id, first_arg);
-
-      // Setup CFG
-      // First setup the load
-      addCFGLoad(cfg, *next_id, load_id);
-      // Then setup the store
-      addCFGStore(cfg, next_id, store_id);
     }
 
     return true;
@@ -293,33 +345,27 @@ struct MemcpyCons {
 
 
 struct PthreadCreateCons {
-  bool operator()(llvm::ImmutableCallSite &cs, ObjectMap &omap,
-      ConstraintGraph &cg, CFG &cfg, CFG::CFGid *next_id) const {
+  bool operator()(Cg &cg, llvm::ImmutableCallSite &cs,
+      const CallInfo &ci) const {
     // Need to add an indirect call... and some funky cfg edges
 
     // pthread_create
     // First, add
     auto callee = cs.getArgument(2);
-    auto arg = omap.getValueC(cs.getArgument(3));
+    auto &args = ci.args();
+    auto arg = args[3];
 
     // Just add a call to callee
     // FIXME(ddevec) -- If callee is not a function, this is harder
     auto fcn = cast<llvm::Function>(callee);
 
-    // FIXME(ddevec) -- Return value can somehow be passed... ugh
-    // First, make a cfg edge into this function
-    auto cur_id = *next_id;
-    auto n_id = cfg.nextNode();
-    *next_id = n_id;
 
-    cfg.addCallsite(cur_id, omap.getObject(fcn), n_id);
-
-    // CFG flows through this callsite, as well as to the called function(s)
-    cfg.addPred(n_id, cur_id);
+    // FIXME(ddevec) -- handle the indir fcn call
+    llvm_unreachable("pthread_create call unhandled?");
 
     // Now, copy arg into the function's argument:
-    auto fcn_arg = omap.getValue(&(*fcn->arg_begin()));
-    auto node_id = omap.createPhonyID();
+    auto fcn_arg = cg.vals().getDef(&(*fcn->arg_begin()));
+    auto node_id = cg.vals().createPhonyID();
     cg.add(ConstraintType::Copy, node_id, arg, fcn_arg);
 
     return true;
@@ -330,7 +376,7 @@ struct PthreadCreateCons {
 // AllocSize Helpers {{{
 struct NoAllocData {
   std::vector<AllocInfo> operator()(llvm::Module &, llvm::CallSite &,
-        ObjectMap &, llvm::Instruction **) const {
+        ValueMap &, llvm::Instruction **) const {
     return std::vector<AllocInfo>();
   }
 };
@@ -339,13 +385,13 @@ template <size_t arg_num>
 struct AllocSize {
   std::vector<AllocInfo> operator()(llvm::Module &,
       llvm::CallSite &cs,
-      ObjectMap &,
+      ValueMap &,
       llvm::Instruction **) const {
     std::vector<AllocInfo> ret;
 
     auto val = cs.getArgument(arg_num);
 
-    ret.emplace_back(cs.getInstruction(), val, ObjectMap::ObjID::invalid());
+    ret.emplace_back(cs.getInstruction(), val, ValueMap::Id::invalid());
 
     return ret;
   }
@@ -355,7 +401,7 @@ template <const char *type_name>
 struct AllocStruct {
   std::vector<AllocInfo> operator()(llvm::Module &m,
       llvm::CallSite &cs,
-      ObjectMap &,
+      ValueMap &,
       llvm::Instruction **) const {
     std::vector<AllocInfo> ret;
 
@@ -363,7 +409,7 @@ struct AllocStruct {
     auto type_size_ce = LLVMHelper::calcTypeOffset(m, type, nullptr);
 
     ret.emplace_back(cs.getInstruction(), type_size_ce,
-        ObjectMap::ObjID::invalid());
+        ValueMap::Id::invalid());
 
     return ret;
   }
@@ -373,7 +419,7 @@ template <size_t arg_num0, size_t arg_num1, Opcode op>
 struct AllocSizeOp {
   std::vector<AllocInfo> operator()(llvm::Module &,
       llvm::CallSite &cs,
-      ObjectMap &,
+      ValueMap &,
       llvm::Instruction **) const {
     std::vector<AllocInfo> ret;
 
@@ -385,7 +431,7 @@ struct AllocSizeOp {
     auto mul = llvm::BinaryOperator::Create(
         llvm::Instruction::Mul, arg0, arg1, "", ci);
 
-    ret.emplace_back(ci, mul, ObjectMap::ObjID::invalid());
+    ret.emplace_back(ci, mul, ValueMap::Id::invalid());
 
     return ret;
   }
@@ -396,7 +442,7 @@ struct AllocNamedStruct {
   // We know the size -- can gep from type_name
   std::vector<AllocInfo> operator()(llvm::Module &m,
       llvm::CallSite &cs,
-      ObjectMap &omap,
+      ValueMap &map,
       llvm::Instruction **) const {
     std::vector<AllocInfo> ret;
 
@@ -406,7 +452,7 @@ struct AllocNamedStruct {
     // We have the size of the type, its returned in the return value
     auto ci = cs.getInstruction();
 
-    auto static_id = omap.getNamedObject(name);
+    auto static_id = map.getNamed(name);
 
     ret.emplace_back(ci, type_size_ce, static_id);
 
@@ -419,7 +465,7 @@ struct AllocNamedSize {
   // We know the size -- can gep from type_name
   std::vector<AllocInfo> operator()(llvm::Module &m,
       llvm::CallSite &cs,
-      ObjectMap &omap,
+      ValueMap &map,
       llvm::Instruction **) const {
     std::vector<AllocInfo> ret;
     auto i64_type = llvm::IntegerType::get(m.getContext(), 64);
@@ -427,7 +473,7 @@ struct AllocNamedSize {
     // We have the size of the type, its returned in the return value
     auto ci = cs.getInstruction();
 
-    auto static_id = omap.getNamedObject(type_name);
+    auto static_id = map.getNamed(type_name);
 
     auto size_ce = llvm::ConstantInt::get(i64_type, size);
 
@@ -514,13 +560,13 @@ struct AllocNamedString {
   // We know the size -- can gep from type_name
   std::vector<AllocInfo> operator()(llvm::Module &m,
       llvm::CallSite &cs,
-      ObjectMap &omap,
+      ValueMap &map,
       llvm::Instruction **insert_after) const {
     std::vector<AllocInfo> ret;
 
     auto ci = cs.getInstruction();
     // First, get the argument
-    auto str_id = omap.getNamedObject(name);
+    auto str_id = map.getNamed(name);
 
     auto len = add_checked_strlen(m, ci, insert_after);
 
@@ -533,7 +579,7 @@ struct AllocNamedString {
 struct StringAlloc {
   std::vector<AllocInfo> operator()(llvm::Module &m,
       llvm::CallSite &cs,
-      ObjectMap &,
+      ValueMap &,
       llvm::Instruction **insert_after) const {
     std::vector<AllocInfo> ret;
 
@@ -547,7 +593,7 @@ struct StringAlloc {
 
     auto len = add_checked_strlen(m, ci, insert_after);
 
-    ret.emplace_back(ci, len, ObjectMap::ObjID::invalid());
+    ret.emplace_back(ci, len, ValueMap::Id::invalid());
 
     return ret;
   }
@@ -556,7 +602,7 @@ struct StringAlloc {
 struct CTypeAlloc {
   std::vector<AllocInfo> operator()(llvm::Module &m,
       llvm::CallSite &cs,
-      ObjectMap &omap,
+      ValueMap &map,
       llvm::Instruction **insert_after) const {
     auto i32_type = llvm::IntegerType::get(m.getContext(), 32);
     auto i64_type = llvm::IntegerType::get(m.getContext(), 64);
@@ -581,7 +627,7 @@ struct CTypeAlloc {
 
     *insert_after = gep;
 
-    ret.emplace_back(gep, len, omap.getNamedObject("ctype"));
+    ret.emplace_back(gep, len, map.getNamed("ctype"));
 
     return ret;
   }
@@ -594,7 +640,7 @@ struct ReturnArgOrMallocStrAlloc {
   //    zero if the arg is null, and non-zero if it is not
   std::vector<AllocInfo> operator()(llvm::Module &m,
       llvm::CallSite &cs,
-      ObjectMap &,
+      ValueMap &,
       llvm::Instruction **) const {
     auto i64_type = llvm::IntegerType::get(m.getContext(), 64);
     std::vector<AllocInfo> ret;
@@ -665,7 +711,7 @@ struct ReturnArgOrMallocStrAlloc {
     phi->addIncoming(inc, bb_strlen);
     phi->addIncoming(arg, bb_prev);
 
-    ret.emplace_back(ci, phi, ObjectMap::ObjID::invalid());
+    ret.emplace_back(ci, phi, ValueMap::Id::invalid());
 
     return ret;
   }
@@ -680,7 +726,7 @@ struct ReturnArgOrStaticAlloc {
   //       by "name"
   std::vector<AllocInfo> operator()(llvm::Module &m,
       llvm::CallSite &cs,
-      ObjectMap &,
+      ValueMap &,
       llvm::Instruction **insert_after) const {
     auto i64_type = llvm::IntegerType::get(m.getContext(), 64);
     std::vector<AllocInfo> ret;
@@ -755,7 +801,7 @@ struct ReturnArgOrStaticAlloc {
     phi->addIncoming(llvm::ConstantInt::get(i64_type, 0), bb_prev);
 
     *insert_after = phi;
-    ret.emplace_back(ci, phi, ObjectMap::ObjID::invalid());
+    ret.emplace_back(ci, phi, ValueMap::Id::invalid());
 
     return ret;
   }
@@ -766,7 +812,7 @@ struct ReturnArgOrStaticAlloc {
 struct NoFreeData {
   std::vector<llvm::Value *>
   operator()(llvm::Module &, llvm::CallSite &,
-      ObjectMap &,
+      ValueMap &,
       llvm::Instruction **) const {
     return std::vector<llvm::Value *>();
   }
@@ -776,7 +822,7 @@ template <size_t op_num>
 struct FreeOp {
   std::vector<llvm::Value *>
   operator()(llvm::Module &, llvm::CallSite &cs,
-      ObjectMap &,
+      ValueMap &,
       llvm::Instruction **) const {
     return { cs.getArgument(op_num) };
   }
@@ -786,23 +832,23 @@ struct FreeOp {
 // AllocInfo helpers {{{
 struct AllocInfoNone {
   StaticAllocInfo operator()(llvm::ImmutableCallSite &,
-      ObjectMap &) const {
+      ModInfo &) const {
     return StaticAllocInfo(AllocStatus::None, nullptr);
   }
 };
 
 struct AllocInfoWeak {
   StaticAllocInfo operator()(llvm::ImmutableCallSite &cs,
-      ObjectMap &omap) const {
+      ModInfo &info) const {
     auto ci = cs.getInstruction();
-    auto inferred_type = findLargestType(omap, *ci);
+    auto inferred_type = findLargestType(info, *ci);
     return StaticAllocInfo(AllocStatus::Weak, inferred_type);
   }
 };
 
 struct AllocInfoWeakNS {
   StaticAllocInfo operator()(llvm::ImmutableCallSite &cs,
-      ObjectMap &) const {
+      ModInfo &) const {
     auto m = cs.getInstruction()->getParent()->getParent()->getParent();
     auto i8_ptr_type = llvm::PointerType::get(
         llvm::IntegerType::get(m->getContext(), 8), 0);
@@ -813,7 +859,7 @@ struct AllocInfoWeakNS {
 template <const char *type_name>
 struct AllocInfoWeakType {
   StaticAllocInfo operator()(llvm::ImmutableCallSite &cs,
-      ObjectMap &) const {
+      ModInfo &) const {
     auto m = cs.getInstruction()->getParent()->getParent()->getParent();
     return StaticAllocInfo(AllocStatus::Weak, m->getTypeByName(type_name));
   }
@@ -836,8 +882,8 @@ struct CannotAlloc {
 
 
 // UnknownExtInfo {{{
-bool UnknownExtInfo::insertCallCons(llvm::ImmutableCallSite &cs,
-    ObjectMap &omap, ConstraintGraph &cg, CFG &cfg, CFG::CFGid *next_id) const {
+bool UnknownExtInfo::insertCallCons(Cg &cg, llvm::ImmutableCallSite &cs,
+    const CallInfo &ci) const {
   // Add a load from an unknwon object
   // The return value is the UniveralValue
   // Each (non-int) pointer argument passed in has the UniversalValue stored
@@ -848,22 +894,22 @@ bool UnknownExtInfo::insertCallCons(llvm::ImmutableCallSite &cs,
     cs.getCalledFunction()->getName() << "\n";
   if (llvm::isa<llvm::PointerType>(inst->getType())) {
     // Store universal value into it
-    auto ret_id = omap.getValue(inst);
+    auto ret_id = ci.ret();
     // Load into ret_id from universal value
-    cg.add(ConstraintType::Load, ret_id, ret_id, ObjectMap::UniversalValue);
-    addCFGLoad(cfg, *next_id, ret_id);
+    cg.add(ConstraintType::Load, ret_id, ret_id, ValueMap::UniversalValue);
   }
 
   // For each argument:
+  auto arg_ids = ci.args();
+  size_t argno = 0;
   for (auto it = cs.arg_begin(), en = cs.arg_end();
       it != en; ++it) {
-    auto &use = *it;
-    auto arg_id = omap.getValueC(use.get());
+    auto arg_id = arg_ids[argno];
 
-    auto ld_id = omap.createPhonyID();
+    auto ld_id = cg.vals().createPhonyID();
 
-    cg.add(ConstraintType::Load, ld_id, arg_id, ObjectMap::UniversalValue);
-    addCFGLoad(cfg, *next_id, arg_id);
+    cg.add(ConstraintType::Load, ld_id, arg_id, ValueMap::UniversalValue);
+    ++argno;
   }
 
   return false;
@@ -871,7 +917,7 @@ bool UnknownExtInfo::insertCallCons(llvm::ImmutableCallSite &cs,
 
 std::vector<AllocInfo> UnknownExtInfo::getAllocData(
     llvm::Module &m, llvm::CallSite &ci,
-    ObjectMap &omap,
+    ValueMap &omap,
     llvm::Instruction **insert_after) const {
   llvm::dbgs() << "WARNING: Unknown alloc data: " <<
     ci.getCalledFunction()->getName() << "\n";
@@ -881,20 +927,20 @@ std::vector<AllocInfo> UnknownExtInfo::getAllocData(
 
 std::vector<llvm::Value *> UnknownExtInfo::getFreeData(
     llvm::Module &m, llvm::CallSite &ci,
-    ObjectMap &omap, llvm::Instruction **insert_after) const {
+    ValueMap &map, llvm::Instruction **insert_after) const {
   llvm::dbgs() << "WARNING: Unknown free data: " <<
     ci.getCalledFunction()->getName() << "\n";
   // Do nothing
-  return NoFreeData()(m, ci, omap, insert_after);
+  return NoFreeData()(m, ci, map, insert_after);
 }
 
 StaticAllocInfo UnknownExtInfo::getAllocInfo(llvm::ImmutableCallSite &cs,
-    ObjectMap &omap) const {
+    ModInfo &info) const {
   auto ci = cs.getInstruction();
 
   if (llvm::isa<llvm::PointerType>(ci->getType())) {
     // Assume this may be an allocation function, find the largest type
-    auto inferred_type = findLargestType(omap, *cs.getInstruction());
+    auto inferred_type = findLargestType(info, *cs.getInstruction());
 
     return StaticAllocInfo(AllocStatus::Weak, inferred_type);
   } else {
@@ -911,28 +957,28 @@ template <typename alloc_cons,
           typename alloc_info,
           typename can_alloc>
 struct ExtInfoCRTP : public ExtInfo {
-  bool insertCallCons(llvm::ImmutableCallSite &ci, ObjectMap &omap,
-      ConstraintGraph &cg, CFG &cfg, CFG::CFGid *next_id) const override {
-    return alloc_cons()(ci, omap, cg, cfg, next_id);
+  bool insertCallCons(Cg &cg, llvm::ImmutableCallSite &cs,
+      const CallInfo &ci) const override {
+    return alloc_cons()(cg, cs, ci);
   }
 
   std::vector<AllocInfo>
   getAllocData(llvm::Module &m, llvm::CallSite &ci,
-      ObjectMap &omap,
+      ValueMap &map,
       llvm::Instruction **insert_after) const override {
-    return alloc_size()(m, ci, omap, insert_after);
+    return alloc_size()(m, ci, map, insert_after);
   }
 
   std::vector<llvm::Value *> getFreeData(llvm::Module &m,
       llvm::CallSite &ci,
-      ObjectMap &omap,
+      ValueMap &map,
       llvm::Instruction **insert_after) const override {
-    return free_pointer()(m, ci, omap, insert_after);
+    return free_pointer()(m, ci, map, insert_after);
   }
 
   StaticAllocInfo getAllocInfo(llvm::ImmutableCallSite &cs,
-      ObjectMap &omap) const override {
-    return alloc_info()(cs, omap);
+      ModInfo &info) const override {
+    return alloc_info()(cs, info);
   }
 
   bool canAlloc() const override {
@@ -1062,34 +1108,7 @@ class ExtCTypeBLoc :
 
 // More annoying structs...
 
-// Initialize the internal info_ (unordered_map) here
-void ExtLibInfo::init(llvm::Module &m, ObjectMap &omap) {  //  NOLINT
-  //{{{
-  // Setting up named static data {{{
-  // Named data includes:
-  //    ctype(1)
-  //    datetime_static(struct.tm)
-  //    textdomain_static(1)
-  //    terminfo(1)
-  //    clib(1)
-  //    locale(1)
-  //    errno(1)
-  //    env(1)
-  omap.addNamedObject(nullptr, "ctype");
-  omap.addNamedObject(m.getTypeByName("struct.tm"), "datetime_static");
-  omap.addNamedObject(nullptr, "textdomain_static");
-  omap.addNamedObject(nullptr, "gettext_static");
-  omap.addNamedObject(nullptr, "terminfo");
-  omap.addNamedObject(nullptr, "clib");
-  omap.addNamedObject(nullptr, "locale");
-  omap.addNamedObject(nullptr, "errno");
-  omap.addNamedObject(nullptr, "env");
-  omap.addNamedObject(nullptr, "dir");
-
-  // Does the named data need constraints?
-  // Largely no...
-  //}}}
-
+ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
   // Functions monitored {{{
   // Allocations {{{
   // Malloc/calloc/friends...
@@ -1116,6 +1135,7 @@ void ExtLibInfo::init(llvm::Module &m, ObjectMap &omap) {  //  NOLINT
       std::make_tuple("free"),
       std::make_tuple(new Free<0>()));
 
+  /*
   // Perl calls...
   info_.emplace(std::piecewise_construct,
       std::make_tuple("Perl_safesysmalloc"),
@@ -1123,6 +1143,7 @@ void ExtLibInfo::init(llvm::Module &m, ObjectMap &omap) {  //  NOLINT
   info_.emplace(std::piecewise_construct,
       std::make_tuple("Perl_safesysrealloc"),
       std::make_tuple(new Realloc1Free0()));
+  */
   //}}}
 
   // Strdup... ...
@@ -2094,7 +2115,6 @@ void ExtLibInfo::init(llvm::Module &m, ObjectMap &omap) {  //  NOLINT
   //}}}
   */
 
-
   // Intrinsics monitored (ex. memcpy) {{{
   // Noops {{{
   // /*
@@ -2124,7 +2144,110 @@ void ExtLibInfo::init(llvm::Module &m, ObjectMap &omap) {  //  NOLINT
       std::make_tuple(new ExtMemcpy()));
   //}}}
   //}}}
+}  // NOLINT
+
+// Initialize the internal info_ (unordered_map) here
+void ExtLibInfo::addGlobalConstraints(const llvm::Module &m, Cg &cg) {
+  // Setup constriants for named values
+  // -- (->) indicates points-to // address-of
+  // env value -> env object
+  // envp value -> evnp object
+  // argv value -> argv object
+  //  arg value -> arg object
+  // The argv value always points to the argv object
+  // Do store here...
+  // First create named objects:
+  //   nullptr as they have a size 1 type (array)
+
+  auto &vals = cg.vals();
+
+  // Now do the stores for argv and envp
+  // Envp
+  {
+    auto env_obj_id = vals.createAlloc(nullptr, 1);
+    auto envp_obj_id = vals.createAlloc(nullptr, 1);
+
+    auto env_id = vals.getNamed("env");
+    auto envp_id = vals.getNamed("envp");
+
+    cg.add(ConstraintType::AddressOf, env_obj_id, env_id);
+    cg.add(ConstraintType::AddressOf, envp_obj_id, envp_id);
+
+    auto env_st_id = vals.createPhonyID();
+    cg.add(ConstraintType::Store, env_st_id,
+        env_id, envp_id);
+  }
+
+  // Argv
+  {
+    auto argv_obj_id = vals.createAlloc(nullptr, 1);
+    auto arg_obj_id = vals.createAlloc(nullptr, 1);
+
+    auto argv_id = vals.getNamed("argv");
+    auto arg_id = vals.getNamed("arg");
+
+    cg.add(ConstraintType::AddressOf, arg_obj_id, arg_id);
+    cg.add(ConstraintType::AddressOf, argv_obj_id, argv_id);
+
+    auto argv_st_id = vals.createPhonyID();
+    cg.add(ConstraintType::Store, argv_st_id,
+        arg_id, argv_id);
+  }
+
+  // Now do errno
+  {
+    auto errno_obj = vals.createAlloc(nullptr, 1);
+    auto errno_id = vals.getNamed("errno");
+    cg.add(ConstraintType::Copy, errno_obj, errno_id);
+  }
+
+  // Constraints for stdio
+  {
+    // Create a fileio struct:
+    // auto obj = omap.createPhonyObjectIDs(M.getTypeByName("struct._IO_FILE"));
+    auto type = m.getTypeByName("struct._IO_FILE");
+    auto size = modInfo_.getSizeOfType(type);
+    auto stdio_obj = vals.createAlloc(nullptr, size);
+    auto stdio_id = vals.getNamed("stdio");
+
+    cg.add(ConstraintType::AddressOf,
+        stdio_obj, stdio_id);
+  }
+}
+
+void ExtLibInfo::init(const llvm::Module &m, ValueMap &map) {  //  NOLINT
+  //{{{
+  // Setting up named static data {{{
+  // Named data includes:
+  //    ctype(1)
+  //    datetime_static(struct.tm)
+  //    textdomain_static(1)
+  //    terminfo(1)
+  //    clib(1)
+  //    locale(1)
+  //    errno(1)
+  //    env(1)
+  map.allocNamed(1, "ctype");
+  auto tm_type = m.getTypeByName("struct.tm");
+  auto tm_size = modInfo_.getSizeOfType(tm_type);
+  map.allocNamed(tm_size, "datetime_static");
+  map.allocNamed(1, "textdomain_static");
+  map.allocNamed(1, "gettext_static");
+  map.allocNamed(1, "terminfo");
+  map.allocNamed(1, "clib");
+  map.allocNamed(1, "locale");
+  map.allocNamed(1, "errno");
+  map.allocNamed(1, "dir");
+  map.allocNamed(1, "env");
+  map.allocNamed(1, "envp");
+  map.allocNamed(1, "argv");
+  map.allocNamed(1, "arg");
+  map.allocNamed(1, "stdio");
+
+  // Does the named data need constraints?
+  // Largely no...
+  //}}}
 
   //}}}
-}  // NOLINT
+}
 

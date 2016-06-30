@@ -31,10 +31,11 @@
 #include "llvm/Support/InstIterator.h"
 #include "llvm/Support/MathExtras.h"
 
-#include "include/SpecSFS.h"
-#include "include/LLVMHelper.h"
 #include "include/AllocInfo.h"
+#include "include/Cg.h"
+#include "include/ConstraintPass.h"
 #include "include/ExtInfo.h"
+#include "include/LLVMHelper.h"
 #include "include/lib/UnusedFunctions.h"
 
 static llvm::cl::opt<bool>
@@ -94,11 +95,11 @@ class InstrDynPtsto : public llvm::ModulePass {
     void setupSpecSFSids(llvm::Module &);
     void addExternalFunctions(llvm::Module &);
     void addInitializationCalls(llvm::Module &);
-    llvm::Instruction *addMallocCall(llvm::Module &m, ObjectMap::ObjID obj_id,
+    llvm::Instruction *addMallocCall(llvm::Module &m, ValueMap::Id id,
         llvm::Value *val, llvm::Value *size_val,
         llvm::Instruction *insert_before);
 
-    ObjectMap omap_;
+    ValueMap map_;
     const ExtLibInfo *extInfo_;
 };
 
@@ -116,24 +117,8 @@ void InstrDynPtsto::setupSpecSFSids(llvm::Module &) {
   ConstraintGraph cg(cons_pass.getConstraintGraph());
   CFG cfg(cons_pass.getControlFlowGraph());
   */
-  omap_ = cons_pass.getObjectMap();
-  extInfo_ = cons_pass.getLibInfo();
-
-  /*
-  ObjectMap &omap = omap_;
-
-  if (SFSHU(cg, cfg, omap)) {
-    abort();
-  }
-
-  // Also add indirect info... this means we have to wait for Andersen's
-  SpecAnders &aux = getAnalysis<SpecAnders>();
-
-  // Now, fill in the indirect function calls
-  if (addIndirectCalls(cg, cfg, aux, nullptr, omap)) {
-    abort();
-  }
-  */
+  map_ = cons_pass.getCG().vals();
+  extInfo_ = &cons_pass.getCG().extInfo();
 }
 
 bool InstrDynPtsto::runOnModule(llvm::Module &m) {
@@ -149,9 +134,11 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
   //   Return calls
   //   free calls (add to Andersens.h?)
 
-  // Setup ObjectMap ids using the SpecSFS identifiers...
+  // Setup ValueMap ids using the SpecSFS identifiers...
   setupSpecSFSids(m);
-  ObjectMap &omap = omap_;
+  ValueMap &map = map_;
+
+  ModInfo mod_info(m);
 
   // Notify module of external functions
   addExternalFunctions(m);
@@ -278,7 +265,7 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
         // we now have first inst which isn't a phi
         // We add all of our phi inst calls here:
         for (auto &phi_inst : phi_list) {
-          auto val_id = omap.getValue(phi_inst);
+          auto val_id = map.getDef(phi_inst);
           auto i8_ptr_val = new llvm::BitCastInst(phi_inst, i8_ptr_type);
           i8_ptr_val->insertBefore(inst);
 
@@ -294,7 +281,7 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
       // for Pointer returning instructions
       for (auto val : pointer_list) {
         // The return value is the val
-        auto val_id = omap.getValue(val);
+        auto val_id = map.getDef(val);
 
         // Make the call
         auto i8_ptr_val = val;
@@ -317,8 +304,8 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
       // Then, call for each alloc
       for (auto val : alloca_list) {
         auto ai = cast<llvm::AllocaInst>(val);
-        // The id is the objid from the omap
-        auto obj_id = omap.getObject(val);
+        // The id is the objid from the map
+        auto obj_id = map.getDef(val);
 
         // Insert for static alloca's in the functions entry BB before the first
         //    non-alloca inst
@@ -410,11 +397,11 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
       for (auto ci : call_list) {
         llvm::CallSite cs(ci);
         if (auto c = dyn_cast<llvm::Constant>(cs.getCalledValue())) {
-          auto cons_pr = omap.getConstValue(c);
+          auto cons_pr = map.getDef(c);
           // Add call if needed:
-          if (cons_pr.first) {
+          if (false) {
             auto val = c;
-            auto val_id = cons_pr.second;
+            auto val_id = cons_pr;
 
             // Make the call
             auto i8_ptr_val = val;
@@ -439,7 +426,7 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
         for (auto &pgep : gep_list) {
           auto &gep = *pgep;
 
-          auto offs = LLVMHelper::getGEPOffs(omap, gep);
+          auto offs = LLVMHelper::getGEPOffs(mod_info, gep);
           // If the offset > 0 AND this ISN'T an array access!
           if (offs > 0 && !LLVMHelper::gepIsArrayAccess(gep)) {
             // Okay, add the gep instruction call....
@@ -506,7 +493,7 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
 
       llvm::Instruction *ia = ci;
       // Check for free info first
-      auto free_info = ext_info.getFreeData(m, cs, omap, &ia);
+      auto free_info = ext_info.getFreeData(m, cs, map, &ia);
 
       // Do any freeing
       for (auto free_value : free_info) {
@@ -522,16 +509,16 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
       }
 
       // Check for alloc info
-      auto alloc_info = ext_info.getAllocData(m, cs, omap, &ia);
+      auto alloc_info = ext_info.getAllocData(m, cs, map, &ia);
 
       for (auto &ai : alloc_info) {
         // Figure out if this is a static or non-static allocation
         auto obj_id = std::get<2>(ai);
 
         // if its non-static, use the object allocated at the ci
-        if (obj_id == ObjectMap::ObjID::invalid()) {
+        if (obj_id == ValueMap::Id::invalid()) {
           // Make sure we have an i8*
-          obj_id = omap.getObject(ci);
+          obj_id = map.getDef(ci);
         }
 
         // Make sure we're passing an i8* to free
@@ -583,11 +570,11 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
     if (fcn.getName() != "main") {
       auto visit_fcn = m.getFunction(VisitInstName);
       std::for_each(fcn.arg_begin(), fcn.arg_end(),
-          [&i8_ptr_type, &i32_type, &omap, &fcn, &visit_fcn]
+          [&i8_ptr_type, &i32_type, &map, &fcn, &visit_fcn]
           (llvm::Argument &arg) {
         if (llvm::isa<llvm::PointerType>(arg.getType())) {
           // The return value is the val
-          auto val_id = omap.getValue(&arg);
+          auto val_id = map.getDef(&arg);
           auto &ins_pos = *llvm::inst_begin(fcn);
 
           // Make the call
@@ -618,7 +605,7 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
         continue;
       }
       // Get the obj from the function value
-      auto obj_id = omap.getObject(&fcn);
+      auto obj_id = map.getDef(&fcn);
 
       // Get an i8_ptr from the function
       auto i8_ptr_val = new llvm::BitCastInst(&fcn, i8_ptr_type, "",
@@ -647,11 +634,11 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
 
     // For each global init:
     std::for_each(m.global_begin(), m.global_end(),
-        [&omap, &malloc_fcn, &m, &first_inst,
+        [&map, &malloc_fcn, &m, &first_inst,
           &i32_type, &i8_ptr_type]
         (llvm::Value &glbl) {
       // Get the obj from the return value
-      auto obj_id = omap.getObject(&glbl);
+      auto obj_id = map.getDef(&glbl);
 
       // Get the arg_pos for the size from the function
       // llvm::dbgs() << "glbl type is: " << *glbl.getType() << "\n";
@@ -923,7 +910,7 @@ void InstrDynPtsto::addInitializationCalls(llvm::Module &m) {
     auto ce_null = llvm::ConstantPointerNull::get(i8_ptr_type);
 
     // Do one for IntValue
-    first_inst = addMallocCall(m, ObjectMap::NullValue, ce_null,
+    first_inst = addMallocCall(m, ValueMap::NullValue, ce_null,
         llvm::ConstantInt::get(i64_type, 4096), first_inst);
 
     // Deal w/ argc, argv, and envp here
@@ -932,13 +919,13 @@ void InstrDynPtsto::addInitializationCalls(llvm::Module &m) {
     // Set first arg to call to be objid for argvval
     auto i32_type = llvm::IntegerType::get(m.getContext(), 32);
     main_args.push_back(llvm::ConstantInt::get(i32_type,
-          omap_.getNamedObject("argv").val()));
+          map_.getNamed("argv").val()));
     main_args.push_back(llvm::ConstantInt::get(i32_type,
-          omap_.getNamedObject("arg").val()));
+          map_.getNamed("arg").val()));
     main_args.push_back(llvm::ConstantInt::get(i32_type,
-          omap_.getNamedObject("envp").val()));
+          map_.getNamed("envp").val()));
     main_args.push_back(llvm::ConstantInt::get(i32_type,
-          omap_.getNamedObject("env").val()));
+          map_.getNamed("env").val()));
 
     std::for_each(main_fcn->arg_begin(), main_fcn->arg_end(),
         [&main_args] (llvm::Argument &arg) {
@@ -990,7 +977,7 @@ void InstrDynPtsto::addInitializationCalls(llvm::Module &m) {
 }
 
 llvm::Instruction *InstrDynPtsto::addMallocCall(llvm::Module &m,
-    ObjectMap::ObjID obj_id, llvm::Value *val, llvm::Value *size_val,
+    ValueMap::Id obj_id, llvm::Value *val, llvm::Value *size_val,
     llvm::Instruction *insert_before) {
   // Make the call
   auto i32_type = llvm::IntegerType::get(m.getContext(), 32);
@@ -1028,29 +1015,11 @@ void DynPtstoLoader::getAnalysisUsage(llvm::AnalysisUsage &au) const {
 }
 
 bool DynPtstoLoader::runOnModule(llvm::Module &) {
-  // Setup omap:
+  // Setup map:
   const auto &cp = getAnalysis<ConstraintPass>();
-  omap_ = cp.getObjectMap();
-  /*
-  {
-    ConstraintGraph cg(cp.getConstraintGraph());
-    CFG cfg(cp.getControlFlowGraph());
-
-    ObjectMap &omap = omap_;
-
-    if (SFSHU(cg, cfg, omap)) {
-      abort();
-    }
-
-    // Now, fill in the indirect function calls
-    if (addIndirectCalls(cg, cfg, aux, nullptr, omap)) {
-      abort();
-    }
-  }
-  */
+  map_ = cp.getCG().vals();
 
   // Now optimize so its related to spec's
-
   std::ifstream logfile(DynPtstoFilename);
   llvm::dbgs() << "Loading DynPtstoFile: " << DynPtstoFilename << "\n";
   if (!logfile.is_open()) {
@@ -1060,12 +1029,12 @@ bool DynPtstoLoader::runOnModule(llvm::Module &) {
     llvm::dbgs() << "DynPtstoLoader: Successfully Loaded\n";
     hasInfo_ = true;
 
-    // Setup ObjectMap ids using the SpecSFS identifiers...
+    // Setup ValueMap ids using the SpecSFS identifiers...
     // setupSpecSFSids(m);
 
 
     for (std::string line; std::getline(logfile, line, ':'); ) {
-      ObjectMap::ObjID call_id = ObjectMap::ObjID(stoi(line));
+      auto call_id = ValueMap::Id(stoi(line));
 
       auto &obj_set = valToObjs_[call_id];
 
@@ -1077,16 +1046,16 @@ bool DynPtstoLoader::runOnModule(llvm::Module &) {
       converter >> obj_int_val;
       bool do_del = false;
       while (!converter.fail()) {
-        auto obj_id = ObjectMap::ObjID(obj_int_val);
+        auto obj_id = ValueMap::Id(obj_int_val);
 
         // Don't add a ptsto for null value
-        if (obj_id != ObjectMap::NullValue) {
+        if (obj_id != ValueMap::NullValue) {
           obj_set.set(obj_id);
         }
 
         // If we have a universal value, we don't maintain dyn ptsto constraints
         //   for this variable
-        if (obj_id == ObjectMap::UniversalValue) {
+        if (obj_id == ValueMap::UniversalValue) {
           do_del = true;
           break;
         }
@@ -1158,7 +1127,7 @@ void DynPtstoAA::getAnalysisUsage(llvm::AnalysisUsage &au) const {
 bool DynPtstoAA::runOnModule(llvm::Module &) {
   InitializeAliasAnalysis(this);
 
-  // Setup omap:
+  // Setup map:
   dynPts_ = &getAnalysis<DynPtstoLoader>();
   return false;
 }
@@ -1177,7 +1146,7 @@ llvm::AliasAnalysis::AliasResult DynPtstoAA::alias(
     return NoAlias;
   }
 
-  if (!pts1.intersectsIgnoring(pts2, ObjectMap::NullValue)) {
+  if (!pts1.intersectsIgnoring(pts2, ValueMap::NullValue)) {
     return NoAlias;
   }
 

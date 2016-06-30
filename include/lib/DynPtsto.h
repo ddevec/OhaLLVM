@@ -22,7 +22,6 @@
 #include "llvm/Support/Debug.h"
 
 #include "include/ExtInfo.h"
-#include "include/ObjectMap.h"
 #include "include/SolveHelpers.h"
 
 class DynPtstoLoader : public llvm::ModulePass {
@@ -58,7 +57,7 @@ class DynPtstoLoader : public llvm::ModulePass {
 
   bool hasPtsto(const llvm::Value *val) {
     assert(hasInfo_);
-    auto val_id = omap_.getValueRep(val);
+    auto val_id = map_.getDef(val);
     auto it = valToObjs_.find(val_id);
 
     if (it == std::end(valToObjs_)) {
@@ -69,7 +68,7 @@ class DynPtstoLoader : public llvm::ModulePass {
   }
 
   PtstoSet &getPtsto(const llvm::Value *val) {
-    ObjectMap::ObjID val_id = omap_.getValOrConstRep(val);
+    auto val_id = map_.getDef(val);
 
     assert(hasInfo_);
     static PtstoSet empty_set;
@@ -81,7 +80,7 @@ class DynPtstoLoader : public llvm::ModulePass {
     }
   }
 
-  typedef std::map<ObjectMap::ObjID, PtstoSet>::const_iterator
+  typedef std::map<ValueMap::Id, PtstoSet>::const_iterator
     const_iterator;
 
   const_iterator begin() const {
@@ -100,7 +99,7 @@ class DynPtstoLoader : public llvm::ModulePass {
       return true;
     }
 
-    if (!pts1.intersectsIgnoring(pts2, ObjectMap::NullValue)) {
+    if (!pts1.intersectsIgnoring(pts2, ValueMap::NullValue)) {
       return true;
     }
 
@@ -110,8 +109,8 @@ class DynPtstoLoader : public llvm::ModulePass {
  private:
   void setupSpecSFSids(llvm::Module &);
 
-  ObjectMap omap_;
-  std::map<ObjectMap::ObjID, PtstoSet> valToObjs_;
+  ValueMap map_;
+  std::map<ValueMap::Id, PtstoSet> valToObjs_;
   bool hasInfo_ = false;
 };
 

@@ -82,6 +82,7 @@ class CFG {
         }
         //}}}
 
+        /*
         // Print support {{{
         void print_label(dbg_ostream &ofil,
             const ObjectMap &) const override {
@@ -100,6 +101,7 @@ class CFG {
           ofil << " } : m: " << m_ << " r: " << r_ << " c: " << c_;
         }
         //}}}
+        */
 
         // Setters {{{
         void setM() {

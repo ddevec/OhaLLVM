@@ -12,8 +12,6 @@
 #include <vector>
 
 #include "include/util.h"
-#include "include/DUG.h"
-#include "include/ObjectMap.h"
 #include "include/LLVMHelper.h"
 #include "include/lib/CallDests.h"
 #include "include/lib/CsCFG.h"

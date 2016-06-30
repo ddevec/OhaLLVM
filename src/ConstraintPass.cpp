@@ -35,11 +35,6 @@ static void print_stack_trace(void) {
   free(strings);
 }
 
-static void error(const std::string &msg) {
-  llvm::errs() << "ERROR: " << msg << "\n";
-  print_stack_trace();
-  assert(0);
-}
 //}}}
 
 char ConstraintPass::ID = 0;
@@ -64,57 +59,43 @@ void ConstraintPass::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
 }
 
 bool ConstraintPass::runOnModule(llvm::Module &m) {
-  extInfo_.init(m, omap_);
-  if (do_spec) {
-    llvm::dbgs() << "ConstraintPass: do-spec is true!\n";
-  } else {
-    llvm::dbgs() << "ConstraintPass: no do-spec!\n";
-  }
+  ModInfo mod_info(m);
+  extInfo_ = std14::make_unique<ExtLibInfo>(mod_info);
 
   const UnusedFunctions &unused_fcns =
       getAnalysis<UnusedFunctions>();
+  DynamicInfo dyn_info(unused_fcns);
 
-  ObjectMap::replaceDbgOmap(omap_);
-  {
-    util::PerfTimerPrinter id_timer(llvm::dbgs(), "Identify Objects");
-    // Identify all of the objects in the source
-    if (identifyObjects(omap_, m)) {
-      error("Identify objects failure!");
+  BasicFcnCFG fcn_cfg(m, dyn_info);
+
+  // Create a cg for each function in module
+  // Then get the main cg
+  // "merge sccs" with all the other functions cgs
+  //   -- This will create one "unfiied" cg
+
+  // Make constraint info for each function in the graph...
+  // Then merge them all into one cg (combinging and linking together, like in
+  //    sccs)
+  // This is the Cg for the whole program...
+  cgCache_ = std14::make_unique<CgCache>(m, dyn_info, fcn_cfg, mod_info,
+      *extInfo_, specAssumptions_);
+
+  auto main = m.getFunction("main");
+  mainCg_ = &cgCache_->getCg(main);
+
+  mainCg_->addGlobalConstraints(m);
+  // Now merge the constraints for each function together...
+  for (auto &fcn : m) {
+    // Only consider functions with bodies..
+    if (fcn.isDeclaration()) {
+      continue;
     }
-  }
-
-  // Get the initial (top-level) constraints set
-  // This should also track the def/use info
-  // NOTE: This function will create a graph of all top-level variables,
-  //   and a def/use mapping, but it will not fill in address-taken edges.
-  //   Those will be populated later, by the actual points-to analysis using the
-  //   constraints, as different analyses use the def use info differently
-  {
-    util::PerfTimerPrinter create_timer(llvm::dbgs(), "CreateConstraints");
-    if (createConstraints(cg_, cfg_, omap_, m, unused_fcns, specAssumptions_)) {
-      error("CreateConstraints failure!");
+    if (fcn.getName() == "main") {
+      continue;
     }
+    auto &cur_cg = cgCache_->getCg(&fcn);
+    mainCg_->mergeCg(cur_cg);
   }
-
-  // Need to now re-order constraints, with objects at bottom and values at
-  //   top...
-  {
-    auto remap = omap_.lowerObjects();
-
-    // Use the remapping to adjust the CG and CFG
-    cg_.updateObjIDs(remap);
-    cfg_.updateObjIDs(remap);
-    specAssumptions_.updateObjIDs(remap);
-  }
-
-  // After objects are lowered they shouldn't be moved again, so we setup our
-  //   ptstoset info
-  llvm::dbgs() << "Ptsto init start\n";
-  PtstoSet::PtstoSetInit(omap_, cg_);
-  llvm::dbgs() << "Ptsto init end\n";
-
-  // Info on the omap...
-  omap_.printStats();
 
   // We don't change code.  Ever.
   return false;

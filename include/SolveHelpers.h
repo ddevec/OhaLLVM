@@ -19,10 +19,8 @@
 
 #include "llvm/ADT/SparseBitVector.h"
 
-#include "include/ConstraintGraph.h"
-#include "include/SEG.h"
-#include "include/ObjectMap.h"
-
+#include "include/util.h"
+#include "include/Cg.h"
 
 // Bitmap used in many places (and by Andersen's) to represent ptsto
 // typedef llvm::SparseBitVector<> Bitmap;
@@ -81,9 +79,6 @@ struct BitmapHash {
 };
 //}}}
 
-class DUG;
-class DUGNode;
-
 // Typedef for PartID
 struct part_id { };
 typedef util::ID<part_id, int32_t> __PartID;
@@ -97,14 +92,14 @@ class Worklist {
     typedef vtype * pointer;
     typedef vtype & reference;
 
-    pointer pop(uint32_t &prio) {
+    value_type pop(uint32_t &prio) {
       // Try getting our next heap
       if (heap_.empty()) {
         heap_.swap(nextHeap_);
       }
 
       if (heap_.empty()) {
-        return nullptr;
+        return vtype::invalid();
       }
 
       auto &entry = heap_.front();
@@ -119,19 +114,23 @@ class Worklist {
       return ret;
     }
 
-    void push(pointer node, uint32_t prio) {
+    void push(value_type node, uint32_t prio) {
       nextHeap_.emplace_back(node, prio);
       std::push_heap(std::begin(nextHeap_), std::end(nextHeap_));
+    }
+
+    bool empty() const {
+      return (heap_.size() == 0 && nextHeap_.size() == 0);
     }
 
  private:
     class HeapEntry {
       //{{{
      public:
-        HeapEntry(pointer node, uint32_t prio) :
+        HeapEntry(reference node, uint32_t prio) :
           node_(node), prio_(prio) { }
 
-        pointer node() const {
+        value_type node() const {
           return node_;
         }
 
@@ -142,15 +141,14 @@ class Worklist {
         bool operator<(const HeapEntry &rhs) const {
           // We want a min heap, so invert the < operator to >
           if (prio() == rhs.prio()) {
-            return reinterpret_cast<intptr_t>(node()) <
-              reinterpret_cast<intptr_t>(rhs.node());
+            return node() < rhs.node();
           }
 
           return prio() > rhs.prio();
         }
 
      private:
-        pointer node_;
+        value_type node_;
         uint32_t prio_;
       //}}}
     };
@@ -193,14 +191,13 @@ class BddPtstoSet {
   }
   BddPtstoSet &operator=(BddPtstoSet &&) = default;
 
-  static void PtstoSetInit(ObjectMap &omap, ConstraintGraph &cg) {
+  static void PtstoSetInit(const Cg &cg) {
     if (!bddInitd()) {
-      bddInit(omap, cg);
+      bddInit(cg);
     }
   }
 
-  typedef typename SEG::NodeID NodeID;
-  bool set(ObjectMap::ObjID id) {
+  bool set(ValueMap::Id id) {
     auto init = ptsto_;
     ptsto_ |= getFddVar(id);
     return (init != ptsto_);
@@ -209,20 +206,20 @@ class BddPtstoSet {
   template<typename InputIterator>
   void insert(InputIterator it, InputIterator en) {
     std::for_each(it, en,
-        [this] (ObjectMap::ObjID id) {
+        [this] (ValueMap::Id id) {
       set(id);
     });
   }
 
-  void reset(ObjectMap::ObjID id) {
+  void reset(ValueMap::Id id) {
     ptsto_ &= !getFddVar(id);
   }
 
-  size_t getSizeNoStruct(ObjectMap &omap) const {
+  size_t getSizeNoStruct(ValueMap &map) const {
     std::set<const llvm::Value *> pts_set;
 
     for (auto obj_id : *this) {
-      auto val = omap.valueAtID(obj_id);
+      auto val = map.getValue(obj_id);
       pts_set.insert(val);
     }
 
@@ -289,7 +286,7 @@ class BddPtstoSet {
     return init != ptsto_;
   }
 
-  bool operator|=(ObjectMap::ObjID &id) {
+  bool operator|=(ValueMap::Id &id) {
     bdd init = ptsto_;
     ptsto_ |= getFddVar(id);
     if (ptsto_ != init) {
@@ -322,12 +319,12 @@ class BddPtstoSet {
     return (ptsto_ != init);
   }
 
-  bool test(ObjectMap::ObjID obj_id) {
+  bool test(ValueMap::Id obj_id) {
     bdd ret = ptsto_ & getFddVar(obj_id);
     return ret != bddfalse;
   }
 
-  bool intersectsIgnoring(BddPtstoSet &rhs, ObjectMap::ObjID ignore) {
+  bool intersectsIgnoring(BddPtstoSet &rhs, ValueMap::Id ignore) {
     auto rhs_tmp = rhs.ptsto_;
     auto lhs_tmp = ptsto_;
 
@@ -357,13 +354,13 @@ class BddPtstoSet {
     //{{{
    public:
     typedef std::forward_iterator_tag iterator_category;
-    typedef ObjectMap::ObjID value_type;
+    typedef ValueMap::Id value_type;
     typedef int32_t difference_type;
-    typedef ObjectMap::ObjID * pointer;
-    typedef ObjectMap::ObjID & reference;
+    typedef ValueMap::Id * pointer;
+    typedef ValueMap::Id & reference;
 
     // Constructor {{{
-    explicit const_iterator(std::vector<ObjectMap::ObjID>::iterator itr) :
+    explicit const_iterator(std::vector<ValueMap::Id>::iterator itr) :
       itr_(itr) { }
     //}}}
 
@@ -377,12 +374,12 @@ class BddPtstoSet {
     }
 
     const value_type operator*() const {
-      return ObjectMap::ObjID(itr_.operator*());
+      return ValueMap::Id(itr_.operator*());
     }
 
     /*
     value_type operator->() const {
-      return ObjectMap::ObjID(itr_.operator->());
+      return ValueMap::Id(itr_.operator->());
     }
     */
 
@@ -401,7 +398,7 @@ class BddPtstoSet {
 
    private:
     // Private data {{{
-    std::vector<ObjectMap::ObjID>::iterator itr_;
+    std::vector<ValueMap::Id>::iterator itr_;
     //}}}
     //}}}
   };
@@ -431,7 +428,7 @@ class BddPtstoSet {
       const BddPtstoSet &ps) {
     os << "{";
     std::for_each(std::begin(ps), std::end(ps),
-        [&os] (ObjectMap::ObjID id) {
+        [&os] (ValueMap::Id id) {
       os << " " << id;
     });
     os << " }";
@@ -439,6 +436,8 @@ class BddPtstoSet {
     return os;
   }
 #endif
+
+  static void updateGeps(const Cg &cg);
 
  private:
   std::unique_ptr<bdd> bitmapToBdd(const Bitmap &bm) {
@@ -469,14 +468,14 @@ class BddPtstoSet {
   // Setup geps! (ugh)
   // For geps needs omap (for object size into)
   //   and cg -- for (for used constraint offsets)
-  static void bddInit(ObjectMap &omap, const ConstraintGraph &cg);
+  static void bddInit(const Cg &cg);
 
   static bool bddInitd() {
     return bddInitd_;
   }
 
   // Get Fdds {{{
-  static bdd getFddVar(ObjectMap::ObjID elm) {
+  static bdd getFddVar(ValueMap::Id elm) {
     return getFddVar(elm.val());
   }
 
@@ -496,10 +495,10 @@ class BddPtstoSet {
 
   // Vector cache {{{
   // Cache on top of bdd to vector code
-  static std::shared_ptr<std::vector<ObjectMap::ObjID>> getBddVec(bdd pts) {
+  static std::shared_ptr<std::vector<ValueMap::Id>> getBddVec(bdd pts) {
     if (pts == bddfalse) {
-      static std::shared_ptr<std::vector<ObjectMap::ObjID>> bddfalse_vec
-        = std::make_shared<std::vector<ObjectMap::ObjID>>();
+      static std::shared_ptr<std::vector<ValueMap::Id>> bddfalse_vec
+        = std::make_shared<std::vector<ValueMap::Id>>();
       return bddfalse_vec;
     }
 
@@ -536,7 +535,7 @@ class BddPtstoSet {
     assert(vecCache_.size() < MaxVecCacheSize);
     auto rc = vecCache_.emplace(id,
         std::make_pair(true,
-          std::make_shared<std::vector<ObjectMap::ObjID>>(
+          std::make_shared<std::vector<ValueMap::Id>>(
             std::move(uglyBddVec_))));
     assert(rc.second);
     std::sort(std::begin(*rc.first->second.second),
@@ -612,14 +611,21 @@ class BddPtstoSet {
   static bddPair *gepToPts_;
   static bdd ptsDom_;
 
+  // Used to incrementally update GEPs
+  static std::set<int32_t> validOffs_;
+  static size_t consStartPos_;
+  static int32_t maxOffs_;
+  static size_t allocPos_;
+
+
   static std::vector<bdd> fddCache_;
 
-  static std::vector<ObjectMap::ObjID> uglyBddVec_;
+  static std::vector<ValueMap::Id> uglyBddVec_;
 
   // Cache:  id -> pair<clock, ptsto>
   static const size_t MaxVecCacheSize = 50000;
   static std::map<uint32_t, std::pair<bool,
-    std::shared_ptr<std::vector<ObjectMap::ObjID>>>> vecCache_;
+    std::shared_ptr<std::vector<ValueMap::Id>>>> vecCache_;
   //}}}
   // }}}
 
@@ -627,7 +633,7 @@ class BddPtstoSet {
   std::unique_ptr<bdd> dynPtsto_ = nullptr;
 
   mutable bdd iterBdd_ = bddfalse;
-  mutable std::shared_ptr<std::vector<ObjectMap::ObjID>> bddVec_ = nullptr;
+  mutable std::shared_ptr<std::vector<ValueMap::Id>> bddVec_ = nullptr;
   //}}}
 };
 
@@ -660,19 +666,19 @@ class SVPtstoSet {
     SVPtstoSet &operator=(SVPtstoSet &&) = default;
 
     typedef typename SEG::NodeID NodeID;
-    bool set(ObjectMap::ObjID id) {
+    bool set(ValueMap::Id id) {
       return ptsto_.test_and_set(id.val());
     }
 
-    void reset(ObjectMap::ObjID id) {
+    void reset(ValueMap::Id id) {
       ptsto_.reset(id.val());
     }
 
-    size_t getSizeNoStruct(ObjectMap &omap) const {
+    size_t getSizeNoStruct(ValueMap &map) const {
       std::set<const llvm::Value *> pts_set;
 
       for (auto obj_id : *this) {
-        auto val = omap.valueAtID(obj_id);
+        auto val = map.getValue(obj_id);
         pts_set.insert(val);
       }
 
@@ -723,7 +729,7 @@ class SVPtstoSet {
       return ch;
     }
 
-    bool operator|=(ObjectMap::ObjID &id) {
+    bool operator|=(ValueMap::Id &id) {
       Bitmap init = ptsto_;
       bool ch = ptsto_.test_and_set(id.val());
       if (ch) {
@@ -732,6 +738,7 @@ class SVPtstoSet {
       return (init != ptsto_);
     }
 
+    /*
     bool orOffs(const SVPtstoSet &rhs, int32_t offs,
         const ObjectMap::StructMap &struct_set) {
       if (offs == 0) {
@@ -745,15 +752,6 @@ class SVPtstoSet {
 
         // If this isn't a structure, don't treat it with an offset
         auto it = struct_set.find(ObjectMap::ObjID(val));
-        /*
-        if (it == std::end(struct_set)) {
-          or_offs = 0;
-        } else {
-          if (it->second <= or_offs) {
-            or_offs = 0;
-          }
-        }
-        */
         // FIXME: We ignore invalid field reads...
         if (it == std::end(struct_set)) {
           continue;
@@ -772,16 +770,17 @@ class SVPtstoSet {
 
       return (init != ptsto_);
     }
+    */
 
     bool intersectWith(const Bitmap &bmp) {
       return (ptsto_ &= bmp);
     }
 
-    bool test(ObjectMap::ObjID obj_id) {
+    bool test(ValueMap::Id obj_id) {
       return ptsto_.test(obj_id.val());
     }
 
-    bool intersectsIgnoring(SVPtstoSet &rhs, ObjectMap::ObjID ignore) {
+    bool intersectsIgnoring(SVPtstoSet &rhs, ValueMap::Id ignore) {
       bool ret = false;
 
       bool lhs_add = ptsto_.test(ignore.val());
@@ -824,10 +823,10 @@ class SVPtstoSet {
       //{{{
      public:
         typedef std::forward_iterator_tag iterator_category;
-        typedef ObjectMap::ObjID value_type;
+        typedef ValueMap::Id value_type;
         typedef int32_t difference_type;
-        typedef ObjectMap::ObjID * pointer;
-        typedef ObjectMap::ObjID & reference;
+        typedef ValueMap::Id * pointer;
+        typedef ValueMap::Id & reference;
 
         // Constructor {{{
         explicit iterator(Bitmap::iterator itr) : itr_(itr) { }
@@ -843,7 +842,7 @@ class SVPtstoSet {
         }
 
         value_type operator*() const {
-          return ObjectMap::ObjID(itr_.operator*());
+          return ValueMap::Id(itr_.operator*());
         }
 
         iterator &operator++() {
@@ -870,10 +869,10 @@ class SVPtstoSet {
       //{{{
      public:
         typedef std::forward_iterator_tag iterator_category;
-        typedef ObjectMap::ObjID value_type;
+        typedef ValueMap::Id value_type;
         typedef int32_t difference_type;
-        typedef ObjectMap::ObjID * pointer;
-        typedef ObjectMap::ObjID & reference;
+        typedef ValueMap::Id * pointer;
+        typedef ValueMap::Id & reference;
 
         // Constructor {{{
         explicit const_iterator(Bitmap::iterator itr) : itr_(itr) { }
@@ -889,12 +888,12 @@ class SVPtstoSet {
         }
 
         const value_type operator*() const {
-          return ObjectMap::ObjID(itr_.operator*());
+          return ValueMap::Id(itr_.operator*());
         }
 
         /*
         value_type operator->() const {
-          return ObjectMap::ObjID(itr_.operator->());
+          return ValueMap::Id(itr_.operator->());
         }
         */
 
@@ -947,7 +946,7 @@ class SVPtstoSet {
         const SVPtstoSet &ps) {
       os << "{";
       std::for_each(std::begin(ps), std::end(ps),
-          [&os] (ObjectMap::ObjID id) {
+          [&os] (ValueMap::Id id) {
         os << " " << id;
       });
       os << " }";
@@ -975,462 +974,5 @@ class SVPtstoSet {
 // Switch between BddPtstoSet and SVPtstoSet
 // typedef SVPtstoSet PtstoSet;
 typedef BddPtstoSet PtstoSet;
-
-class TopLevelPtsto {
-  //{{{
- public:
-    typedef typename SEG::NodeID NodeID;
-    typedef ObjectMap::ObjID ObjID;
-
-    class PtsPair {
-      //{{{
-     public:
-        explicit PtsPair(ObjID id) : id_(id) { }
-
-        ObjID id() const {
-          return id_;
-        }
-
-        bool operator<(const PtsPair &rhs) const {
-          return id() < rhs.id();
-        }
-
-        bool operator<(ObjID rhs) const {
-          return id() < rhs;
-        }
-
-        PtstoSet &pts() {
-          return pts_;
-        }
-
-        const PtstoSet &pts() const {
-          return pts_;
-        }
-
-     private:
-        ObjID id_;
-        PtstoSet pts_;
-      //}}}
-    };
-
-    TopLevelPtsto() = default;
-
-    TopLevelPtsto(const std::vector<ObjID> &objs,
-        std::map<ObjID, Bitmap> dyn_sets) :
-          dynConstraints_(std::begin(dyn_sets), std::end(dyn_sets)) {
-      assert(is_sorted(std::begin(objs), std::end(objs)));
-      assert(std::adjacent_find(std::begin(objs), std::end(objs))
-          == std::end(objs));
-
-      std::for_each(std::begin(objs), std::end(objs),
-          [this] (const ObjID &id) {
-        data_.emplace_back(id);
-      });
-    }
-
-    // Allow move assignment {{{
-    TopLevelPtsto(TopLevelPtsto &&) = delete;
-    // Allow copying... needed in store?
-    TopLevelPtsto(const TopLevelPtsto &) = default;
-
-    TopLevelPtsto &operator=(TopLevelPtsto &&) = default;
-    TopLevelPtsto &operator=(const TopLevelPtsto &) = delete;
-    //}}}
-
-    const PtstoSet &at(ObjID id) const {
-      auto ret = std::lower_bound(std::begin(data_),
-          std::end(data_), id);
-      assert(ret != std::end(data_));
-      return ret->pts();
-    }
-
-    PtstoSet &at(ObjID id) {
-      auto ret = std::lower_bound(std::begin(data_),
-          std::end(data_), id);
-      assert(ret != std::end(data_));
-      return ret->pts();
-    }
-
-    void copy(ObjID src_id, ObjID dest_id) {
-      auto it = find(dest_id);
-      assert(it == std::end(data_));
-      it->pts() = at(src_id);
-    }
-
-    // Bleh, this is slow
-    void remove(ObjID id) {
-      auto it = find(id);
-      data_.erase(it);
-    }
-
-    typedef std::vector<PtsPair>::iterator iterator;
-    typedef std::vector<PtsPair>::const_iterator
-      const_iterator;
-
-    iterator find(ObjID id) {
-      return std::lower_bound(std::begin(data_), std::end(data_),
-          id);
-    }
-
-    const_iterator find(ObjID id) const {
-      return std::lower_bound(std::begin(data_), std::end(data_),
-          id);
-    }
-
-
-    iterator begin() {
-      return std::begin(data_);
-    }
-
-    iterator end() {
-      return std::end(data_);
-    }
-
-    const_iterator begin() const {
-      return std::begin(data_);
-    }
-
-    const_iterator end() const {
-      return std::end(data_);
-    }
-
-    const_iterator cbegin() const {
-      return std::begin(data_);
-    }
-
-    const_iterator cend() const {
-      return std::end(data_);
-    }
-
-#ifndef SPECSFS_IS_TEST
-    friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
-        const TopLevelPtsto &g) {
-      o << "( ";
-      bool first = true;
-      for (auto &pr : g) {
-        if (!first) {
-          o << ", ";
-        }
-
-        for (auto &pts_set : pr.pts()) {
-          o << pr.id() << "->" << pts_set;
-        }
-        first = false;
-      }
-      o << " )";
-      return o;
-    }
-#endif
-
- private:
-    // std::map<ObjID, std::vector<PtstoSet>> data_;
-    std::unordered_map<ObjectMap::ObjID, Bitmap, ObjectMap::ObjID::hasher>
-      dynConstraints_;
-    std::vector<PtsPair> data_;
-  //}}}
-};
-
-// This is fine?
-// FIXME: Need to have a way to add objects to our ptsto graph
-class PtstoGraph {
-  //{{{
- public:
-    typedef typename SEG::NodeID NodeID;
-    typedef ObjectMap::ObjID ObjID;
-
-    PtstoGraph() = default;
-
-    explicit PtstoGraph(const std::vector<ObjID> &objs) {
-      // Assert this vector is sorted and unique
-      assert(is_sorted(std::begin(objs), std::end(objs)));
-      assert(std::adjacent_find(std::begin(objs), std::end(objs))
-          == std::end(objs));
-
-      for (auto obj_id : objs) {
-        data_.emplace_back(obj_id);
-      }
-    }
-
-    // Allow move assignment {{{
-    PtstoGraph(PtstoGraph &&) = delete;
-    // Allow copying... needed in store?
-    PtstoGraph(const PtstoGraph &) = default;
-
-    PtstoGraph &operator=(PtstoGraph &&) = default;
-    PtstoGraph &operator=(const PtstoGraph &) = delete;
-    //}}}
-
-    PtstoSet &at(ObjID id) {
-      auto it = std::lower_bound(std::begin(data_), std::end(data_), id);
-      assert(it != std::end(data_) && it->id() == id);
-      return it->pts();
-    }
-
-    const PtstoSet &at(ObjID id) const {
-      auto it = std::lower_bound(std::begin(data_), std::end(data_), id);
-      assert(it != std::end(data_));
-      return it->pts();
-    }
-
-    bool has(ObjID id) const {
-      auto it = std::lower_bound(std::begin(data_), std::end(data_), id);
-      return (it != std::end(data_) && it->id() == id);
-    }
-
-    bool operator|=(PtstoGraph &rhs) {
-      // Oh goody...
-      bool ret = false;
-      for (auto obj_id : rhs.change_) {
-        auto &rhs_ptsset = rhs.at(obj_id);
-        auto &lhs_ptsset = at(obj_id);
-
-        bool loop_ch = (lhs_ptsset |= rhs_ptsset);
-        if (loop_ch) {
-          change_.insert(obj_id);
-        }
-      }
-
-      return ret;
-    }
-
-    bool assign(ObjID elm, const PtstoSet &ptsset) {
-      bool ret = at(elm).assign(ptsset);
-
-      if (ret) {
-        change_.insert(elm);
-      }
-
-      return ret;
-    }
-
-    bool orElement(ObjID elm, const PtstoSet &rhs) {
-      bool ret = false;
-
-      auto &lhs_ptsset = at(elm);
-      ret |= (lhs_ptsset |= rhs);
-
-      if (ret) {
-        change_.insert(elm);
-      }
-
-      return ret;
-    }
-
-    bool orExcept(PtstoGraph &rhs,
-        ObjID exception) {
-      bool ret = false;
-
-      for (ObjID obj_id : rhs.change_) {
-        if (obj_id != exception) {
-          auto &lhs_ptsset = at(obj_id);
-          auto &rhs_ptsset = rhs.at(obj_id);
-
-          bool loop_ch = (lhs_ptsset |= rhs_ptsset);
-
-          if (loop_ch) {
-            ret = true;
-            change_.insert(obj_id);
-          }
-        }
-      }
-
-      return ret;
-    }
-
-    bool canOrPart(const PtstoGraph &rhs,
-        std::vector<__PartID> &part_map,
-        __PartID part_id) const {
-      for (ObjID obj_id : rhs.change_) {
-        if (part_map[obj_id.val()] != part_id) {
-          continue;
-        }
-
-        if (!has(obj_id)) {
-          return false;
-        }
-      }
-
-      return true;
-    }
-
-    bool orPart(const PtstoGraph &rhs,
-        std::vector<__PartID> &part_map,
-        __PartID part_id) {
-      bool ret = false;
-
-      for (ObjID obj_id : rhs.change_) {
-        if (part_map[obj_id.val()] != part_id) {
-          continue;
-        }
-
-        auto &rhs_ptsset = rhs.at(obj_id);
-        auto &lhs_ptsset = at(obj_id);
-
-        bool loop_ch = (lhs_ptsset |= rhs_ptsset);
-        if (loop_ch) {
-          ret = true;
-          change_.insert(obj_id);
-        }
-      }
-
-      return ret;
-    }
-
-    bool hasChanged() {
-      change_.unique();
-      return !change_.empty();
-    }
-
-    void resetChanged() {
-      change_.clear();
-    }
-
-    /*
-    typedef std::map<ObjID, PtstoSet>::iterator iterator;
-    typedef std::map<ObjID, PtstoSet>::const_iterator
-      const_iterator;
-
-    iterator begin() {
-      return std::begin(data_);
-    }
-
-    iterator end() {
-      return std::end(data_);
-    }
-
-    const_iterator begin() const {
-      return std::begin(data_);
-    }
-
-    const_iterator end() const {
-      return std::end(data_);
-    }
-
-    const_iterator cbegin() const {
-      return data_.cbegin();
-    }
-
-    const_iterator cend() const {
-      return data_.cend();
-    }
-    */
-
-    bool empty() const {
-      return data_.empty();
-    }
-
-    friend llvm::raw_ostream &operator<<(llvm::raw_ostream &o,
-        const PtstoGraph &g) {
-      o << "( ";
-      bool first = true;
-      for (auto &ptspr : g.data_) {
-        if (!first) {
-          o << ", ";
-        }
-
-        o << ptspr.id() << "->" << ptspr.pts();
-
-        first = false;
-      }
-      o << " )";
-      return o;
-    }
-
- private:
-    class ChangeSet {
-      //{{{
-     public:
-        ChangeSet() = default;
-
-        void insert(ObjID id) {
-          change_.push_back(id);
-        }
-
-        void unique() {
-          std::sort(std::begin(change_), std::end(change_));
-          auto it = std::unique(std::begin(change_), std::end(change_));
-          change_.erase(it, std::end(change_));
-        }
-
-        bool empty() const {
-          return change_.empty();
-        }
-
-        bool has(ObjID id) {
-          return std::binary_search(std::begin(change_), std::end(change_),
-              id);
-        }
-
-        void clear() {
-          change_.clear();
-        }
-
-        typedef std::vector<ObjID>::iterator iterator;
-        typedef std::vector<ObjID>::const_iterator const_iterator;
-
-        const_iterator begin() const {
-          return std::begin(change_);
-        }
-
-        const_iterator end() const {
-          return std::end(change_);
-        }
-
-        const_iterator cbegin() const {
-          return std::begin(change_);
-        }
-
-        const_iterator cend() const {
-          return std::end(change_);
-        }
-
-        iterator begin() {
-          return std::begin(change_);
-        }
-
-        iterator end() {
-          return std::end(change_);
-        }
-
-     private:
-        std::vector<ObjID> change_;
-      //}}}
-    };
-
-    class PtsPair {
-      //{{{
-     public:
-        explicit PtsPair(ObjID id) : id_(id) { }
-        ObjID id() const {
-          return id_;
-        }
-
-        bool operator<(const PtsPair &rhs) const {
-          return id() < rhs.id();
-        }
-
-        bool operator<(ObjID rhs) const {
-          return id() < rhs;
-        }
-
-        PtstoSet &pts() {
-          return pts_;
-        }
-
-        const PtstoSet &pts() const {
-          return pts_;
-        }
-
-     private:
-        ObjID id_;
-        PtstoSet pts_;
-      //}}}
-    };
-
-    ChangeSet change_;
-    // std::map<ObjID, PtstoSet> data_;
-    std::vector<PtsPair> data_;
-  //}}}
-};
 
 #endif  // INCLUDE_SOLVEHELPERS_H_

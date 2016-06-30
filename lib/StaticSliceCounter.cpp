@@ -9,10 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "include/DUG.h"
 #include "include/InstLabeler.h"
-#include "include/ObjectMap.h"
-#include "include/SpecSFS.h"
 #include "include/InstPrinter.h"
 #include "include/lib/UnusedFunctions.h"
 #include "include/lib/DynAlias.h"

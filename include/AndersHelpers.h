@@ -387,38 +387,7 @@ class AndersGraph {
     // For each constraint destination, make a node.
     ObjID max_id(0);
 
-    // Add indirect function argument locations to graph -- for use w/ indir
-    //   callsite info
-    // For each function object (not value)
-    for (auto &fcn : m) {
-      // Objects should always be their own rep...
-      auto obj_id = omap.getObject(&fcn);
-      assert(omap.getRep(obj_id) == obj_id);
-      auto ret_id = omap.getReturnRep(&fcn);
-      // Generate an array containing all of that function's arguments
-      std::vector<ObjID> args;
-      std::for_each(fcn.arg_begin(), fcn.arg_end(),
-          [&args, &omap, &max_id] (const llvm::Argument &arg) {
-        auto arg_id = omap.getValueRep(&arg);
-        assert(arg_id == omap.getRep(arg_id));
-
-        args.push_back(arg_id);
-
-        if (arg_id > max_id) {
-          max_id = arg_id;
-        }
-      });
-      // + ret ids
-      // Add to fcns_ map
-      /*
-      llvm::dbgs() << "Adding: " << fcn.getName() << " to fcns_ at: " << obj_id
-        << "\n";
-      */
-      fcns_.emplace(std::piecewise_construct,
-          std::forward_as_tuple(obj_id),
-          std::forward_as_tuple(ret_id, std::move(args)));
-    }
-
+    // Calculate the max_id used
     std::for_each(cg.indir_begin(), cg.indir_end(),
         [&max_id]
         (const std::pair<const ObjID, ConstraintGraph::IndirectCallInfo> &pr) {

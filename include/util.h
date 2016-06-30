@@ -462,6 +462,27 @@ key_cend(const container &c) {
 //}}}
 //}}}
 
+// Fast Shared Ptr {{{
+template <typename T>
+using fast_shared_ptr = std::__shared_ptr<T, __gnu_cxx::_S_single>;
+
+/*
+template <typename T, typename Alloc, typename... Args>
+inline fast_shared_ptr<T>
+make_fast_shared(Alloc &a, Args&&... args) {
+  return fast_shared_ptr<T>(std::_Sp_make_shared_tag(), a,
+      std::forward<Args>(args)...);
+}
+
+template <typename T, typename... Args>
+inline fast_shared_ptr<T>
+make_fast_shared(Args&&... args) {
+  return make_fast_shared<T>(std::allocator<T>(), std::forward<Args>(args)...);
+}
+*/
+
+//}}}
+
 // Unique IDs {{{
 template<class T = uint64_t, T initial_value = T(0),
   T invalid_value = std::numeric_limits<T>::max()>
@@ -709,6 +730,11 @@ class UnionFind {
     return id_type(ids_.size() - 1);
   }
 
+  void reserve(size_t size) {
+    ids_.reserve(size);
+    ranks_.reserve(size);
+  }
+
   id_type find(id_type idx) {
     assert(static_cast<size_t>(idx) < ids_.size());
     // If this is not a rep
@@ -897,7 +923,7 @@ class StackAlloc : public std::allocator<T> {
   typedef T* pointer;
   typedef const T* const_pointer;
 
-  static const size_t StackSize = 10000;
+  static const size_t StackSize = 100000;
 
   template <typename nT>
   struct rebind {
@@ -2212,10 +2238,10 @@ class PagedBitmap {
 
 // Hash function for SparseBitmap:
 namespace std {
-template<>
-struct hash<util::SparseBitmap<>> {
-  std::size_t operator()(const util::SparseBitmap<> &map) const {
-    return util::SparseBitmap<>::hasher()(map);
+template<typename T>
+struct hash<util::SparseBitmap<T>> {
+  std::size_t operator()(const util::SparseBitmap<T> &map) const {
+    return typename util::SparseBitmap<T>::hasher()(map);
   }
 };
 

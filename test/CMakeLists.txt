@@ -217,6 +217,10 @@ create_test(simple_indr_fcn
     simple_indr_fcn.c
   )
 
+create_test(alloc_indir_fcn
+    alloc_indir_fcn.c
+  )
+
 create_test(simple_indr_loop
     simple_indr_loop.c
   )
@@ -250,6 +254,30 @@ create_opt_test(glbl_const_init
 
 create_test(test_argv
     test_argv.c
+  )
+
+create_test(multi_malloc
+    multi_malloc.c
+  )
+
+create_test(indir_two_malloc
+    indir_two_malloc.c
+  )
+
+create_test(test_recursion
+    test_recursion.c
+  )
+
+create_test(indir_recursion
+    indir_recursion.c
+  )
+
+create_test(test_struct_store
+    test_struct_store.c
+  )
+
+create_test(test_int_struct
+    test_int_struct.c
   )
 
 add_subdirectory(dce)

@@ -12,9 +12,10 @@
 #include <vector>
 
 #include "include/util.h"
-#include "include/ObjectMap.h"
-#include "include/SolveHelpers.h"
+
+#include "include/ValueMap.h"
 #include "include/ExtInfo.h"
+#include "include/SolveHelpers.h"
 
 #include "llvm/Constants.h"
 #include "llvm/Function.h"
@@ -28,15 +29,15 @@
 //
 // Lets have a "calc dependencies" routine
 
-typedef std::unordered_multimap<ObjectMap::ObjID, llvm::Value *,
-        ObjectMap::ObjID::hasher> free_location_multimap;
+typedef std::unordered_multimap<ValueMap::Id, llvm::Value *,
+        ValueMap::Id::hasher> free_location_multimap;
 
 class SetCache {  //{{{
  public:
   SetCache() = default;
 
   // Dedups some ids
-  int32_t getID(const std::set<ObjectMap::ObjID> &pts_set) {
+  int32_t getID(const std::set<ValueMap::Id> &pts_set) {
     /*
     llvm::dbgs() << "Doing find on mappings!\n";
     llvm::dbgs() << "  mappings.size() is: " << mappings_.size() << "\n";
@@ -59,36 +60,36 @@ class SetCache {  //{{{
     return it->second;
   }
 
-  void addGVUse(ObjectMap::ObjID gv) {
+  void addGVUse(ValueMap::Id gv) {
     gvUse_.insert(gv);
   }
 
-  bool gvUsed(ObjectMap::ObjID gv) const {
+  bool gvUsed(ValueMap::Id gv) const {
     return (gvUse_.find(gv) != std::end(gvUse_));
   }
 
   // Iterator... {{{
   class const_iterator :
-    public std::map<std::set<ObjectMap::ObjID>, int32_t>::const_iterator {
+    public std::map<std::set<ValueMap::Id>, int32_t>::const_iterator {
    public:
-     typedef std::map<std::set<ObjectMap::ObjID>, int32_t>::const_iterator
+     typedef std::map<std::set<ValueMap::Id>, int32_t>::const_iterator
        base_iter;
 
      const_iterator() = default;
      explicit const_iterator(base_iter s) :
        base_iter(s) { }
 
-     const std::set<ObjectMap::ObjID> *operator->() {
+     const std::set<ValueMap::Id> *operator->() {
        return &(base_iter::operator->()->first);
      }
 
-     const std::set<ObjectMap::ObjID> &operator*() {
+     const std::set<ValueMap::Id> &operator*() {
        return base_iter::operator*().first;
      }
   };
   //}}}
 
-  typedef std::set<ObjectMap::ObjID>::const_iterator
+  typedef std::set<ValueMap::Id>::const_iterator
     const_gv_iterator;
 
   void addRet(llvm::Function *fcn) {
@@ -117,8 +118,8 @@ class SetCache {  //{{{
 
  private:
   std::set<llvm::Function *> retFcns_;
-  std::set<ObjectMap::ObjID> gvUse_;
-  std::map<std::set<ObjectMap::ObjID>, int32_t> mappings_;
+  std::set<ValueMap::Id> gvUse_;
+  std::map<std::set<ValueMap::Id>, int32_t> mappings_;
   int32_t curID_ = 0;
 };
 //}}}
@@ -167,7 +168,7 @@ class InstrumentationSite {  //{{{
 
 class AllocInst : public InstrumentationSite {  //{{{
  public:
-    AllocInst(llvm::Instruction *alloc_inst, ObjectMap::ObjID alloc_obj) :
+    AllocInst(llvm::Instruction *alloc_inst, ValueMap::Id alloc_obj) :
       InstrumentationSite(InstrumentationSite::Kind::AllocInst),
       allocInst_(alloc_inst), allocObj_(alloc_obj) { }
 
@@ -215,7 +216,7 @@ class AllocInst : public InstrumentationSite {  //{{{
 
  private:
     llvm::Instruction *allocInst_;
-    ObjectMap::ObjID allocObj_;
+    ValueMap::Id allocObj_;
 
  protected:
     virtual void printInst(llvm::raw_ostream &o) const {
@@ -227,7 +228,7 @@ class AllocInst : public InstrumentationSite {  //{{{
 // Used to represent a free=alloc assumption made by the DynPtsto assumptions
 class DoubleAllocInst : public AllocInst {  //{{{
  public:
-    DoubleAllocInst(llvm::Instruction *alloc_inst, ObjectMap::ObjID alloc_obj) :
+    DoubleAllocInst(llvm::Instruction *alloc_inst, ValueMap::Id alloc_obj) :
       AllocInst(alloc_inst, alloc_obj) { }
 
     int64_t approxCost() override {
@@ -295,7 +296,7 @@ class FreeInst : public InstrumentationSite {  //{{{
 class AssignmentInst : public InstrumentationSite {  //{{{
  public:
     AssignmentInst(llvm::Instruction *assign_inst,
-        ObjectMap::ObjID assign_val) :
+        ValueMap::Id assign_val) :
       InstrumentationSite(InstrumentationSite::Kind::AssignmentInst),
       assignInst_(assign_inst), assignVal_(assign_val) { }
 
@@ -339,7 +340,7 @@ class AssignmentInst : public InstrumentationSite {  //{{{
 
  private:
     llvm::Instruction *assignInst_;
-    ObjectMap::ObjID assignVal_;
+    ValueMap::Id assignVal_;
 
  protected:
     virtual void printInst(llvm::raw_ostream &o) const {
@@ -352,7 +353,7 @@ class AssignmentInst : public InstrumentationSite {  //{{{
 class SetCheckInst : public InstrumentationSite {  //{{{
  public:
     SetCheckInst(llvm::Value *assign_inst,
-        PtstoSet check_set,
+        const PtstoSet &check_set,
         SetCache &set_cache) :
       InstrumentationSite(InstrumentationSite::Kind::SetCheckInst),
       assignInst_(assign_inst),
@@ -403,7 +404,7 @@ class SetCheckInst : public InstrumentationSite {  //{{{
 
  private:
     llvm::Value *assignInst_;
-    std::set<ObjectMap::ObjID> checkSet_;
+    std::set<ValueMap::Id> checkSet_;
 
     SetCache &setCache_;
 
@@ -476,7 +477,7 @@ class Assumption {  //{{{
 
     virtual Assumption *clone() const = 0;
 
-    virtual void remap(const util::ObjectRemap<ObjectMap::ObjID> &) { }
+    virtual void remap(const util::ObjectRemap<ValueMap::Id> &) { }
 
     Kind getKind() const {
       return kind_;
@@ -487,14 +488,14 @@ class Assumption {  //{{{
     }
 
     std::vector<std::unique_ptr<InstrumentationSite>> getInstrumentation(
-        ObjectMap &obj, llvm::Module &m,
+        ValueMap &obj, llvm::Module &m,
         const free_location_multimap &free_locations, SetCache &cache) const {
       return calcDependencies(obj, m, free_locations, cache);
     }
 
 
     std::vector<std::unique_ptr<InstrumentationSite>>
-    getApproxDependencies(ObjectMap &omap, const llvm::Module &m) {
+    getApproxDependencies(ValueMap &omap, const llvm::Module &m) {
       return approxDependencies(omap, m);
     }
 
@@ -508,12 +509,12 @@ class Assumption {  //{{{
     // NOTE: We may need a ptsto analysis to know the real dependencies
     virtual std::vector<std::unique_ptr<InstrumentationSite>>
       approxDependencies(
-        ObjectMap &omap, const llvm::Module &m) const = 0;
+        ValueMap &omap, const llvm::Module &m) const = 0;
 
     // For some forms of instrumentation we'll need to know the ptsto set to
     //   calc the true dependencies
     virtual std::vector<std::unique_ptr<InstrumentationSite>> calcDependencies(
-        ObjectMap &omap, llvm::Module &m,
+        ValueMap &omap, llvm::Module &m,
         const free_location_multimap &free_locations,
         SetCache &cache) const = 0;
 };
@@ -534,24 +535,24 @@ class PtstoAssumption : public Assumption {  //{{{
       return new PtstoAssumption(*this);
     }
 
-    void remap(const util::ObjectRemap<ObjectMap::ObjID> &remap) override {
+    void remap(const util::ObjectRemap<ValueMap::Id> &remap) override {
       PtstoSet new_ptstos;
       std::for_each(std::begin(ptstos_), std::end(ptstos_),
-          [&remap, &new_ptstos] (ObjectMap::ObjID id) {
+          [&remap, &new_ptstos] (ValueMap::Id id) {
             return new_ptstos.set(remap[id]);
           });
       ptstos_ = std::move(new_ptstos);
     }
 
  private:
-    // ObjectMap::ObjID objID_;
+    // ValueMap::Id objID_;
     llvm::Value *instOrArg_;
     PtstoSet ptstos_;
 
  protected:
     std::vector<std::unique_ptr<InstrumentationSite>>
       calcDependencies(
-        ObjectMap &omap, llvm::Module &m,
+        ValueMap &omap, llvm::Module &m,
         const free_location_multimap &free_locations,
         SetCache &) const override;
 
@@ -559,7 +560,7 @@ class PtstoAssumption : public Assumption {  //{{{
     // dependency.. we assume the cost of allow ~= the cost of free
     std::vector<std::unique_ptr<InstrumentationSite>>
       approxDependencies(
-        ObjectMap &omap, const llvm::Module &m) const override;
+        ValueMap &omap, const llvm::Module &m) const override;
 };
 //}}}
 
@@ -582,13 +583,13 @@ class DeadCodeAssumption : public Assumption {  //{{{
  protected:
     std::vector<std::unique_ptr<InstrumentationSite>>
       calcDependencies(
-        ObjectMap &obj, llvm::Module &m,
+        ValueMap &obj, llvm::Module &m,
         const free_location_multimap &free_locations,
         SetCache &) const override;
 
     // Approx dependencies == calcDependencies in this instance
     std::vector<std::unique_ptr<InstrumentationSite>> approxDependencies(
-        ObjectMap &obj, const llvm::Module &m) const override;
+        ValueMap &obj, const llvm::Module &m) const override;
 };
 //}}}
 //}}}
@@ -651,7 +652,7 @@ class AssumptionSet {
     assumptions_.emplace_back(std::move(a));
   }
 
-  void updateObjIDs(const util::ObjectRemap<ObjectMap::ObjID> &remap) {
+  void updateObjIDs(const util::ObjectRemap<ValueMap::Id> &remap) {
     for (auto &pasm : assumptions_) {
       pasm->remap(remap);
     }

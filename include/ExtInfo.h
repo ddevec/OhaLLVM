@@ -18,9 +18,8 @@
 #include "llvm/Module.h"
 #include "llvm/Support/CallSite.h"
 
-#include "include/ObjectMap.h"
-#include "include/ConstraintGraph.h"
-#include "include/ControlFlowGraph.h"
+#include "include/ValueMap.h"
+#include "include/ModInfo.h"
 #include "include/LLVMHelper.h"
 
 
@@ -31,6 +30,8 @@ enum class AllocStatus {
   None
 };
 
+class Cg;
+class CallInfo;
 class ExtInfo {
  public:
   ExtInfo() = default;
@@ -43,7 +44,7 @@ class ExtInfo {
   //                            is associated with -- ObjID::invalid() if the
   //                            data is a non-static (stack/heap based)
   //                            allocation (ex. from malloc)
-  typedef std::tuple<llvm::Value *, llvm::Value *, ObjectMap::ObjID> AllocInfo;
+  typedef std::tuple<llvm::Value *, llvm::Value *, ValueMap::Id> AllocInfo;
 
   // A pair representing what is allocated by a given instruction.
   //  - first -- AllocStatus -- If the allocation is weak, strong, none, or
@@ -53,53 +54,53 @@ class ExtInfo {
   //                            size
   typedef std::pair<AllocStatus, const llvm::Type *> StaticAllocInfo;
 
-  virtual bool insertCallCons(llvm::ImmutableCallSite &ci, ObjectMap &omap,
-      ConstraintGraph &cg, CFG &cfg, CFG::CFGid *next_id) const = 0;
+  virtual bool insertCallCons(Cg &cg, llvm::ImmutableCallSite &cs,
+      const CallInfo &ci) const = 0;
 
   virtual std::vector<AllocInfo> getAllocData(llvm::Module &m,
-      llvm::CallSite &ci, ObjectMap &omap,
+      llvm::CallSite &ci, ValueMap &map,
       llvm::Instruction **insert_after) const = 0;
 
   virtual std::vector<llvm::Value *> getFreeData(llvm::Module &m,
-      llvm::CallSite &ci, ObjectMap &omap,
+      llvm::CallSite &ci, ValueMap &map,
       llvm::Instruction **insert_after) const = 0;
 
   StaticAllocInfo getAllocInfo(const llvm::CallInst *ci,
-      ObjectMap &omap) const {
+      ModInfo &info) const {
     llvm::ImmutableCallSite ics(ci);
 
-    return getAllocInfo(ics, omap);
+    return getAllocInfo(ics, info);
   }
 
   virtual bool canAlloc() const = 0;
 
   StaticAllocInfo getAllocInfo(llvm::CallSite &cs,
-      ObjectMap &omap) const {
+      ModInfo &info) const {
     llvm::ImmutableCallSite ics(cs);
 
-    return getAllocInfo(ics, omap);
+    return getAllocInfo(ics, info);
   }
 
   virtual StaticAllocInfo getAllocInfo(llvm::ImmutableCallSite &cs,
-      ObjectMap &omap) const = 0;
+      ModInfo &info) const = 0;
 };
 
 class UnknownExtInfo : public ExtInfo {
  public:
   UnknownExtInfo() = default;
 
-  bool insertCallCons(llvm::ImmutableCallSite &ci, ObjectMap &omap,
-      ConstraintGraph &cg, CFG &cfg, CFG::CFGid *next_id) const override;
+  bool insertCallCons(Cg &cg, llvm::ImmutableCallSite &cs,
+      const CallInfo &ci) const override;
 
   std::vector<AllocInfo> getAllocData(llvm::Module &m, llvm::CallSite &ci,
-      ObjectMap &omap, llvm::Instruction **insert_after) const override;
+      ValueMap &map, llvm::Instruction **insert_after) const override;
 
   std::vector<llvm::Value *> getFreeData(llvm::Module &m, llvm::CallSite &ci,
-      ObjectMap &omap,
+      ValueMap &map,
       llvm::Instruction **insert_after) const override;
 
   StaticAllocInfo getAllocInfo(llvm::ImmutableCallSite &cs,
-      ObjectMap &omap) const override;
+      ModInfo &info) const override;
 
   // Unknown functions cannot alloc, Universal Value covers this...
   bool canAlloc() const { return false; }
@@ -107,9 +108,16 @@ class UnknownExtInfo : public ExtInfo {
 
 class ExtLibInfo {
  public:
-  ExtLibInfo() = default;
+  ExtLibInfo(ExtLibInfo &&) = default;
+  ExtLibInfo(const ExtLibInfo &) = delete;
 
-  void init(llvm::Module &m, ObjectMap &omap);
+  ExtLibInfo &operator=(ExtLibInfo &&) = default;
+  ExtLibInfo &operator=(const ExtLibInfo &) = delete;
+
+  explicit ExtLibInfo(ModInfo &info);
+
+  void init(const llvm::Module &m, ValueMap &map);
+  void addGlobalConstraints(const llvm::Module &m, Cg &cg);
 
   const UnknownExtInfo UnknownFunction;
 
@@ -159,6 +167,8 @@ class ExtLibInfo {
   std::unordered_map<std::string, std::unique_ptr<ExtInfo>> info_;
   // Partial matches
   std::vector<std::pair<std::string, std::unique_ptr<ExtInfo>>> matchInfo_;
+
+  ModInfo &modInfo_;
 };
 
 #endif  // INCLUDE_EXTINFO_H_

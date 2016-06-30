@@ -22,7 +22,7 @@
 #include "llvm/Support/Debug.h"
 
 #include "include/SolveHelpers.h"
-#include "include/ObjectMap.h"
+#include "include/ValueMap.h"
 
 #include "include/InstPrinter.h"
 
@@ -45,7 +45,7 @@ class DynAliasLoader : public llvm::ModulePass {
   }
 
   /*
-  bool hasPtsto(ObjectMap::ObjID &val_id) const {
+  bool hasPtsto(ValueMap::Id &val_id) const {
     assert(hasInfo_);
     auto it = valToObjs_.find(val_id);
 
@@ -59,7 +59,7 @@ class DynAliasLoader : public llvm::ModulePass {
 
   bool hasPtsto(const llvm::Value *val) {
     assert(hasInfo_);
-    auto val_id = omap_.getValueRep(val);
+    auto val_id = map_.getDef(val);
     auto it = valToObjs_.find(val_id);
 
     if (it == std::end(valToObjs_)) {
@@ -69,11 +69,11 @@ class DynAliasLoader : public llvm::ModulePass {
     }
   }
 
-  std::set<ObjectMap::ObjID> &getPtsto(const llvm::Value *val) {
-    ObjectMap::ObjID val_id = omap_.getValOrConstRep(val);
+  std::set<ValueMap::Id> &getPtsto(const llvm::Value *val) {
+    ValueMap::Id val_id = map_.getDef(val);
 
     assert(hasInfo_);
-    static std::set<ObjectMap::ObjID> empty_set;
+    static std::set<ValueMap::Id> empty_set;
     auto it = valToObjs_.find(val_id);
     if (it == std::end(valToObjs_)) {
       return empty_set;
@@ -82,7 +82,7 @@ class DynAliasLoader : public llvm::ModulePass {
     }
   }
 
-  typedef std::map<ObjectMap::ObjID, std::set<ObjectMap::ObjID>>::const_iterator
+  typedef std::map<ValueMap::Id, std::set<ValueMap::Id>>::const_iterator
     const_iterator;
 
   const_iterator begin() const {
@@ -95,8 +95,8 @@ class DynAliasLoader : public llvm::ModulePass {
 
   bool loadStoreAlias(const llvm::LoadInst *li, const llvm::StoreInst *si) {
     // Check for the store inst in our load alias set...
-    auto sid = omap_.getValueC(si);
-    auto lid = omap_.getValueC(li);
+    auto sid = map_.getDef(si);
+    auto lid = map_.getDef(li);
 
     // Get the loadinst for our value:
     auto load_it = valToObjs_.find(lid);
@@ -108,7 +108,7 @@ class DynAliasLoader : public llvm::ModulePass {
     auto &load_ptsto = load_it->second;
 
     // If we have some unknown dynamic info, Fallback to a static alias analysis
-    if (load_ptsto.find(ObjectMap::ObjID::invalid()) !=
+    if (load_ptsto.find(ValueMap::Id::invalid()) !=
         std::end(load_ptsto)) {
       auto &aa = getAnalysis<llvm::AliasAnalysis>();
       return aa.alias(llvm::AliasAnalysis::Location(li->getOperand(0)),
@@ -120,7 +120,7 @@ class DynAliasLoader : public llvm::ModulePass {
   }
 
   std::vector<const llvm::Value *> getAliases(const llvm::LoadInst *li) {
-    auto lid = omap_.getValueC(li);
+    auto lid = map_.getDef(li);
     auto load_it = valToObjs_.find(lid);
 
     if (load_it == std::end(valToObjs_)) {
@@ -131,29 +131,29 @@ class DynAliasLoader : public llvm::ModulePass {
 
     std::vector<const llvm::Value *> ret;
     for (auto sid : load_ptsto) {
-      if (sid == ObjectMap::ObjID::invalid()) {
+      if (sid == ValueMap::Id::invalid()) {
         return std::vector<const llvm::Value *>(1, nullptr);
       }
 
-      ret.push_back(omap_.valueAtID(sid));
+      ret.push_back(map_.getValue(sid));
     }
 
     return ret;
   }
 
-  const llvm::Value *valueAtID(ObjectMap::ObjID id) {
-    return omap_.valueAtID(id);
+  const llvm::Value *valueAtID(ValueMap::Id id) {
+    return map_.getValue(id);
   }
 
-  ObjectMap &omap() {
-    return omap_;
+  const ValueMap &map() const {
+    return map_;
   }
 
  private:
   void setupSpecSFSids(llvm::Module &);
 
-  ObjectMap omap_;
-  std::map<ObjectMap::ObjID, std::set<ObjectMap::ObjID>> valToObjs_;
+  ValueMap map_;
+  std::map<ValueMap::Id, std::set<ValueMap::Id>> valToObjs_;
   bool hasInfo_ = false;
 };
 

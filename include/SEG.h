@@ -25,7 +25,7 @@
 #include "include/Debug.h"
 #include "include/util.h"
 
-class ObjectMap;
+class ValueMap;
 
 // Static functions used by SEG DOT printing {{{
 template<typename idT>
@@ -364,7 +364,7 @@ class SEG {
 
         // Dot print support {{{
         virtual void print_label(dbg_ostream &,
-            const ObjectMap &) const { }
+            const ValueMap &) const { }
         //}}}
 
         // Actual unite functionality {{{
@@ -1156,7 +1156,7 @@ class SEG {
 
     // Debug functions {{{
     void printDotFile(const std::string &filename,
-        const ObjectMap &omap) {
+        const ValueMap &omap) {
       // cleanGraph();
 #ifndef SPECSFS_IS_TEST
       std::ofstream ostm(filename, std::ofstream::out);
@@ -1347,7 +1347,7 @@ class SEGEdge {
 
     // By default print nothing
     virtual void print_label(dbg_ostream &,
-        const ObjectMap &) const { }
+        const ValueMap &) const { }
 
     EdgeKind getKind() const {
       return kind_;

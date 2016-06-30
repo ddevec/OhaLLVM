@@ -11,7 +11,7 @@
 #include "include/util.h"
 #include "include/ConstraintPass.h"
 #include "include/SEG.h"
-#include "include/ObjectMap.h"
+#include "include/ValueMap.h"
 
 #include "llvm/Constants.h"
 #include "llvm/Function.h"

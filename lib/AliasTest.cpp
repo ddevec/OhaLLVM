@@ -5,8 +5,6 @@
 #include <map>
 #include <vector>
 
-#include "include/DUG.h"
-#include "include/ObjectMap.h"
 #include "include/lib/DynAlias.h"
 #include "include/lib/IndirFcnTarget.h"
 #include "include/lib/UnusedFunctions.h"
@@ -67,7 +65,7 @@ class AliasTest : public llvm::ModulePass {
     }
     // Functions
     for (auto &fcn : m) {
-      if (unused.isUsed(&fcn)) {
+      if (unused.isReallyUsed(&fcn)) {
         value_list.push_back(&fcn);
         // Funciton arguments
         for (auto it = fcn.arg_begin(), en = fcn.arg_end();
@@ -79,7 +77,7 @@ class AliasTest : public llvm::ModulePass {
 
         // Instructions
         for (auto &bb : fcn) {
-          if (unused.isUsed(&bb)) {
+          if (unused.isReallyUsed(&bb)) {
             for (auto &inst : bb) {
               if (llvm::isa<llvm::PointerType>(inst.getType())) {
                 value_list.push_back(&inst);

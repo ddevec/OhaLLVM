@@ -16,10 +16,8 @@
 #include "include/util.h"
 #include "include/ContextInfo.h"
 #include "include/ConstraintPass.h"
-#include "include/DUG.h"
 #include "include/InstLabeler.h"
 #include "include/LLVMHelper.h"
-#include "include/ObjectMap.h"
 #include "include/Tarjans.h"
 #include "include/lib/UnusedFunctions.h"
 #include "include/lib/IndirFcnTarget.h"
@@ -183,7 +181,7 @@ class StaticSlice : public llvm::ModulePass {
     dynInfo_ = &getAnalysis<UnusedFunctions>();
     contextInfo_ = &getAnalysis<ContextInfo>();
     auto &cons_pass = getAnalysis<ConstraintPass>();
-    omap_ = cons_pass.getObjectMap();
+    map_ = cons_pass.getCG().vals();
     bbNum_ = &getAnalysis<BBNumber>();
     callDests_ = &getAnalysis<CallDests>();
 
@@ -742,7 +740,7 @@ class StaticSlice : public llvm::ModulePass {
 
   const UnusedFunctions *dynInfo_;
 
-  ObjectMap omap_;
+  ValueMap map_;
   BBNumber *bbNum_;
 
   ContextInfo *contextInfo_;

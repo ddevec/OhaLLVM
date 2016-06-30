@@ -2,16 +2,17 @@
  * Copyright (C) 2015 David Devecsery
  */
 
-#ifndef INCLUDE_LIB_FCNCFG_H_
-#define INCLUDE_LIB_FCNCFG_H_
+#ifndef INCLUDE_LIB_BASICFCNCFG_H_
+#define INCLUDE_LIB_BASICFCNCFG_H_
 
 #include <set>
 #include <unordered_map>
 #include <vector>
 
 #include "include/util.h"
+#include "include/DynamicInfo.h"
 #include "include/SEG.h"
-#include "include/ValueMap.h"
+#include "include/Tarjans.h"
 #include "include/lib/UnusedFunctions.h"
 #include "include/lib/IndirFcnTarget.h"
 
@@ -22,7 +23,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 
-class FcnCFG : public llvm::ModulePass {
+class BasicFcnCFG {
  private:
   struct id_tag {};
 
@@ -40,11 +41,12 @@ class FcnCFG : public llvm::ModulePass {
       auto &node = cast<FcnNode>(n);
 
       reps_.insert(std::begin(node.reps_), std::end(node.reps_));
+      node.reps_.clear();
 
       SEG::Node::unite(seg, n);
     }
 
-    const std::set<const llvm::Function *> &reps() const {
+    const std::unordered_set<const llvm::Function *> &reps() const {
       return reps_;
     }
 
@@ -52,44 +54,61 @@ class FcnCFG : public llvm::ModulePass {
     const llvm::Function *func_;
 
     // Set of call instructions within this function
-    std::set<const llvm::Function *> reps_;
+    std::unordered_set<const llvm::Function *> reps_;
     //}}}
   };
 
  public:
   typedef util::ID<id_tag, uint32_t, -1> Id;
 
-  static char ID;
-  FcnCFG();
+  BasicFcnCFG(llvm::Module &m, DynamicInfo &di);
 
-  virtual bool runOnModule(llvm::Module &M);
-
-  void getAnalysisUsage(llvm::AnalysisUsage &usage) const;
-
-  const char *getPassName() const override {
-    return "FcnCFG";
+  BasicFcnCFG(const BasicFcnCFG &rhs) {
+    fcnGraph_ = rhs.fcnGraph_.clone<FcnNode>();
+    fcnMap_ = rhs.fcnMap_;
+    idToFcn_ = rhs.idToFcn_;
   }
 
   Id getId(const llvm::Function *fcn) const {
-    return util::convert_id<Id>(fcnMap_.at(fcn));
+    return util::convert_id<Id>(
+        fcnGraph_.getNode(fcnMap_.at(fcn)).id());
   }
 
-  const std::set<const llvm::Function *> &
+  const std::unordered_set<const llvm::Function *> &
   getSCC(const llvm::Function *fcn) const {
     return getSCC(getId(fcn));
   }
 
-  const std::set<const llvm::Function *> &
+  const std::unordered_set<const llvm::Function *> &
   getSCC(Id id) const {
     auto seg_id = util::convert_id<SEG::NodeID>(id);
     return fcnGraph_.getNode<FcnNode>(seg_id).reps();
   }
 
+  void addIndirEdge(const llvm::Function *caller_fcn,
+      const llvm::Function *callee_fcn) {
+    auto caller_id = fcnGraph_.getNode(fcnMap_.at(caller_fcn)).id();
+    auto callee_id = fcnGraph_.getNode(fcnMap_.at(callee_fcn)).id();
+    if (callee_id == caller_id) {
+      return;
+    }
+
+    fcnGraph_.addPred(callee_id, caller_id);
+
+    updateScc();
+  }
+
  private:
+  // Umm, yeah, update the sccs...
+  // FIXME: Use optimized alg from pldi07 paper
+  void updateScc() {
+    RunTarjans<> X(fcnGraph_);
+  }
+
   SEG fcnGraph_;
 
   std::unordered_map<const llvm::Function *, SEG::NodeID> fcnMap_;
   std::vector<const llvm::Function *> idToFcn_;
 };
 
-#endif  // INCLUDE_LIB_FCNCFG_H_
+#endif  // INCLUDE_LIB_BASICFCNCFG_H_
