@@ -22,6 +22,7 @@
 
 #include "include/util.h"
 #include "include/RunTarjans.h"
+#include "include/SolveHelpers.h"
 #include "include/ValueMap.h"
 #include "include/lib/IndirFcnTarget.h"
 #include "include/lib/UnusedFunctions.h"
@@ -676,5 +677,7 @@ void Cg::optimize() {
   HRU(100);
   llvm::dbgs() << "after HRU constraint_size: " << constraints_.size() <<
     "\n";
+  // Reset the bdd constraint size...
+  BddPtstoSet::updateConstraints(*this);
 }
 

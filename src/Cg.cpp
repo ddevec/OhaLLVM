@@ -815,10 +815,13 @@ Cg::Cg(const llvm::Function *fcn,
       const DynamicInfo &dyn_info,
       AssumptionSet &as,
       ModInfo &mod_info,
-      ExtLibInfo &ext_info) :
+      ExtLibInfo &ext_info,
+      CsCFG &cfg) :
+      csCFG_(cfg),
       dynInfo_(dyn_info),
       as_(as),
-      modInfo_(mod_info), extInfo_(ext_info) {
+      modInfo_(mod_info),
+      extInfo_(ext_info) {
   extInfo_.init(*fcn->getParent(), vals());
 
 
@@ -1119,21 +1122,6 @@ Cg::mapIn(const Cg &rhs) {
   return std::move(ret);
 }
 
-static const Cg &get_full_cg(const llvm::Function *fcn, CgCache &base_cgs,
-    CgCache &full_cgs) {
-  // Check for the full cg:
-  auto pcg = full_cgs.tryGetCg(fcn);
-  if (pcg == nullptr) {
-    auto cg = base_cgs.getCg(fcn).clone();
-    cg.resolveCalls(base_cgs, full_cgs);
-
-    full_cgs.addCg(fcn, std::move(cg));
-    pcg = full_cgs.tryGetCg(fcn);
-  }
-
-  return *pcg;
-}
-
 void Cg::resolveDirCall(CgCache &base_cgs, CgCache &full_cgs,
     llvm::ImmutableCallSite &cs, const llvm::Function *called_fcn,
     CallInfo &caller_info) {
@@ -1155,7 +1143,36 @@ void Cg::resolveDirCall(CgCache &base_cgs, CgCache &full_cgs,
     } else {
       // Otherwise, get a copy of the nodes it is calling
       //   NOTE: dest_cg should have already had its calls resolved
-      auto &dest_cg = get_full_cg(called_fcn, base_cgs, full_cgs);
+      auto &call_info = dynInfo_.call_info;
+      std::vector<CsCFG::Id> new_stack(curStack_.size() + 1);
+      std::copy(std::begin(curStack_),
+          std::end(curStack_), std::begin(new_stack));
+      new_stack.back() = csCFG_.getId(cs.getInstruction());
+      // Check for the full cg:
+      auto tmp_cg = std::move(base_cgs.getCg(called_fcn).clone(
+            std::move(new_stack)));
+      const Cg *pcg = nullptr;
+      if (!call_info.hasDynData()) {
+        pcg = full_cgs.tryGetCg(called_fcn);
+      } else {
+        // If we don't have a valid call info, don't populate this cfg node
+        if (!call_info.isValid(new_stack)) {
+          llvm::dbgs() << "Skipping stack not found dynamically\n";
+          return;
+        }
+      }
+      if (pcg == nullptr) {
+        tmp_cg.resolveCalls(base_cgs, full_cgs);
+
+        if (!call_info.hasDynData()) {
+          full_cgs.addCg(called_fcn, std::move(tmp_cg));
+          pcg = full_cgs.tryGetCg(called_fcn);
+        } else {
+          pcg = &tmp_cg;
+        }
+      }
+      auto &dest_cg = *pcg;
+
       // Create a new copy of dest_cg's nodes in my cg
       auto remap = mapIn(dest_cg);
 
@@ -1353,7 +1370,8 @@ CgCache::CgCache(const llvm::Module &m,
       const BasicFcnCFG &cfg,
       ModInfo &mod_info,
       ExtLibInfo &ext_info,
-      AssumptionSet &as) : cfg_(cfg) {
+      AssumptionSet &as,
+      CsCFG &cs_cfg) : cfg_(cfg) {
   // Fill local constraint info for each CFG in function call graph
   // Ensure we only visit each fcn once
   std::unordered_set<const llvm::Function *> visited;
@@ -1388,7 +1406,7 @@ CgCache::CgCache(const llvm::Module &m,
 
     llvm::dbgs() << " First fcn: " << first_fcn->getName() << "\n";
     // Populate the first function locally
-    Cg cg(first_fcn, di, as, mod_info, ext_info);
+    Cg cg(first_fcn, di, as, mod_info, ext_info, cs_cfg);
 
     // Combine any other functions internally
     for (; it != en; it = std::next(it)) {
@@ -1400,7 +1418,7 @@ CgCache::CgCache(const llvm::Module &m,
       assert(scc_rc.second);
 
       // Parse the local function
-      Cg to_merge(scc_fcn, di, as, mod_info, ext_info);
+      Cg to_merge(scc_fcn, di, as, mod_info, ext_info, cs_cfg);
 
       // Merge the scc components
       cg.mergeScc(to_merge);

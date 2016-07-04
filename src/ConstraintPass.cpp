@@ -57,6 +57,10 @@ void ConstraintPass::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
 
   // For indirect function following
   usage.addRequired<IndirFunctionInfo>();
+
+  // Required for call info passes
+  usage.addRequired<CsCFG>();
+  usage.addRequired<CallContextLoader>();
 }
 
 bool ConstraintPass::runOnModule(llvm::Module &m) {
@@ -68,7 +72,13 @@ bool ConstraintPass::runOnModule(llvm::Module &m) {
 
   auto &indir_info =
       getAnalysis<IndirFunctionInfo>();
-  DynamicInfo dyn_info(unused_fcns, indir_info);
+
+  auto &call_info =
+      getAnalysis<CallContextLoader>();
+  DynamicInfo dyn_info(unused_fcns, indir_info, call_info);
+
+  auto &cs_cfg =
+      getAnalysis<CsCFG>();
 
   BasicFcnCFG fcn_cfg(m, dyn_info);
 
@@ -82,7 +92,7 @@ bool ConstraintPass::runOnModule(llvm::Module &m) {
   //    sccs)
   // This is the Cg for the whole program...
   cgCache_ = std14::make_unique<CgCache>(m, dyn_info, fcn_cfg, mod_info,
-      *extInfo_, specAssumptions_);
+      *extInfo_, specAssumptions_, cs_cfg);
   callCgCache_ = std14::make_unique<CgCache>(fcn_cfg);
 
   auto main = m.getFunction("main");

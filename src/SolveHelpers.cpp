@@ -63,6 +63,10 @@ void BddPtstoSet::bddInit(const Cg &cg) {
   updateGeps(cg);
 }
 
+void BddPtstoSet::updateConstraints(const Cg &cg) {
+  consStartPos_ = cg.constraints().size();
+}
+
 void BddPtstoSet::updateGeps(const Cg &cg) {
   assert(bddInitd_);
   auto &map = cg.vals();

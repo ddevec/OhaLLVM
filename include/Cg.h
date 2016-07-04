@@ -28,6 +28,7 @@
 #include "include/ModInfo.h"
 #include "include/ValueMap.h"
 #include "include/lib/BasicFcnCFG.h"
+#include "include/lib/CsCFG.h"
 #include "include/lib/IndirFcnTarget.h"
 #include "include/lib/UnusedFunctions.h"
 
@@ -263,7 +264,8 @@ class Cg {
       const DynamicInfo &dyn_info,
       AssumptionSet &as,
       ModInfo &mod_info,
-      ExtLibInfo &ext_info);
+      ExtLibInfo &ext_info,
+      CsCFG &cs_cfg);
 
   Cg(const Cg &) = default;
   Cg(Cg &&) = default;
@@ -271,8 +273,9 @@ class Cg {
   static const int32_t ALLOC_SIZE_UNKOWN = -1;
 
   // Clone interface {{{
-  Cg clone() const {
+  Cg clone(std::vector<CsCFG::Id> cur_stack) const {
     Cg ret(*this);
+    ret.curStack_ = std::move(cur_stack);
     return ret;
   }
   //}}}
@@ -459,6 +462,10 @@ class Cg {
   // The actual constraints in this Cg
   std::vector<Constraint> constraints_;
 
+  // The current call stack...
+  CsCFG &csCFG_;
+  std::vector<CsCFG::Id> curStack_;
+
   // For speculative assumptions
   DynamicInfo dynInfo_;
   AssumptionSet &as_;
@@ -489,7 +496,8 @@ class CgCache {
       const BasicFcnCFG &cfg,
       ModInfo &mod_info,
       ExtLibInfo &ext_info,
-      AssumptionSet &as);
+      AssumptionSet &as,
+      CsCFG &cs_cfg);
 
   Cg &getCg(const llvm::Function *fcn) {
     auto id = cfg_.getId(fcn);

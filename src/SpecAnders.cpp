@@ -143,6 +143,8 @@ void SpecAnders::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   usage.addRequired<UnusedFunctions>();
   // For indirect function following
   usage.addRequired<IndirFunctionInfo>();
+
+  usage.addRequired<CallContextLoader>();
   // For dynamic ptsto removal
   // usage.addRequired<DynPtstoLoader>();
   usage.addRequired<llvm::ProfileInfo>();
@@ -164,8 +166,11 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
       getAnalysis<UnusedFunctions>();
   auto &indir_fcns = getAnalysis<IndirFunctionInfo>();
 
+  auto &call_info = getAnalysis<CallContextLoader>();
+
   // Setup dynamic info
-  dynInfo_ = std14::make_unique<DynamicInfo>(unused_fcns, indir_fcns);
+  dynInfo_ = std14::make_unique<DynamicInfo>(unused_fcns,
+      indir_fcns, call_info);
 
   // Clear the def-use graph
   // It should already be cleared, but I'm paranoid

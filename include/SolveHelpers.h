@@ -438,6 +438,7 @@ class BddPtstoSet {
 #endif
 
   static void updateGeps(const Cg &cg);
+  static void updateConstraints(const Cg &cg);
 
  private:
   std::unique_ptr<bdd> bitmapToBdd(const Bitmap &bm) {

@@ -139,6 +139,8 @@ void SpecAndersCS::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   usage.addRequired<UnusedFunctions>();
   // For indirect function following
   usage.addRequired<IndirFunctionInfo>();
+  usage.addRequired<CsCFG>();
+  usage.addRequired<CallContextLoader>();
   // For dynamic ptsto removal
   // usage.addRequired<DynPtstoLoader>();
   usage.addRequired<llvm::ProfileInfo>();
@@ -154,9 +156,12 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
   const UnusedFunctions &unused_fcns =
       getAnalysis<UnusedFunctions>();
   auto &indir_info = getAnalysis<IndirFunctionInfo>();
+  auto &call_info = getAnalysis<CallContextLoader>();
+  auto &cs_cfg = getAnalysis<CsCFG>();
 
   // FIXME: Acutally construct?
-  dynInfo_ = std14::make_unique<DynamicInfo>(unused_fcns, indir_info);
+  dynInfo_ = std14::make_unique<DynamicInfo>(unused_fcns,
+      indir_info, call_info);
 
   BasicFcnCFG fcn_cfg(m, *dynInfo_);
 
@@ -176,7 +181,8 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
   // It should already be cleared, but I'm paranoid
   // Read in constraints...
   cgCache_ =
-    std14::make_unique<CgCache>(m, *dynInfo_, fcn_cfg, mod_info, ext_info, as);
+    std14::make_unique<CgCache>(m, *dynInfo_, fcn_cfg, mod_info, ext_info, as,
+        cs_cfg);
   callCgCache_ = std14::make_unique<CgCache>(fcn_cfg);
 
   // Now, populate main
