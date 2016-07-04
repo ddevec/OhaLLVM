@@ -352,11 +352,11 @@ class AssignmentInst : public InstrumentationSite {  //{{{
 // Checks to see if a value is allocated within a certain object set
 class SetCheckInst : public InstrumentationSite {  //{{{
  public:
-    SetCheckInst(llvm::Value *assign_inst,
-        const PtstoSet &check_set,
+    SetCheckInst(const llvm::Value *assign_inst,
+        const std::vector<ValueMap::Id> &check_set,
         SetCache &set_cache) :
       InstrumentationSite(InstrumentationSite::Kind::SetCheckInst),
-      assignInst_(assign_inst),
+      assignInst_(const_cast<llvm::Value *>(assign_inst)),
       checkSet_(std::begin(check_set), std::end(check_set)),
       setCache_(set_cache) { }
 
@@ -522,8 +522,8 @@ class Assumption {  //{{{
 
 class PtstoAssumption : public Assumption {  //{{{
  public:
-    PtstoAssumption(llvm::Value *inst,
-        const PtstoSet &ptstos) :
+    PtstoAssumption(const llvm::Value *inst,
+        const std::vector<ValueMap::Id> &ptstos) :
           Assumption(Assumption::Kind::DynPtsto),
           instOrArg_(inst), ptstos_(ptstos) { }
 
@@ -535,19 +535,12 @@ class PtstoAssumption : public Assumption {  //{{{
       return new PtstoAssumption(*this);
     }
 
+    // no more remap
     void remap(const util::ObjectRemap<ValueMap::Id> &remap) override {
-      PtstoSet new_ptstos;
-      std::for_each(std::begin(ptstos_), std::end(ptstos_),
-          [&remap, &new_ptstos] (ValueMap::Id id) {
-            return new_ptstos.set(remap[id]);
-          });
-      ptstos_ = std::move(new_ptstos);
+      for (auto &id : ptstos_) {
+        id = remap[id];
+      }
     }
-
- private:
-    // ValueMap::Id objID_;
-    llvm::Value *instOrArg_;
-    PtstoSet ptstos_;
 
  protected:
     std::vector<std::unique_ptr<InstrumentationSite>>
@@ -561,6 +554,11 @@ class PtstoAssumption : public Assumption {  //{{{
     std::vector<std::unique_ptr<InstrumentationSite>>
       approxDependencies(
         ValueMap &omap, const llvm::Module &m) const override;
+
+ private:
+    // ValueMap::Id objID_;
+    const llvm::Value *instOrArg_;
+    std::vector<ValueMap::Id> ptstos_;
 };
 //}}}
 

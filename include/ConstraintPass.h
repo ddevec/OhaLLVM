@@ -36,6 +36,14 @@ class ConstraintPass : public llvm::ModulePass {
     return *mainCg_;
   }
 
+  const CgCache &cgCache() const {
+    return *cgCache_;
+  }
+
+  const CgCache &callCgCache() const {
+    return *callCgCache_;
+  }
+
   const AssumptionSet &getSpecAssumptions() const {
     return specAssumptions_;
   }
@@ -43,6 +51,7 @@ class ConstraintPass : public llvm::ModulePass {
  private:
   Cg *mainCg_;
   std::unique_ptr<CgCache> cgCache_;
+  std::unique_ptr<CgCache> callCgCache_;
   AssumptionSet specAssumptions_;
 
   std::unique_ptr<ExtLibInfo> extInfo_;

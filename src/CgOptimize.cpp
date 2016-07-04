@@ -207,6 +207,13 @@ size_t Cg::updateConstraints(OptGraph &graph) {
     ci.updateReps(vals_);
   }
 
+  for (auto &pr : callInfo_) {
+    auto &ci = pr.second.first;
+    ci.updateReps(vals_);
+  }
+
+  localCFG_.updateNodes(vals_);
+
   return num_removed;
 }
 
@@ -236,9 +243,7 @@ size_t Cg::HVN() {
     }
   }
 
-  // Now, force all indirect calls to be indirect
-  for (auto &tup : indirCalls()) {
-    auto &ci = std::get<1>(tup);
+  auto indir_ci = [&hvn_graph] (const CallInfo &ci) {
     for (auto id : ci.args()) {
       auto &arg_node = hvn_graph.getNode(util::convert_id<GraphId>(id));
       arg_node.setIndirect();
@@ -253,6 +258,16 @@ size_t Cg::HVN() {
       auto &var_node = hvn_graph.getNode(util::convert_id<GraphId>(var_id));
       var_node.setIndirect();
     }
+  };
+
+  // Now, force all indirect calls to be indirect
+  for (auto &tup : indirCalls()) {
+    auto &ci = std::get<1>(tup);
+    indir_ci(ci);
+  }
+
+  for (auto &pr : callInfo_) {
+    indir_ci(pr.second.first);
   }
 
   // Now, fill in the graph edges:
@@ -406,9 +421,7 @@ size_t Cg::HU() {
     }
   }
 
-  // Now, force all indirect calls to be indirect
-  for (auto &tup : indirCalls()) {
-    auto &ci = std::get<1>(tup);
+  auto indir_ci = [&hvn_graph] (const CallInfo &ci) {
     for (auto id : ci.args()) {
       auto &arg_node = hvn_graph.getNode(util::convert_id<GraphId>(id));
       arg_node.setIndirect();
@@ -423,6 +436,16 @@ size_t Cg::HU() {
       auto &var_node = hvn_graph.getNode(util::convert_id<GraphId>(var_id));
       var_node.setIndirect();
     }
+  };
+
+  // Now, force all indirect calls to be indirect
+  for (auto &tup : indirCalls()) {
+    auto &ci = std::get<1>(tup);
+    indir_ci(ci);
+  }
+
+  for (auto &pr : callInfo_) {
+    indir_ci(pr.second.first);
   }
 
   // Now, fill in the graph edges:
@@ -585,6 +608,30 @@ size_t Cg::HU() {
   return updateConstraints(hvn_graph);
 }
 
+// Plan:
+//  Get results ready for ASPLOS
+//    Get speculative version functioning
+//      Working on tests & zlib
+//    Get non-CS version back to functioning
+//      Get working on tests & zlib
+//    Get speculative non-CS version running
+//      Get working on tests & zlib
+//
+//      !!GOAL: by Tuesday!!
+//
+//    Get benchmarks working w/ test infrastructure
+//      For all benchmarks
+//    Evaluate on existing benchmarks
+//      #'s should be good for prelim asplos #'s
+//
+//    Once I have #'s,
+//    Optimize to improve numbers
+//      Global Dedup
+//      Local optimization (before merge)
+//      HCD
+//      Incremental Tarjan's
+//      Better Indir cycle detection
+
 // TODO(ddevec) HCD...
 /*
 void Cg::HCD() {
@@ -618,11 +665,11 @@ void Cg::HR(size_t min_removed) {
 
 void Cg::optimize() {
   // Run HVN then HRU over the CG's constraints
-  llvm::dbgs() << "before HR constraint_size: " << constraints_.size() <<
+  llvm::dbgs() << "before HVN constraint_size: " << constraints_.size() <<
     "\n";
   // HR(1000);
   HVN();
-  llvm::dbgs() << "after HR constraint_size: " << constraints_.size() <<
+  llvm::dbgs() << "after HVN constraint_size: " << constraints_.size() <<
     "\n";
 
   // HVN();

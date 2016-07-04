@@ -32,7 +32,7 @@
 #include "include/LLVMHelper.h"
 
 static llvm::cl::opt<std::string>
-  IndirFcnFilename("indir-info-file", llvm::cl::init("indir_fcns.log"),
+  IndirFcnFilename("indir-info-file", llvm::cl::init("dyn_indir.log"),
       llvm::cl::value_desc("filename"),
       llvm::cl::desc("Id file loaded by indir-fcn-loader"));
 

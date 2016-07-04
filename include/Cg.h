@@ -391,6 +391,10 @@ class Cg {
   void addConstraintsForIndirectCall(llvm::ImmutableCallSite &cs,
       const CallInfo &call_info);
 
+  void resolveDirCall(CgCache &base_cgs, CgCache &full_cgs,
+      llvm::ImmutableCallSite &cs, const llvm::Function *called_fcn,
+      CallInfo &caller_info);
+
   bool addConstraintsForCall(llvm::ImmutableCallSite &cs);
 
   void addGlobalInit(Id src_id, Id dest_id);
@@ -418,8 +422,8 @@ class Cg {
   void idExtractInst(const llvm::Instruction &inst);
   void idInsertInst(const llvm::Instruction &inst);
 
-  void populateConstraints(const DynamicInfo &dyn_info, AssumptionSet &as);
-  void scanBB(const llvm::BasicBlock *bb, const DynamicInfo &dyn_info,
+  void populateConstraints(AssumptionSet &as);
+  void scanBB(const llvm::BasicBlock *bb,
       AssumptionSet &as, std::set<const llvm::BasicBlock *> &seen);
   void addGlobalConstraintForType(ConstraintType ctype,
       const llvm::Type *type, ValueMap::Id dest,
@@ -454,6 +458,10 @@ class Cg {
 
   // The actual constraints in this Cg
   std::vector<Constraint> constraints_;
+
+  // For speculative assumptions
+  DynamicInfo dynInfo_;
+  AssumptionSet &as_;
 
   // The object numberer for this constraint graph...
   ValueMap vals_;

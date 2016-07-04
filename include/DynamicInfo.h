@@ -24,8 +24,11 @@
 
 class DynamicInfo {
  public:
-  DynamicInfo(const UnusedFunctions &unused) : used_info(unused) { }
+  DynamicInfo(const UnusedFunctions &unused, const IndirFunctionInfo &indir) :
+    used_info(unused),
+    indir_info(indir) { }
   const UnusedFunctions &used_info;
+  const IndirFunctionInfo &indir_info;
 };
 
 #endif // INCLUDE_DYNAMICINFO_H_

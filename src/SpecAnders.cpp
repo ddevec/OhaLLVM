@@ -32,11 +32,13 @@
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/ProfileInfo.h"
 
+#include "include/Cg.h"
+#include "include/ConstraintPass.h"
 #include "include/Debug.h"
-#include "include/ObjectMap.h"
+#include "include/ValueMap.h"
 #include "include/lib/UnusedFunctions.h"
 #include "include/lib/IndirFcnTarget.h"
-#include "include/lib/DynPtsto.h"
+// #include "include/lib/DynPtsto.h"
 
 using std::swap;
 
@@ -96,7 +98,7 @@ static llvm::cl::list<int32_t> //  NOLINT
       llvm::cl::desc("Specifies IDs to print the nodes of before andersens "
         "runs"));
 
-llvm::cl::opt<bool>
+static llvm::cl::opt<bool>
   anders_no_opt("anders-no-opt", llvm::cl::init(false),
       llvm::cl::value_desc("bool"),
       llvm::cl::desc(
@@ -142,7 +144,7 @@ void SpecAnders::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   // For indirect function following
   usage.addRequired<IndirFunctionInfo>();
   // For dynamic ptsto removal
-  usage.addRequired<DynPtstoLoader>();
+  // usage.addRequired<DynPtstoLoader>();
   usage.addRequired<llvm::ProfileInfo>();
 }
 
@@ -150,14 +152,6 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
   // Set up our alias analysis
   // -- This is required for the llvm AliasAnalysis interface
   InitializeAliasAnalysis(this);
-
-  dynPts_ = &getAnalysis<DynPtstoLoader>();
-
-  if (do_spec) {
-    llvm::dbgs() << "do-spec is true!\n";
-  } else {
-    llvm::dbgs() << "no do-spec!\n";
-  }
 
   if (fcn_name != "") {
     llvm::dbgs() << "Got debug function: " << fcn_name << "\n";
@@ -168,35 +162,30 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
 
   const UnusedFunctions &unused_fcns =
       getAnalysis<UnusedFunctions>();
+  auto &indir_fcns = getAnalysis<IndirFunctionInfo>();
+
+  // Setup dynamic info
+  dynInfo_ = std14::make_unique<DynamicInfo>(unused_fcns, indir_fcns);
 
   // Clear the def-use graph
   // It should already be cleared, but I'm paranoid
   const auto &cons_pass = getAnalysis<ConstraintPass>();
-  ConstraintGraph cg(cons_pass.getConstraintGraph());
-  omap_ = cons_pass.getObjectMap();
+  // Our main cg is the one inhereted from cons_pass
+  mainCg_ = std14::make_unique<Cg>(cons_pass.getCG());
 
-  ObjectMap &omap = omap_;
+  BasicFcnCFG fcn_cfg(m, *dynInfo_);
 
-  // Now that we have the constraints, lets optimize a bit
-  // First, do HVN
+  // Finish off any indirect edges?
+  cgCache_ = std14::make_unique<CgCache>(cons_pass.cgCache());
+  callCgCache_ = std14::make_unique<CgCache>(cons_pass.callCgCache());
 
-  llvm::dbgs() << "Original number of constraints: " << cg.getNumConstraints()
-    << "\n";
-  cg.countConstraints(omap);
+  mainCg_->lowerAllocs();
+  BddPtstoSet::PtstoSetInit(*mainCg_);
 
   // ProfilerStart("anders_opt.prof");
   if (!anders_no_opt) {
-    {
-      util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "HVN");
-      int32_t removed = HVN(cg, omap);
-      llvm::dbgs() << "hvn removed: " << removed << " constraints\n";
-    }
-
-    // Then, do HRU
-    {
-      util::PerfTimerPrinter hru_timer(llvm::dbgs(), "HRU");
-      HRU(cg, omap, 100);
-    }
+    util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "HVN");
+    mainCg_->optimize();
   }
   // ProfilerStop();
   llvm::dbgs() << "SparseBitmap =='s: " << Bitmap::numEq() << "\n";
@@ -204,16 +193,13 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
 
   for (auto &id_val : id_print) {
     llvm::dbgs() << "Printing node for id: " << id_val << "\n";
-    ObjectMap::ObjID val_id(id_val);
+    ValueMap::Id val_id(id_val);
 
-    llvm::dbgs() << "  " << val_id << ": " << FullValPrint(val_id) <<
-      "\n";
+    llvm::dbgs() << "  " << val_id << ": " <<
+      FullValPrint(val_id, mainCg_->vals()) << "\n";
   }
 
-  llvm::dbgs() << "Constraints after HRU: " << cg.getNumConstraints()
-    << "\n";
-  cg.countConstraints(omap);
-
+  /* FIXME(ddevec) HCD Not yet supported...
   // Then, HCD
   {
     if (!anders_no_opt) {
@@ -222,17 +208,17 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
       HCD(cg, omap);
     }
   }
+  */
 
-  llvm::dbgs() << "Constraints after HCD: " << cg.getNumConstraints()
-    << "\n";
+  // Setup our live graph using the mainCg_
+  graph_.init(*mainCg_, fcn_cfg, cgCache_.get(), callCgCache_.get());
 
+  // Fill our graph
   {
     util::PerfTimerPrinter graph_timer(llvm::dbgs(), "Graph Creation");
     // Fill our online graph with the initial constraint set
-    graph_.fill(cg, omap, m);
+    graph_.fill();
   }
-
-  graph_.setStructInfo(omap.getIsStructSet());
 
   {
     // ProfilerStart("anders_solve.prof");
@@ -243,6 +229,7 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
     // ProfilerStop();
   }
 
+#if 0
   for (auto &id_val : id_debug) {
     // DEBUG {{{
     llvm::dbgs() << "Printing node for id: " << id_val << "\n";
@@ -313,6 +300,7 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
     });
     //}}}
   }
+#endif
 
   if (fcn_name != "") {
     // DEBUG {{{
@@ -320,70 +308,85 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
 
     llvm::dbgs() << "Printing ptsto for function: " << fcn_name << "\n";
     llvm::dbgs() << "Printing args: " << fcn_name << "\n";
-    std::for_each(fcn->arg_begin(), fcn->arg_end(),
-        [this, &omap] (const llvm::Argument &arg) {
+    for (auto it = fcn->arg_begin(), en = fcn->arg_end();
+        it != en; ++it) {
+      auto &arg = *it;
+      llvm::dbgs() << "Arg is: " << arg << "\n";
       if (llvm::isa<llvm::PointerType>(arg.getType())) {
-        auto arg_id = omap.getValue(&arg);
-        llvm::dbgs() << "ptsto[" << arg_id << "]: " << ValPrint(arg_id) <<
-          "\n";
+        auto ids = graph_.cg().vals().getIds(&arg);
+        for (auto arg_id : ids) {
+          llvm::dbgs() << "  ptsto[" << arg_id << "]: " <<
+            ValPrint(arg_id, graph_.cg().vals()) << "\n";
 
-        auto rep_id = getRep(arg_id);
-        if (rep_id != arg_id) {
-          llvm::dbgs() << " REP: " << rep_id << ": " <<
-              FullValPrint(rep_id) << "\n";
-        }
+          auto rep_id = getRep(arg_id);
+          if (rep_id != arg_id) {
+            llvm::dbgs() << "   REP: " << rep_id << ": " <<
+                FullValPrint(rep_id, graph_.cg().vals()) << "\n";
+          }
 
-        if (graph_.getNode(rep_id).id() != rep_id) {
-          llvm::dbgs() << " Graph-REP: " << graph_.getNode(rep_id).id() << ": "
-            << FullValPrint(graph_.getNode(rep_id).id()) << "\n";
-        }
-
-        auto &ptsto = getPointsTo(rep_id);
-
-        llvm::dbgs() << "    ptsto prints as: " << ptsto << "\n";
-        /*
-        for (ObjectMap::ObjID obj_id : ptsto) {
-          llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
+          if (graph_.getNode(rep_id).id() != rep_id) {
+            llvm::dbgs() << "   Graph-REP: " << graph_.getNode(rep_id).id() <<
+              ": " <<
+              FullValPrint(graph_.getNode(rep_id).id(), graph_.cg().vals())
               << "\n";
-        });
-        */
+          }
+
+          auto &ptsto = getPointsTo(rep_id);
+
+          llvm::dbgs() << "    ptsto prints as: " << ptsto << "\n";
+          /*
+          for (ObjectMap::ObjID obj_id : ptsto) {
+            llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
+                << "\n";
+          });
+          */
+        }
       }
-    });
+    }
 
     llvm::dbgs() << "Printing instructions: " << fcn_name << "\n";
-    std::for_each(inst_begin(fcn), inst_end(fcn),
-        [this, &omap] (llvm::Instruction &inst) {
+    for (auto it = inst_begin(fcn), en = inst_end(fcn);
+        it != en; ++it) {
+      auto &inst = *it;
       if (llvm::isa<llvm::PointerType>(inst.getType())) {
-        auto val_id = omap.getValue(&inst);
+        auto ids = graph_.cg().vals().getIds(&inst);
 
-        llvm::dbgs() << "ptsto[" << val_id << "]: " << ValPrint(val_id) <<
-          "\n";
+        llvm::dbgs() << "inst: " << inst << "\n";
+        for (auto val_id : ids) {
+          llvm::dbgs() << "  ptsto[" << val_id << "]: " <<
+            ValPrint(val_id, graph_.cg().vals()) << "\n";
 
-        auto rep_id = getRep(val_id);
-        if (rep_id != val_id) {
-          llvm::dbgs() << " REP: " << rep_id << ": " << FullValPrint(rep_id)
+          auto rep_id = getRep(val_id);
+          if (rep_id != val_id) {
+            llvm::dbgs() << "   REP: " << rep_id << ": " <<
+              FullValPrint(rep_id, graph_.cg().vals()) << "\n";
+          }
+
+          if (graph_.getNode(rep_id).id() != rep_id) {
+            llvm::dbgs() << "   Graph-REP: " << graph_.getNode(rep_id).id()
+              << ": " <<
+              FullValPrint(graph_.getNode(rep_id).id(), graph_.cg().vals())
               << "\n";
+          }
+
+          auto &ptsto = getPointsTo(rep_id);
+
+          llvm::dbgs() << "    ptsto prints as: " << ptsto << "\n";
+
+          /*
+          for (auto obj_id : ptsto) {
+            llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
+                << "\n";
+          }
+          */
         }
-
-        if (graph_.getNode(rep_id).id() != rep_id) {
-          llvm::dbgs() << " Graph-REP: " << graph_.getNode(rep_id).id() << ": "
-            << FullValPrint(graph_.getNode(rep_id).id()) << "\n";
-        }
-
-        auto &ptsto = getPointsTo(rep_id);
-
-        llvm::dbgs() << "    ptsto prints as: " << ptsto << "\n";
-
-        /*
-        for (auto obj_id : ptsto) {
-          llvm::dbgs() << "    " << obj_id << ": " << ValPrint(obj_id)
-              << "\n";
-        }
-        */
       }
-    });
+    }
     //}}}
   }
+
+#if 0
+
 
   /*
   if (do_anders_print_result) {
@@ -700,6 +703,7 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
     }
     //}}}
   }
+#endif
 
 #ifndef NDEBUG
   // Verify I don't have any crazy stuff in the graph
@@ -772,20 +776,34 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
   return false;
 }
 
+PtstoSet *SpecAnders::ptsCacheGet(const llvm::Value *val) {
+  // Check if we've cached the value
+  auto rc = ptsCache_.emplace(std::piecewise_construct,
+      std::make_tuple(val), std::make_tuple());
+
+  // If not, merge together the individual nodes
+  if (rc.second) {
+    auto ids = graph_.cg().vals().getIds(val);
+
+    for (auto val_id : ids) {
+      auto &node_ptsto = getPointsTo(val_id);
+
+      rc.first->second |= node_ptsto;
+    }
+  }
+
+  return &rc.first->second;
+}
+
 llvm::AliasAnalysis::AliasResult SpecAnders::alias(const Location &L1,
                                             const Location &L2) {
   auto v1 = L1.Ptr;
   auto v2 = L2.Ptr;
 
-  ObjectMap::ObjID obj_id1 = omap_.getValOrConstRep(v1);
-  ObjectMap::ObjID obj_id2 = omap_.getValOrConstRep(v2);
-  // llvm::dbgs() << "v2: " << *v2 << " obj_id2: " << obj_id2 << "\n";
-  // llvm::dbgs() << "v1: " << *v1 << " obj_id1: " << obj_id1 << "\n";
+  auto pv1_pts = ptsCacheGet(v1);
+  auto pv2_pts = ptsCacheGet(v2);
 
-  auto pnode1 = graph_.tryGetNode(obj_id1);
-  auto pnode2 = graph_.tryGetNode(obj_id2);
-
-  if (pnode1 == nullptr) {
+  if (pv1_pts == nullptr) {
     /*
     llvm::dbgs() << "Anders couldn't find node: " << obj_id1 <<
       << " " << FullValPrint(obj_id1, omap_) << "\n";
@@ -793,7 +811,7 @@ llvm::AliasAnalysis::AliasResult SpecAnders::alias(const Location &L1,
     return AliasAnalysis::alias(L1, L2);
   }
 
-  if (pnode2 == nullptr) {
+  if (pv2_pts == nullptr) {
     /*
     llvm::dbgs() << "Anders couldn't find node: " << obj_id2 <<
       << " " << FullValPrint(obj_id2, omap_) << "\n";
@@ -801,11 +819,8 @@ llvm::AliasAnalysis::AliasResult SpecAnders::alias(const Location &L1,
     return AliasAnalysis::alias(L1, L2);
   }
 
-  auto &node1 = *pnode1;
-  auto &node2 = *pnode2;
-
-  auto &pts1 = node1.ptsto();
-  auto &pts2 = node2.ptsto();
+  auto &pts1 = *pv1_pts;
+  auto &pts2 = *pv2_pts;
 
   // llvm::dbgs() << "Anders Alias Check\n";
 
@@ -817,7 +832,7 @@ llvm::AliasAnalysis::AliasResult SpecAnders::alias(const Location &L1,
   // Check to see if the two pointers are known to not alias.  They don't alias
   // if their points-to sets do not intersect.
   if (!pts1.intersectsIgnoring(pts2,
-        ObjectMap::NullValue)) {
+        ValueMap::NullValue)) {
     return NoAlias;
   }
 

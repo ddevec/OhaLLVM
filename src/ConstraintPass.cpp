@@ -4,6 +4,7 @@
 
 #include "include/ConstraintPass.h"
 
+#include <set>
 #include <string>
 #include <vector>
 
@@ -55,16 +56,19 @@ void ConstraintPass::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   usage.addRequired<UnusedFunctions>();
 
   // For indirect function following
-  // usage.addRequired<IndirFunctionInfo>();
+  usage.addRequired<IndirFunctionInfo>();
 }
 
 bool ConstraintPass::runOnModule(llvm::Module &m) {
   ModInfo mod_info(m);
   extInfo_ = std14::make_unique<ExtLibInfo>(mod_info);
 
-  const UnusedFunctions &unused_fcns =
+  auto &unused_fcns =
       getAnalysis<UnusedFunctions>();
-  DynamicInfo dyn_info(unused_fcns);
+
+  auto &indir_info =
+      getAnalysis<IndirFunctionInfo>();
+  DynamicInfo dyn_info(unused_fcns, indir_info);
 
   BasicFcnCFG fcn_cfg(m, dyn_info);
 
@@ -79,13 +83,19 @@ bool ConstraintPass::runOnModule(llvm::Module &m) {
   // This is the Cg for the whole program...
   cgCache_ = std14::make_unique<CgCache>(m, dyn_info, fcn_cfg, mod_info,
       *extInfo_, specAssumptions_);
+  callCgCache_ = std14::make_unique<CgCache>(fcn_cfg);
 
   auto main = m.getFunction("main");
   mainCg_ = &cgCache_->getCg(main);
 
   mainCg_->addGlobalConstraints(m);
   // Now merge the constraints for each function together...
+  std::set<Cg *> visited;
   for (auto &fcn : m) {
+    // Only evaluate used functions
+    if (!dyn_info.used_info.isUsed(fcn)) {
+      continue;
+    }
     // Only consider functions with bodies..
     if (fcn.isDeclaration()) {
       continue;
@@ -94,8 +104,16 @@ bool ConstraintPass::runOnModule(llvm::Module &m) {
       continue;
     }
     auto &cur_cg = cgCache_->getCg(&fcn);
-    mainCg_->mergeCg(cur_cg);
+    auto rc = visited.emplace(&cur_cg);
+    if (rc.second) {
+      mainCg_->mergeCg(cur_cg);
+    }
   }
+
+  // Resolve any additional calls -- note that since our mainCg_ now defines all
+  // functions, they will all be resolved w/ internal edges (without context
+  //   sensitivity)
+  mainCg_->resolveCalls(*cgCache_, *callCgCache_);
 
   // We don't change code.  Ever.
   return false;

@@ -114,7 +114,7 @@ set(SPECSFS_SOURCES
   src/ConstraintPass.cpp
 
   #src/SpecSFS.cpp
-  #src/SpecAnders.cpp
+  src/SpecAnders.cpp
   src/SpecAndersCS.cpp
 
   src/Debug.cpp
@@ -127,7 +127,7 @@ set(SPECSFS_SOURCES
   #src/Optimize.cpp
   #src/ComputeSSA.cpp
   #src/Partition.cpp
-  #src/Solve.cpp
+  src/Solve.cpp
   src/CsSolve.cpp
   src/Cg.cpp
   src/CgOptimize.cpp

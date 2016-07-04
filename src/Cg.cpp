@@ -312,13 +312,6 @@ void Cg::addConstraintsForIndirectCall(llvm::ImmutableCallSite &cs,
 
   auto id = vals_.getDef(&called_val);
 
-  /*
-  // If this call returns a pointer
-  if (llvm::isa<llvm::PointerType>(cs.getInstruction()->getType())) {
-    add(ConstraintType::Copy, call_info.ret(), id);
-  }
-  */
-
   // Prepare for inserting the call info into the live graph
   indirCalls_.emplace_back(id, call_info, cfgId_);
 }
@@ -822,7 +815,10 @@ Cg::Cg(const llvm::Function *fcn,
       const DynamicInfo &dyn_info,
       AssumptionSet &as,
       ModInfo &mod_info,
-      ExtLibInfo &ext_info) : modInfo_(mod_info), extInfo_(ext_info) {
+      ExtLibInfo &ext_info) :
+      dynInfo_(dyn_info),
+      as_(as),
+      modInfo_(mod_info), extInfo_(ext_info) {
   extInfo_.init(*fcn->getParent(), vals());
 
 
@@ -836,22 +832,22 @@ Cg::Cg(const llvm::Function *fcn,
       std::make_tuple(fcn),
       std::make_tuple(std::move(ci), cfgId_));
   // Populate constraints
-  populateConstraints(dyn_info, as);
+  populateConstraints(as);
 }
 
-void Cg::populateConstraints(const DynamicInfo &dyn_info, AssumptionSet &as) {
+void Cg::populateConstraints(AssumptionSet &as) {
   assert(callInfo_.size() == 1);
   assert(std::begin(callInfo_)->first != nullptr);
   auto entry_block = &std::begin(callInfo_)->first->getEntryBlock();
-  assert(dyn_info.used_info.isUsed(entry_block));
+  assert(dynInfo_.used_info.isUsed(entry_block));
   std::set<const llvm::BasicBlock *> seen;
   // Assert this function has a body?
-  scanBB(entry_block, dyn_info, as, seen);
+  scanBB(entry_block, as, seen);
 }
 
-void Cg::scanBB(const llvm::BasicBlock *bb, const DynamicInfo &dyn_info,
+void Cg::scanBB(const llvm::BasicBlock *bb,
     AssumptionSet &as, std::set<const llvm::BasicBlock *> &seen) {
-  auto &unused_fcns = dyn_info.used_info;
+  auto &unused_fcns = dynInfo_.used_info;
 
   if (!unused_fcns.isUsed(bb)) {
     as.add(std::unique_ptr<Assumption>(
@@ -941,7 +937,7 @@ void Cg::scanBB(const llvm::BasicBlock *bb, const DynamicInfo &dyn_info,
   // Process all of our successor blocks (In DFS order)
   for (auto it = succ_begin(bb), en = succ_end(bb);
       it != en; ++it) {
-    scanBB(*it, dyn_info, as, seen);
+    scanBB(*it, as, seen);
   }
 }
 
@@ -1138,9 +1134,56 @@ static const Cg &get_full_cg(const llvm::Function *fcn, CgCache &base_cgs,
   return *pcg;
 }
 
+void Cg::resolveDirCall(CgCache &base_cgs, CgCache &full_cgs,
+    llvm::ImmutableCallSite &cs, const llvm::Function *called_fcn,
+    CallInfo &caller_info) {
+  // If this is direct && is external
+  if (called_fcn->isDeclaration()) {
+    // Add it as an external function
+    addConstraintsForExternalCall(cs, called_fcn, caller_info);
+  // If it is to a function within our scc (recursion), then connect those
+  //   nodes
+  } else {
+    // llvm::dbgs() << "  called_fcn is: " << called_fcn->getName() << "\n";
+    auto it = callInfo_.find(called_fcn);
+    if (it != std::end(callInfo_)) {
+      auto &callee_pr = *it;
+      auto &callee_info = callee_pr.second.first;
+      addConstraintsForDirectCall(cs, called_fcn, caller_info, callee_info);
+      auto callee_cfg_node = localCFG_.getNode(callee_pr.second.second);
+      callee_cfg_node.addPred(cfgId_);
+    } else {
+      // Otherwise, get a copy of the nodes it is calling
+      //   NOTE: dest_cg should have already had its calls resolved
+      auto &dest_cg = get_full_cg(called_fcn, base_cgs, full_cgs);
+      // Create a new copy of dest_cg's nodes in my cg
+      auto remap = mapIn(dest_cg);
+
+      // Connect the call args into dest_cg
+      auto &callee_pr = remap.at(called_fcn);
+      auto &callee_info = callee_pr.first;
+      auto &callee_cfg_id = callee_pr.second;
+
+      addConstraintsForDirectCall(cs, called_fcn, caller_info, callee_info);
+
+      // llvm::dbgs() << "Have localCFG: " << localCFG_ << "\n";
+
+      // Finally, update my localCFG_
+      auto &callee_cfg_node = localCFG_.getNode(callee_cfg_id);
+      /*
+      llvm::dbgs() << "!! adding pred?: "
+         << localCFG_.getNode(cfgId_).fcn()->getName() << " <- " <<
+        callee_cfg_node.fcn()->getName() << "\n";
+      */
+      callee_cfg_node.addPred(cfgId_);
+    }
+  }
+}
+
 // Handles calls outside of this function
 //   NOTE -- assumes SCCs are merged
 void Cg::resolveCalls(CgCache &base_cgs, CgCache &full_cgs) {
+  auto &indir_info = dynInfo_.indir_info;
   // Resolve each call
   for (auto &caller_info : calls_) {
     auto ci = caller_info.ci();
@@ -1150,50 +1193,37 @@ void Cg::resolveCalls(CgCache &base_cgs, CgCache &full_cgs) {
 
     // If it is a direct call, add the appropriate constraints...
     if (called_fcn != nullptr) {
-      // If this is direct && is external
-      if (called_fcn->isDeclaration()) {
-        // Add it as an external function
-        addConstraintsForExternalCall(cs, called_fcn, caller_info);
-      // If it is to a function within our scc (recursion), then connect those
-      //   nodes
-      } else {
-        // llvm::dbgs() << "  called_fcn is: " << called_fcn->getName() << "\n";
-        auto it = callInfo_.find(called_fcn);
-        if (it != std::end(callInfo_)) {
-          auto &callee_pr = *it;
-          auto &callee_info = callee_pr.second.first;
-          addConstraintsForDirectCall(cs, called_fcn, caller_info, callee_info);
-          auto callee_cfg_node = localCFG_.getNode(callee_pr.second.second);
-          callee_cfg_node.addPred(cfgId_);
-        } else {
-          // Otherwise, get a copy of the nodes it is calling
-          //   NOTE: dest_cg should have already had its calls resolved
-          auto &dest_cg = get_full_cg(called_fcn, base_cgs, full_cgs);
-          // Create a new copy of dest_cg's nodes in my cg
-          auto remap = mapIn(dest_cg);
-
-          // Connect the call args into dest_cg
-          auto &callee_pr = remap.at(called_fcn);
-          auto &callee_info = callee_pr.first;
-          auto &callee_cfg_id = callee_pr.second;
-
-          addConstraintsForDirectCall(cs, called_fcn, caller_info, callee_info);
-
-          // llvm::dbgs() << "Have localCFG: " << localCFG_ << "\n";
-
-          // Finally, update my localCFG_
-          auto &callee_cfg_node = localCFG_.getNode(callee_cfg_id);
-          /*
-          llvm::dbgs() << "!! adding pred?: "
-             << localCFG_.getNode(cfgId_).fcn()->getName() << " <- " <<
-            callee_cfg_node.fcn()->getName() << "\n";
-          */
-          callee_cfg_node.addPred(cfgId_);
-        }
-      }
+      resolveDirCall(base_cgs, full_cgs,
+          cs, called_fcn, caller_info);
     // Else add an external call constraint
     } else {
-      addConstraintsForIndirectCall(cs, caller_info);
+      // Check for indir info:
+      if (indir_info.hasInfo()) {
+        llvm::dbgs() << "have indir info!\n";
+        auto &targets = indir_info.getTargets(ci);
+
+        for (auto &target : targets) {
+          auto fcn_target = cast<llvm::Function>(target);
+
+          llvm::dbgs() << "Forcing direct resolution to: " <<
+            fcn_target->getName() << "\n";
+          resolveDirCall(base_cgs, full_cgs, cs, fcn_target, caller_info);
+        }
+
+        // Add spec assumption:
+        // First build the assumption set
+        std::vector<ValueMap::Id> fcn_asmps;
+        for (auto val : targets) {
+          fcn_asmps.emplace_back(vals_.getDef(val));
+        }
+
+        // Now add the assumption
+        as_.add(
+            std14::make_unique<PtstoAssumption>(ci, fcn_asmps));
+      } else {
+        llvm::dbgs() << "NO have indir info?\n";
+        addConstraintsForIndirectCall(cs, caller_info);
+      }
     }
   }
   // Remove all calls after they have been resolved
@@ -1237,6 +1267,8 @@ void Cg::lowerAllocs() {
       indir_call_remap);
   // finally Constraints
   std::for_each(std::begin(constraints_), std::end(constraints_), cons_remap);
+
+  localCFG_.updateNodes(remap);
 }
 
 void Cg::mergeCalls(const std::vector<CallInfo> &calls,
@@ -1283,6 +1315,10 @@ void Cg::mergeScc(const Cg &rhs) {
   //     -- This includes "ValueMaps"
 
   // First, sanity check that rhs and I are disjoint
+  llvm::dbgs() << "Adding rhs with callinfos:\n";
+  for (auto &pr : rhs.callInfo_) {
+    llvm::dbgs() << "  " << pr.first->getName() << "\n";
+  }
   if_debug_enabled(
       for (auto &pr : rhs.callInfo_) {
         assert(callInfo_.find(pr.first) == std::end(callInfo_));
@@ -1305,6 +1341,9 @@ void Cg::mergeScc(const Cg &rhs) {
   //   Assert indirCalls_ empty, those should be resolved after scc merges
   assert(indirCalls_.empty());
   assert(rhs.indirCalls_.empty());
+
+  // FIXME(ddevec) -- see below
+  llvm::dbgs() << "Connect localCFG?\n";
 
   // Dun?
 }

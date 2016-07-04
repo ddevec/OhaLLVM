@@ -9,14 +9,10 @@
 #include <memory>
 #include <vector>
 
-#include "include/AndersHelpers.h"
+#include "include/AndersGraph.h"
 #include "include/Assumptions.h"
-#include "include/ConstraintPass.h"
-#include "include/DUG.h"
-#include "include/ObjectMap.h"
-#include "include/lib/DynPtsto.h"
-#include "include/lib/UnusedFunctions.h"
-#include "include/lib/IndirFcnTarget.h"
+#include "include/Cg.h"
+#include "include/ValueMap.h"
 
 #include "llvm/Pass.h"
 #include "llvm/Function.h"
@@ -27,11 +23,6 @@
 
 // The actual SFS module, most of the work is done via the ObjectMap and Def-Use
 // Graph (DUG), these methods mostly operate on them.
-
-// Actually HU...
-int32_t HVN(ConstraintGraph &cg, ObjectMap &omap);
-
-void HRU(ConstraintGraph &cg, ObjectMap &omap, int32_t min_removed);
 
 class SpecAnders : public llvm::ModulePass,
                 public llvm::AliasAnalysis {
@@ -86,11 +77,7 @@ class SpecAnders : public llvm::ModulePass,
     return specAssumptions_;
   }
 
-  ObjectMap &getObjectMap() {
-    return omap_;
-  }
-
-  ObjectMap::ObjID getRep(ObjectMap::ObjID id) {
+  ValueMap::Id getRep(ValueMap::Id id) {
     // Convert input objID to rep ObjID:
     /*
     auto rep_id = id;
@@ -104,10 +91,10 @@ class SpecAnders : public llvm::ModulePass,
 
     return rep_id;
     */
-    return omap_.getRep(id);
+    return mainCg_->vals().getRep(id);
   }
 
-  const PtstoSet &getPointsTo(ObjectMap::ObjID id) {
+  const PtstoSet &getPointsTo(ValueMap::Id id) {
     // Convert input objID to rep ObjID:
     auto rep_id = getRep(id);
 
@@ -117,33 +104,44 @@ class SpecAnders : public llvm::ModulePass,
  private:
   // Takes dynamic pointsto information, as well as hot/cold basic block
   //   information, and trims the edges of the DUG appropriately
-  std::map<ObjectMap::ObjID, Bitmap>
+  /*
+  std::map<ValueMap::Id, Bitmap>
   addDynPtstoInfo(llvm::Module &m, DUG &graph, ObjectMap &omap);
+  */
+  PtstoSet *ptsCacheGet(const llvm::Value *val);
 
-  void HCD(ConstraintGraph &, ObjectMap &);
+  void addIndirCall(const PtstoSet &fcn_pts,
+      const CallInfo &caller_ci,
+      CsFcnCFG::Id cur_graph_node,
+      Worklist<AndersGraph::Id> &wl,
+      std::vector<uint32_t> &priority);
+  void addIndirEdges(const CallInfo &caller_ci,
+      const CallInfo &callee_ci,
+      Worklist<AndersGraph::Id> &wl,
+      const std::vector<uint32_t> &priority);
+  void handleGraphChange(
+      size_t old_size,
+      Worklist<AndersGraph::Id> &wl,
+      std::vector<uint32_t> &priority);
 
   // Solves the remaining graph, providing full flow-sensitive inclusion-based
   // points-to analysis
   bool solve();
 
- protected:
-  // Optimizes the top-level constraints in the DUG
-  // This requires the omap, so it knows which ids are objects, and doesn't
-  //   group them
-  // It also requires the CFG, because it will change the destination of some
-  //   loads
-  bool optimizeConstraints(ConstraintGraph &graph, CFG &cfg,
-      ObjectMap &omap);
-
   // Private data {{{
-  ObjectMap omap_;
   AndersGraph graph_;
-
   AssumptionSet specAssumptions_;
 
-  std::map<ObjectMap::ObjID, ObjectMap::ObjID> hcdPairs_;
+  std::unique_ptr<DynamicInfo> dynInfo_;
 
-  DynPtstoLoader *dynPts_;
+  // Imported from ConstraintPass
+  std::unique_ptr<Cg> mainCg_;
+  std::unique_ptr<CgCache> cgCache_;
+  std::unique_ptr<CgCache> callCgCache_;
+
+  std::unordered_map<const llvm::Value *, PtstoSet> ptsCache_;
+
+  // std::map<ObjectMap::ObjID, ObjectMap::ObjID> hcdPairs_;
   //}}}
 };
 

@@ -61,6 +61,10 @@ class CsFcnCFG {
        ci_.remap(ci);
      }
 
+     void remapCi(const ValueMap &map) {
+       ci_.updateReps(map);
+     }
+
       friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
           const FcnNode &node) {
         os << "(" << node.fcn_->getName() << ", " <<
@@ -95,6 +99,18 @@ class CsFcnCFG {
 
   util::ObjectRemap<Id> copyNodes(const CsFcnCFG &callee,
       const util::ObjectRemap<CallInfo::Id> &ci_remap);
+
+  void updateNodes(const ValueMap &map) {
+    for (auto &node : nodes_) {
+      node.remapCi(map);
+    }
+  }
+
+  void updateNodes(const util::ObjectRemap<CallInfo::Id> &map) {
+    for (auto &node : nodes_) {
+      node.remapCi(map);
+    }
+  }
 
   friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
       const CsFcnCFG &cfg) {

@@ -96,7 +96,7 @@ static llvm::cl::list<int32_t> //  NOLINT
       llvm::cl::desc("Specifies IDs to print the nodes of before andersens "
         "runs"));
 
-llvm::cl::opt<bool>
+static llvm::cl::opt<bool>
   anders_no_opt("asc-no-opt", llvm::cl::init(false),
       llvm::cl::value_desc("bool"),
       llvm::cl::desc(
@@ -123,7 +123,7 @@ namespace llvm {
   static RegisterPass<SpecAndersCS>
       SpecAndersCSRP("SpecAndersCS", "Speculative Andersens Analysis",
           false, true);
-  RegisterAnalysisGroup<AliasAnalysis> SpecAndersRAG(SpecAndersCSRP);
+  RegisterAnalysisGroup<AliasAnalysis> CSSpecAndersRAG(SpecAndersCSRP);
 }  // namespace llvm
 
 void SpecAndersCS::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
@@ -153,9 +153,10 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
   // dynPts_ = &getAnalysis<DynPtstoLoader>();
   const UnusedFunctions &unused_fcns =
       getAnalysis<UnusedFunctions>();
+  auto &indir_info = getAnalysis<IndirFunctionInfo>();
 
   // FIXME: Acutally construct?
-  dynInfo_ = std14::make_unique<DynamicInfo>(unused_fcns);
+  dynInfo_ = std14::make_unique<DynamicInfo>(unused_fcns, indir_info);
 
   BasicFcnCFG fcn_cfg(m, *dynInfo_);
 

@@ -60,10 +60,14 @@ void CallInfo::remap(const util::ObjectRemap<Id> &mapper) {
 
 void CallInfo::updateReps(const ValueMap &map) {
   // args:
-  for (auto &id : args_) { id = map.getRep(id); }
+  for (auto &id : args_) {
+    id = map.getRep(id);
+  }
+
   // ret:
   if (ret_ != Id::invalid()) {
     ret_ = map.getRep(ret_);
+    assert(ret_ != Id::invalid());
   }
 
   // varArg:

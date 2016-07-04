@@ -24,14 +24,6 @@
 #include "include/Debug.h"
 #include "include/SpecAndersCS.h"
 
-static llvm::cl::opt<int32_t> //  NOLINT
-  solve_debug_id("anders-solve-id", llvm::cl::init(-1),
-      llvm::cl::value_desc("int"),
-      llvm::cl::desc("Specifies IDs to trace in the anders-solve process"));
-
-extern llvm::cl::opt<bool> //  NOLINT
-  anders_no_opt;
-
 // Number of edges/number of processed nodes before we allow LCD to run
 #define LCD_SIZE 600
 #define LCD_PERIOD std::numeric_limits<int32_t>::max()
@@ -443,14 +435,12 @@ bool SpecAndersCS::solve() {
         auto edge = std::make_pair(pnd->id(), succ_node.id());
         // If we haven't run LCD on this edge before, the points-to sets are not
         //   empty, and the two points-to sets are equal
-        if (!anders_no_opt) {
-          if (lcd_edges.find(edge) == std::end(lcd_edges) &&
-              !pnd->ptsto().empty() &&
-              pnd->ptsto() == succ_pts) {
-            lcd_check_count++;
-            lcd_nodes.insert(pnd->id());
-            lcd_edges.insert(edge);
-          }
+        if (lcd_edges.find(edge) == std::end(lcd_edges) &&
+            !pnd->ptsto().empty() &&
+            pnd->ptsto() == succ_pts) {
+          lcd_check_count++;
+          lcd_nodes.insert(pnd->id());
+          lcd_edges.insert(edge);
         }
 
         if (ch) {
@@ -557,88 +547,6 @@ bool SpecAndersCS::solve() {
   return false;
 }
 
-void AndersCons::process(AndersGraph &graph, Worklist<AndersGraph::Id> &wl,
-    const std::vector<uint32_t> &priority,
-    const PtstoSet &update_dest) const {
-
-  switch (type_) {
-    case ConstraintType::Store:
-    {
-      // This is a store:
-      // *n < b
-      // For each points-to in dest
-      bool ch = false;
-      // auto &dest_pts = update_dest;
-      /*
-      auto &dest_pts = dest_node.ptsto();
-      */
-
-      auto &dest_pts = update_dest;
-      auto &src_node = graph.getNode(src());
-
-      if (src_node.id() == ValueMap::IntValue ||
-          src_node.id() == ValueMap::NullValue) {
-        return;
-      }
-
-      adout("    storecons add edges: " << dest_pts << " to " << src_node.id()
-          << "\n");
-      ch = src_node.addCopyEdges(dest_pts);
-      /*
-      for (auto dest_id : dest_pts) {
-        auto &pt_node = graph.getNode(dest_id);
-        adout("      pts_node: " << pt_node.id() << "\n");
-        if (pt_node.id() != src_node.id() &&
-            pt_node.id() != ObjectMap::IntValue &&
-            pt_node.id() != ObjectMap::NullValue) {
-          ch |= src_node.addCopyEdge(pt_node.id());
-          adout("      " << src_node.id() << " <- edge - " <<
-             pt_node.id() << "\n");
-        }
-      }
-      */
-
-      if (ch) {
-        adout("  StoreCons: added: " << src_node.id() << " to WL\n");
-        wl.push(src_node.id(), priority[src_node.id().val()]);
-      }
-      break;
-    }
-    case ConstraintType::Load:
-    {
-      // This is a store:
-      // a < *n
-      // For each points-to in src
-      // auto &src_pts = update_src;
-      // auto &src_pts = graph.getNode(src()).ptsto();
-      auto &src_pts = update_dest;
-      auto &dest_node = graph.getNode(dest());
-      assert(dest_node.id() != ValueMap::IntValue);
-      assert(dest_node.id() != ValueMap::NullValue);
-
-      for (auto pts_id : src_pts) {
-        auto &pt_node = graph.getNode(pts_id);
-        // Don't add ptr to yourself, or null
-        if (pt_node.id() != dest_node.id() &&
-            pt_node.id() != ValueMap::IntValue &&
-            pt_node.id() != ValueMap::NullValue) {
-          adout("    loadcons add edges: " << dest_node.id() << " to " <<
-              pt_node.id() << "\n");
-          bool ch = pt_node.addCopyEdge(dest_node.id());
-
-          if (ch) {
-            adout("  LoadCons: added: " << pt_node.id() << " to WL\n");
-            wl.push(pt_node.id(), priority[pt_node.id().val()]);
-          }
-        }
-      }
-      break;
-    }
-    default:
-      llvm_unreachable("Shouldn't have addrof or copy cons?");
-  }
-}
-
 void SpecAndersCS::handleGraphChange(
     size_t old_size,
     Worklist<AndersGraph::Id> &wl,
@@ -721,7 +629,6 @@ void SpecAndersCS::addIndirCall(const PtstoSet &fcn_pts,
             auto &callee_node = cg.localCFG().getNode(callee_cfg_id);
             auto &callee_ci = callee_node.ci();
             // add call edges to the anders live graph
-            llvm::dbgs() << "indir edges 1\n";
             addIndirEdges(caller_ci, callee_ci, wl, priority);
 
             // Also map the call edge into our main CFG
@@ -752,7 +659,6 @@ void SpecAndersCS::addIndirCall(const PtstoSet &fcn_pts,
           auto callee_it = calls.find(callee_fcn);
           assert(callee_it != std::end(calls));
           auto &callee_ci = callee_it->second.first;
-          llvm::dbgs() << "indir edges 2\n";
           addIndirEdges(caller_ci, callee_ci, wl, priority);
 
           // Also map the call edge into our main CFG
