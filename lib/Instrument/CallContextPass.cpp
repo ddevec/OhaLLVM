@@ -286,11 +286,8 @@ bool CallContextLoader::runOnModule(llvm::Module &) {
           std::istream_iterator<CsCFG::Id>());
       */
       /*
-      llvm::dbgs() << "Got stack:";
-      for (auto elm : callsites_.back()) {
-        llvm::dbgs() << " " << elm;
-      }
-      llvm::dbgs() << "\n";
+      llvm::dbgs() << "Got stack: " << util::print_iter(callsites_.back()) <<
+        "\n";
       */
       loaded_ = true;
     }

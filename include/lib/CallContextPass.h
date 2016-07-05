@@ -63,6 +63,10 @@ class CallContextLoader : public llvm::ModulePass {
     return true;
   }
 
+  CsCFG::Id getMainContext() const {
+    return CsCFG::Id(0);
+  }
+
   const std::vector<const std::vector<CsCFG::Id> *> &
   getAllContexts(CsCFG::Id id) const {
     return index_.at(id);

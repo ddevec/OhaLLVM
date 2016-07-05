@@ -823,6 +823,8 @@ Cg::Cg(const llvm::Function *fcn,
       modInfo_(mod_info),
       extInfo_(ext_info) {
   extInfo_.init(*fcn->getParent(), vals());
+  // Assume we're part of main for now...
+  curStack_.push_back(dynInfo_.call_info.getMainContext());
 
 
   // Populate constraint set for this function (and only this function)
@@ -1156,7 +1158,11 @@ void Cg::resolveDirCall(CgCache &base_cgs, CgCache &full_cgs,
         pcg = full_cgs.tryGetCg(called_fcn);
       } else {
         // If we don't have a valid call info, don't populate this cfg node
-        if (!call_info.isValid(new_stack)) {
+        /*
+        llvm::dbgs() << "Considering stack: " <<
+          util::print_iter(tmp_cg.curStack_) << "\n";
+        */
+        if (!call_info.isValid(tmp_cg.curStack_)) {
           llvm::dbgs() << "Skipping stack not found dynamically\n";
           return;
         }
