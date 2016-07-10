@@ -15,6 +15,7 @@
 
 BasicFcnCFG::BasicFcnCFG(llvm::Module &m, DynamicInfo &di) {
   auto &dyn_info = di.used_info;
+  auto &indir_info = di.indir_info;
   // Populate our SEG to contain all of the functions as nodes
   // Step one, add a node for each function
   for (auto &fcn : m) {
@@ -43,9 +44,9 @@ BasicFcnCFG::BasicFcnCFG(llvm::Module &m, DynamicInfo &di) {
         if (auto ci = dyn_cast<llvm::CallInst>(pinst)) {
           llvm::ImmutableCallSite cs(ci);
 
-          // Only consider direct calls...
           auto pdest_fcn = LLVMHelper::getFcnFromCall(cs);
 
+          // Only consider direct calls...
           if (pdest_fcn != nullptr) {
             assert(dyn_info.isUsed(pdest_fcn));
             /*
@@ -54,6 +55,20 @@ BasicFcnCFG::BasicFcnCFG(llvm::Module &m, DynamicInfo &di) {
             */
             auto dest_id = fcnMap_.at(pdest_fcn);
             fcnGraph_.addPred(dest_id, fcn_id);
+
+          // Unless we have indir info
+          } else {
+            if (indir_info.hasInfo()) {
+              // Don't bother w/ inline asm...
+              if (!llvm::isa<llvm::InlineAsm>(cs.getCalledValue())) {
+                auto &dests = indir_info.getTargets(ci);
+
+                for (auto dest : dests) {
+                  auto dest_id = fcnMap_.at(cast<llvm::Function>(dest));
+                  fcnGraph_.addPred(dest_id, fcn_id);
+                }
+              }
+            }
           }
         } else if (auto ii = dyn_cast<llvm::InvokeInst>(pinst)) {
           llvm::dbgs() << "Unexpected invoke inst: " << *ii << "\n";

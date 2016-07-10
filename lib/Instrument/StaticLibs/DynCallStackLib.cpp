@@ -2,6 +2,9 @@
  * Copyright (C) 2015 David Devecsery
  */
 
+#include <sys/types.h>
+#include <unistd.h>
+
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -54,9 +57,11 @@ void __DynContext_do_finish() {
     logname = envname;
   }
 
-  std::string outfilename(logname);
+  std::ostringstream outfilename;
 
-  std::ofstream ofil(outfilename);
+  outfilename << logname << "." << getpid();
+
+  std::ofstream ofil(outfilename.str());
 
   std::unique_lock<std::mutex> lk(inst_lock);
 

@@ -178,7 +178,7 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
       std::list<llvm::Instruction *> phi_list;
 
       // Don't instrument malloc functions!
-      auto &ext_info = extInfo_->getInfo(fcn.getName());
+      auto &ext_info = extInfo_->getInfo(&fcn);
       if (ext_info.canAlloc()) {
         continue;
       }
@@ -196,7 +196,7 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
 
           // FIXME: Use andersens results on nullptr???
           if (fcn != nullptr) {
-            auto &info = extInfo_->getInfo(fcn->getName());
+            auto &info = extInfo_->getInfo(fcn);
 
             if (!extInfo_->isUnknownFunction(info)) {
               ext_list.push_back(ci);

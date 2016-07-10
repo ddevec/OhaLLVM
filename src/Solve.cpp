@@ -2,9 +2,7 @@
  * Copyright (C) 2016 David Devecsery
  */
 
-// #define SPECSFS_DEBUG
 // #define SPECANDERS_DEBUG
-// #define SPECSFS_LOGDEBUG
 
 #ifdef SPECANDERS_DEBUG
 #  define adout(...) llvm::dbgs() << __VA_ARGS__
@@ -617,7 +615,8 @@ void AndersCons::process(AndersGraph &graph, Worklist<AndersGraph::Id> &wl,
         if (pt_node.id() != dest_node.id() &&
             pt_node.id() != ValueMap::IntValue &&
             pt_node.id() != ValueMap::NullValue) {
-          adout("    loadcons add edges: " << dest_node.id() << " to " <<
+          adout("    loadcons (" << *this << ") add edges: "
+              << dest_node.id() << " to " <<
               pt_node.id() << "\n");
           bool ch = pt_node.addCopyEdge(dest_node.id());
 

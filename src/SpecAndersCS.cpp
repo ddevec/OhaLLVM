@@ -180,16 +180,19 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
   // Clear the def-use graph
   // It should already be cleared, but I'm paranoid
   // Read in constraints...
-  cgCache_ =
-    std14::make_unique<CgCache>(m, *dynInfo_, fcn_cfg, mod_info, ext_info, as,
-        cs_cfg);
-  callCgCache_ = std14::make_unique<CgCache>(fcn_cfg);
+  {
+    util::PerfTimerPrinter cg_setup_timer(llvm::dbgs(), "Cg Setup");
+    cgCache_ =
+      std14::make_unique<CgCache>(m, *dynInfo_, fcn_cfg, mod_info, ext_info, as,
+          cs_cfg);
+    callCgCache_ = std14::make_unique<CgCache>(fcn_cfg);
 
-  // Now, populate main
-  mainCg_ = &cgCache_->getCg(m.getFunction("main"));
+    // Now, populate main
+    mainCg_ = &cgCache_->getCg(m.getFunction("main"));
 
-  mainCg_->addGlobalConstraints(m);
-  mainCg_->resolveCalls(*cgCache_, *callCgCache_);
+    mainCg_->addGlobalConstraints(m);
+    mainCg_->resolveCalls(*cgCache_, *callCgCache_);
+  }
 
 
   /*
@@ -203,8 +206,13 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
   */
 
   // Now lower objects, and init bdd
-  mainCg_->lowerAllocs();
-  BddPtstoSet::PtstoSetInit(*mainCg_);
+  {
+    util::PerfTimerPrinter pre_setup_timer(llvm::dbgs(), "pre-setup timer");
+    mainCg_->lowerAllocs();
+    ProfilerStart("pts_init.prof");
+    BddPtstoSet::PtstoSetInit(*mainCg_);
+    ProfilerStop();
+  }
 
   // Now that we have the constraints, lets optimize a bit
   // First, do HVN
@@ -212,13 +220,17 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
     util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "optimize");
     // Runs HVN HRU and HCD
     ProfilerStart("csa_opt.prof");
-    mainCg_->optimize();
+    llvm::dbgs() << "FIXME: Opt broken?\n";
+    // mainCg_->optimize();
     ProfilerStop();
   }
   llvm::dbgs() << "SparseBitmap =='s: " << Bitmap::numEq() << "\n";
   llvm::dbgs() << "SparseBitmap hash's: " << Bitmap::numHash() << "\n";
 
-  graph_.init(*mainCg_, fcn_cfg, cgCache_.get(), callCgCache_.get());
+  {
+    util::PerfTimerPrinter graph_init_timer(llvm::dbgs(), "Graph Init");
+    graph_.init(*mainCg_, fcn_cfg, cgCache_.get(), callCgCache_.get());
+  }
 
   // Create live graph?
   {
@@ -367,6 +379,7 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
         auto ids = graph_.cg().vals().getIds(&inst);
 
         llvm::dbgs() << "inst: " << inst << "\n";
+
         for (auto val_id : ids) {
           llvm::dbgs() << "  ptsto[" << val_id << "]: " <<
             ValPrint(val_id, graph_.cg().vals()) << "\n";
@@ -394,6 +407,39 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
                 << "\n";
           }
           */
+        }
+      }
+
+      if (auto si = dyn_cast<llvm::StoreInst>(&inst)) {
+        if (unused_fcns.isUsed(si->getParent())) {
+          auto src_ptr = si->getOperand(1);
+          if (llvm::isa<llvm::Constant>(src_ptr)) {
+            // Okay, print out the constant
+            llvm::dbgs() << "STORE: " << inst << " loads from constant: "
+              << *src_ptr << "\n";
+            auto cons_ids = graph_.cg().vals().getIds(src_ptr);
+            for (auto val_id : cons_ids) {
+              llvm::dbgs() << "    ptsto[" << val_id << "]: " <<
+                ValPrint(val_id, graph_.cg().vals()) << "\n";
+
+              auto rep_id = getRep(val_id);
+              if (rep_id != val_id) {
+                llvm::dbgs() << "     REP: " << rep_id << ": " <<
+                  FullValPrint(rep_id, graph_.cg().vals()) << "\n";
+              }
+
+              if (graph_.getNode(rep_id).id() != rep_id) {
+                llvm::dbgs() << "     Graph-REP: " <<
+                  graph_.getNode(rep_id).id() << ": " <<
+                  FullValPrint(graph_.getNode(rep_id).id(), graph_.cg().vals())
+                  << "\n";
+              }
+
+              auto &ptsto = getPointsTo(rep_id);
+
+              llvm::dbgs() << "      ptsto prints as: " << ptsto << "\n";
+            }
+          }
         }
       }
     }
@@ -789,6 +835,17 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
 }
 
 PtstoSet *SpecAndersCS::ptsCacheGet(const llvm::Value *val) {
+  /*
+  // While val is a constant bitcast, strip away the outer bitcast
+  while (auto ce = dyn_cast<llvm::ConstantExpr>(val)) {
+    if (ce->getOpcode() == llvm::Instruction::BitCast) {
+      val = ce->getOperand(0);
+    } else {
+      break;
+    }
+  }
+  */
+
   // Check if we've cached the value
   auto rc = ptsCache_.emplace(std::piecewise_construct,
       std::make_tuple(val), std::make_tuple());

@@ -108,6 +108,9 @@ class DoRunTarjans {
 
         // node.unite(seg_, merge_node);
         graph_.merge(merge_id, node_id);
+
+        // Must re-get node, as we just merged...
+        scc_visit_(graph_.getNode(merge_id), merge_id);
       }
 
       // Must re-get node, as we just merged...

@@ -2,9 +2,7 @@
  * Copyright (C) 2016 David Devecsery
  */
 
-// #define SPECSFS_DEBUG
 // #define SPECANDERS_DEBUG
-// #define SPECSFS_LOGDEBUG
 
 #ifdef SPECANDERS_DEBUG
 #  define adout(...) llvm::dbgs() << __VA_ARGS__
@@ -419,6 +417,18 @@ bool SpecAndersCS::solve() {
         // adout("  i: " << pnd->ptsto() << "\n");
         adout("  u: " << update_set << "\n");
         adout("  o: " << succ_node.id() << ": " << succ_pts << "\n");
+
+        /*
+        if (pnd->id() == ValueMap::Id(1124417) ||
+            pnd->id() == ValueMap::Id(1100347)) {
+          llvm::dbgs() << "Gep update:\n";
+          llvm::dbgs() << "  GEPsucc: " << succ_node.id() << "\n";
+          llvm::dbgs() << "  f: " << succ_offs << "\n";
+          llvm::dbgs() << "  u: " << update_set << "\n";
+          llvm::dbgs() << "  o: " << succ_node.id() << ": " << succ_pts <<
+            "\n";
+        }
+        */
         // Don't gep with intvalue:
         auto update_set_clean = pnd->ptsto();
 
@@ -429,8 +439,13 @@ bool SpecAndersCS::solve() {
 
         adout("  ch: " << ch << "\n");
         adout("  O: " << succ_node.id() << ": " << succ_pts << "\n");
-
-
+        /*
+        if (pnd->id() == ValueMap::Id(1124417) ||
+            pnd->id() == ValueMap::Id(1100347)) {
+          llvm::dbgs() << "  ch: " << ch << "\n";
+          llvm::dbgs() << "  O: " << succ_node.id() << ": " << succ_pts << "\n";
+        }
+        */
 
         auto edge = std::make_pair(pnd->id(), succ_node.id());
         // If we haven't run LCD on this edge before, the points-to sets are not

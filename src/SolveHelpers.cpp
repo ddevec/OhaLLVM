@@ -108,7 +108,7 @@ void BddPtstoSet::updateGeps(const Cg &cg) {
 
   consStartPos_ = constraints.size();
 
-  std::vector<std::set<int32_t>> off_to_obj(max_offs+1);
+  std::vector<std::unordered_set<int32_t>> off_to_obj(max_offs+1);
 
   auto &alloc_sizes = map.allocSizes();
 
@@ -164,13 +164,13 @@ void BddPtstoSet::updateGeps(const Cg &cg) {
   // We Make a set of valid offsets (from the CG)
   llvm::dbgs() << "offs size is: " << off_to_obj.size() << "\n";
   bdd off_mask = bddfalse;
-  for (auto offs : util::reverse(validOffs_)) {
+  for (auto &offs : util::reverse(validOffs_)) {
     // assert(static_cast<size_t>(offs) < off_to_obj.size());
     if (static_cast<size_t>(offs) >= off_to_obj.size()) {
       continue;
     }
     // This can happen in the instance of something like an array offset...
-    for (auto off_obj : off_to_obj[offs]) {
+    for (auto &off_obj : off_to_obj[offs]) {
       off_mask |= getFddVar(off_obj);
       /*
       if (off_obj == 457) {
@@ -191,6 +191,7 @@ void BddPtstoSet::updateGeps(const Cg &cg) {
 
     geps_[offs] |= f & off_mask;
   }
+  llvm::dbgs() << "geps_ loop done\n";
 }
 
 //}}}

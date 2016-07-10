@@ -41,6 +41,8 @@ class CsCFG : public llvm::ModulePass {
 
       reps_.insert(std::begin(node.reps_), std::end(node.reps_));
 
+      node.reps_.clear();
+
       SEG::Node::unite(seg, n);
     }
 

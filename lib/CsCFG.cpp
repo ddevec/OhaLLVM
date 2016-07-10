@@ -123,8 +123,10 @@ bool CsCFG::runOnModule(llvm::Module &m) {
             csGraph_.addPred(src_id, util::convert_id<SEG::NodeID>(mainNode_));
           }
 
+          // llvm::dbgs() << "call: " << ValPrinter(ci) << "\n";
           for (auto pdest_fcn : dests) {
             auto pred_set = fcn_to_calls.equal_range(pdest_fcn);
+            // llvm::dbgs() << "  calls: " << ValPrinter(pdest_fcn) << "\n";
 
             for (auto it = pred_set.first, en = pred_set.second;
                 it != en; ++it) {

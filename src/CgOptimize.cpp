@@ -156,6 +156,8 @@ size_t Cg::updateConstraints(OptGraph &graph) {
       continue;
     }
 
+    auto init_cons = cons;
+
     auto rep_obj_id = cons.rep();
     auto src_obj_id = cons.src();
     auto dest_obj_id = cons.dest();
@@ -176,6 +178,15 @@ size_t Cg::updateConstraints(OptGraph &graph) {
 
     // Remove any non-ptrs
     if (src_rep_node.isNonPtr() || dest_rep_node.isNonPtr()) {
+      if (init_cons.src() == Id(1000127)) {
+        llvm::dbgs() << "NP?DELETE Cons?: " << init_cons << "\n";
+        llvm::dbgs() << " src_rep_id: " << src_rep_id << "\n";
+        llvm::dbgs() << "  src non-ptr: " << src_rep_node.isNonPtr() << "\n";
+        llvm::dbgs() << " dest_rep_id: " << dest_rep_id << "\n";
+        llvm::dbgs() << "  dest_obj_id: " << dest_obj_id << "\n";
+        llvm::dbgs() << "  dest_rep_pts: " << dest_rep_node.ptsto() << "\n";
+        llvm::dbgs() << "  dest non-ptr: " << dest_rep_node.isNonPtr() << "\n";
+      }
       num_removed++;
       continue;
     }
@@ -184,15 +195,21 @@ size_t Cg::updateConstraints(OptGraph &graph) {
     if (cons.type() == ConstraintType::Copy &&
         cons.src() == cons.dest() && cons.offs() == 0) {
       num_removed++;
+      // llvm::dbgs() << " ?DELETE Cons?: " << init_cons << "\n";
       continue;
     }
 
     auto rc = dedup.emplace(cons);
     if (!rc.second) {
       num_removed++;
+      // llvm::dbgs() << " DELETE Cons: " << init_cons << "\n";
       continue;
     }
 
+    /*
+    llvm::dbgs() << " remap cons: " << init_cons <<
+        " to " <<  cons << "\n";
+    */
     new_cons.push_back(cons);
   }
 
@@ -476,7 +493,9 @@ size_t Cg::HU() {
           // Load cons cause the dest to be indirect, but add no edges
           dest_node.setIndirect();
           auto src_ref_id = data.getRef(src_node_id);
-          dest_node.addPred(src_ref_id);
+          // XXX: Need to re-get te node as getRef could cause a vector copy...
+          auto &new_dest_node = hvn_graph.getNode(dest_node_id);
+          new_dest_node.addPred(src_ref_id);
         }
         break;
       case ConstraintType::Store:
@@ -538,7 +557,17 @@ size_t Cg::HU() {
     auto node_rep = hvn_graph.getRep(node_id);
 
     if (node.indirect()) {
-      node.addPtsTo(data.getNextPE());
+      auto next_pe = data.getNextPE();
+      node.addPtsTo(next_pe);
+      /*
+      if (node_id == GraphId(1000213)) {
+        llvm::dbgs() << "adding PE: " << next_pe << " to node: "
+          << node_id << "\n";
+        llvm::dbgs() << "rep_id: " << node_rep << "\n";
+        assert(&node == &hvn_graph.getNode(node_rep));
+        llvm::dbgs() << "pts now: " << node.ptsto() << "\n";
+      }
+      */
     }
 
     // Now, unite any pred ids:
@@ -580,6 +609,14 @@ size_t Cg::HU() {
     node.clearPreds();
 
     auto &ptsto = node.ptsto();
+
+    /*
+    if (id == GraphId(1000213)) {
+      llvm::dbgs() << "Have node: " << id << "\n";
+      llvm::dbgs() << "  rep: " << hvn_graph.getRep(id) << "\n";
+      llvm::dbgs() << "  pts: " << ptsto << "\n";
+    }
+    */
 
     if (ptsto.empty() || ptsto.test(HVNNode::PENonPtr)) {
       // assert(ptsto.count() <= 1);

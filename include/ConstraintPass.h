@@ -55,6 +55,7 @@ class ConstraintPass : public llvm::ModulePass {
   AssumptionSet specAssumptions_;
 
   std::unique_ptr<ExtLibInfo> extInfo_;
+  std::unique_ptr<ModInfo> modInfo_;
 };
 
 #endif  // INCLUDE_CONSTRAINTPASS_H_

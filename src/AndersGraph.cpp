@@ -69,16 +69,16 @@ AndersGraph::Id AndersGraph::addConstraint(const Constraint &cons) {
         }
         */
         auto &node = getNode(cons.dest());
-        /*
-        llvm::dbgs() << "fill addrof: " << cons.dest() << " <- " <<
-          cons.src() << "\n";
-        llvm::dbgs() << "  src: " << cons.src() << " max: " <<
-          cg_->getMaxAlloc() << "\n";
-        llvm::dbgs() << "  dest: " << cons.dest() << ": " <<
-          ValPrint(cons.dest(), cg_->vals()) << "\n";
-        llvm::dbgs() << "  alloc value is: " <<
-          ValPrint(cons.src(), cg_->vals()) << "\n";
-        */
+        if (cons.src() >= cg_->getMaxAlloc()) {
+          llvm::dbgs() << "fill addrof: " << cons.dest() << " <- " <<
+            cons.src() << "\n";
+          llvm::dbgs() << "  src: " << cons.src() << " max: " <<
+            cg_->getMaxAlloc() << "\n";
+          llvm::dbgs() << "  dest: " << cons.dest() << ": " <<
+            ValPrint(cons.dest(), cg_->vals()) << "\n";
+          llvm::dbgs() << "  alloc value is: " <<
+            ValPrint(cons.src(), cg_->vals()) << "\n";
+        }
         assert(cons.src() < cg_->getMaxAlloc());
         node.ptsto().set(cons.src());
         ret = node.id();

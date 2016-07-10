@@ -2,6 +2,9 @@
  * Copyright (C) 2015 David Devecsery
  */
 
+#include <sys/types.h>
+#include <unistd.h>
+
 #include <cstdio>
 #include <cassert>
 
@@ -40,12 +43,17 @@ void __InstrIndirCalls_finish_inst(void) {
     logname = envname;
   }
 
-  std::string outfilename(logname);
+  std::ostringstream outfilename;
+
+  outfilename << logname << "." << getpid();
+
+  std::ofstream ofil(outfilename.str());
+
 
   // Print out my stuff...
   // First open and read the file, if it exists
   {
-    std::ifstream logfile(outfilename);
+    std::ifstream logfile(outfilename.str());
     if (logfile.is_open()) {
       for (std::string line; std::getline(logfile, line, ':'); ) {
         // First parse the first int till the :
@@ -67,7 +75,7 @@ void __InstrIndirCalls_finish_inst(void) {
   }
 
   // Now, create the outfile
-  FILE *out = fopen(outfilename.c_str(), "w");
+  FILE *out = fopen(outfilename.str().c_str(), "w");
 
   for (size_t i = 0; i < called_fcns.size(); i++) {
     auto &set = called_fcns[i];

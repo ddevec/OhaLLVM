@@ -771,12 +771,24 @@ class UnionFind {
     assert(ranks_.size() == ids_.size());
     assert(remap.size() == ids_.size());
 
-    std::vector<int32_t> new_ranks(ranks_.size());
-    std::vector<id_type> new_ids(ranks_.size());
+    std::vector<int32_t> new_ranks(ids_.size());
+    std::vector<id_type> new_ids(ids_.size());
 
     for (size_t i = 0; i < ids_.size(); ++i) {
-      new_ids[static_cast<size_t>(remap[id_type(i)])] = remap[ids_[i]];
-      new_ranks[static_cast<size_t>(remap[id_type(i)])] = ranks_[i];
+      auto new_idx = remap[id_type(i)];
+      /*
+      assert(new_idx < id_type(new_ids.size()));
+      assert(new_idx < id_type(new_ranks.size()));
+      assert(remap[ids_[i]] < id_type(new_ids.size()));
+      assert(remap[ids_[i]] >= id_type(0));
+      assert(new_idx >= id_type(0));
+      assert(ids_[i] < id_type(remap.size()));
+      */
+      if (remap[ids_[i]] < id_type(0)) {
+        continue;
+      }
+      new_ids[static_cast<size_t>(new_idx)] = remap[ids_[i]];
+      new_ranks[static_cast<size_t>(new_idx)] = ranks_[i];
     }
     ranks_ = std::move(new_ranks);
     ids_ = std::move(new_ids);

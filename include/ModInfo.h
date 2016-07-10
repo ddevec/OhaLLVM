@@ -82,6 +82,10 @@ class ModInfo {
       return offsets_.at(idx);
     }
 
+    const std::vector<int32_t> &offsets() const {
+      return offsets_;
+    }
+
     int32_t getFieldSize(int32_t idx) const {
       return sizes_.at(idx);
     }

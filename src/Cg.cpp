@@ -25,7 +25,6 @@
 #include "include/lib/IndirFcnTarget.h"
 #include "include/lib/UnusedFunctions.h"
 
-
 // Helpers for contraint IDs {{{
 static bool traceInt(const llvm::Value *val, std::set<const llvm::Value *> &src,
     std::map<const llvm::Value *, bool> &seen) {
@@ -214,8 +213,18 @@ void Cg::addConstraintForType(ConstraintType ctype,
 bool Cg::addConstraintsForExternalCall(llvm::ImmutableCallSite &cs,
     const llvm::Function *called_fcn,
     const CallInfo &call_info) {
+  llvm::dbgs() << "have external fcn: " << called_fcn->getName() << "\n";
   // Get the exteral
-  auto &info = extInfo_.getInfo(called_fcn->getName());
+  auto &info = extInfo_.getInfo(called_fcn);
+
+  // Just for good measure, make sure I've got a def of the values
+  auto ArgI = cs.arg_begin();
+  auto ArgE = cs.arg_end();
+
+  for (; ArgI != ArgE; ++ArgI) {
+    getDef(*ArgI);
+  }
+
   if (extInfo_.isUnknownFunction((info))) {
     llvm::dbgs() << "WARNING: Unknwon external function: " <<
       ValPrinter(cs.getInstruction()) << "\n";
@@ -318,6 +327,13 @@ void Cg::addConstraintsForIndirectCall(llvm::ImmutableCallSite &cs,
 
 bool Cg::addConstraintsForCall(
     llvm::ImmutableCallSite &cs) {
+  auto &called_val = *cs.getCalledValue();
+
+  if (llvm::isa<llvm::InlineAsm>(&called_val)) {
+    llvm::errs() << "WARNING: Ignoring inline asm!\n";
+    return false;
+  }
+
   calls_.emplace_back(*this, cs);
 
   return true;
@@ -362,9 +378,11 @@ int32_t Cg::addGlobalInitializerConstraints(Id dest,
   if (C->getType()->isSingleValueType()) {
     if (llvm::isa<llvm::PointerType>(C->getType())) {
       auto const_id = getDef(C);
+      /*
       llvm::dbgs() << "Adding global init for: (" << dest << ") " <<
           ValPrint(dest, vals_) << " to (" << const_id << ") "
           << ValPrint(const_id, vals_) << "\n";
+      */
 
       /*
       llvm::dbgs() << "Assigning constant: " << *C << "\n";
@@ -439,41 +457,13 @@ int32_t Cg::addGlobalInitializerConstraints(Id dest,
 }
 
 void Cg::addGlobalConstraintForType(ConstraintType ctype,
-    const llvm::Type *type, ValueMap::Id src,
+    const llvm::Type *, ValueMap::Id src,
     ValueMap::Id dest) {
-  // Strip wrapping arrays
-  while (auto at = dyn_cast<llvm::ArrayType>(type)) {
-    // Arrays invalidate strength
-    //   NOTE: Removed as flow insens- analysis has no strength
-    type = at->getContainedType(0);
-  }
-
-
-  // FIXME: REMOVE THIS -- we only add one addrof for struct types, the gep
-  //   operations will handle getting the internal fields.
   /*
-  if (auto st = dyn_cast<llvm::StructType>(type)) {
-
-    add(ctype, src, dest);
-    auto &si = modInfo_.getStructInfo(st);
-    for (size_t i = 0; i < si.numSizes(); i++) {
-      // Add an addr of to this offset
-      dout("Adding Global AddressOf for struct.  Dest: " << dest
-          << ", src " << src << " + " << i << "\n");
-
-      // For global object, force the src, dest offset to + i
-      add(ctype,
-          ValueMap::getOffsID(src, i),
-          ValueMap::getOffsID(dest, i));
-    }
-  } else {
+  llvm::dbgs() << "Adding Global AddressOf for NON-struct.  Dest: " << dest
+      << ", src " << src << "\n";
   */
-    llvm::dbgs() << "Adding Global AddressOf for NON-struct.  Dest: " << dest
-        << ", src " << src << "\n";
-    // No offs defaults to 0 in offs column, which is what we want for a
-    //   non-struct object
-    add(ctype, src, dest);
-  // }
+  add(ctype, src, dest);
 }
 //}}}
 
@@ -515,7 +505,16 @@ bool Cg::idCallInst(const llvm::Instruction &inst) {
   auto &info = extInfo_.getInfo(cs);
   auto alloc_info = info.getAllocInfo(cs, modInfo_);
   // If this does an allocation, create addressof operations for it
-  if (called_fcn != nullptr && alloc_info.first != AllocStatus::None) {
+  if (called_fcn != nullptr &&
+      // This is a complex conditional, it means:
+      //   If the called function is a declaration (no body) and extinfo says it
+      //     allocs
+      //   OR
+      //   If the called fucntion has a body, and extinfo recoginizes it (not
+      //     unknown) AND extinfo says it allocs
+      ((called_fcn->isDeclaration() && alloc_info.first != AllocStatus::None) ||
+       (called_fcn->isDeclaration() && alloc_info.first != AllocStatus::None &&
+         !extInfo_.isUnknownFunction(info)))) {
     /*
     llvm::dbgs() << "Have malloc call: " <<
       inst.getParent()->getParent()->getName() << ":" << inst << "\n";
@@ -635,12 +634,6 @@ void Cg::idStoreInst(const llvm::Instruction &inst) {
       llvm::isa<llvm::PointerType>(st.getOperand(1)->getType())) {
     if (!llvm::isa<llvm::IntegerType>(dest_type->getContainedType(0))) {
       auto dest = getDef(st.getOperand(1));
-      if (dest == ValueMap::NullValue) {
-        // If this is not an object, store to the value
-        dest = getDef(st.getOperand(1));
-        dout("No object for store dest: " << dest << " : " <<
-          ValPrint(dest, vals_) << "\n");
-      }
 
       llvm::dbgs() << __LINE__ << ": Store int into pointer: " <<
         st << "\n";
@@ -649,6 +642,8 @@ void Cg::idStoreInst(const llvm::Instruction &inst) {
           ValueMap::IntValue,
           dest);
     } else {
+      // Just set up the pointer dest... yeah, its weird
+      getDef(st.getOperand(1));
       /*
       llvm::dbgs() << "Skipping Universal Cons for store to int *: " << st <<
         "\n";
@@ -824,8 +819,8 @@ Cg::Cg(const llvm::Function *fcn,
       extInfo_(ext_info) {
   extInfo_.init(*fcn->getParent(), vals());
   // Assume we're part of main for now...
-  curStack_.push_back(dynInfo_.call_info.getMainContext());
-
+  curStacks_.emplace_back(1);
+  curStacks_.back().back() = dynInfo_.call_info.getMainContext();
 
   // Populate constraint set for this function (and only this function)
   // Create CallInfo for fcn_
@@ -854,15 +849,24 @@ void Cg::scanBB(const llvm::BasicBlock *bb,
     AssumptionSet &as, std::set<const llvm::BasicBlock *> &seen) {
   auto &unused_fcns = dynInfo_.used_info;
 
+  if (bb->getParent()->getName() == "buf_write") {
+    llvm::dbgs() << "Scanning:" << bb->getName() << "\n";
+  }
   if (!unused_fcns.isUsed(bb)) {
     as.add(std::unique_ptr<Assumption>(
           new DeadCodeAssumption(const_cast<llvm::BasicBlock *>(bb))));
+    if (bb->getParent()->getName() == "buf_write") {
+      llvm::dbgs() << "  DEAD\n";
+    }
     return;
   }
 
   // If we've analyzed this block before, skip it
   auto rc = seen.emplace(bb);
   if (!rc.second) {
+    if (bb->getParent()->getName() == "buf_write") {
+      llvm::dbgs() << "  REPEAT\n";
+    }
     return;
   }
 
@@ -971,8 +975,10 @@ void Cg::addGlobalConstraints(const llvm::Module &m) {
     auto type = glbl.getType()->getElementType();
 
     auto size = modInfo_.getSizeOfType(type);
-    // llvm::dbgs() << "size for: " << glbl.getName() << " is: " <<
-    // size << "\n";
+    /*
+    llvm::dbgs() << "size for: " << glbl.getName() << " is: " <<
+        size << "\n";
+    */
     // Okay, so I need to do this for each global...
     auto val_id = getDef(&glbl);
     auto obj_id = vals_.createAlloc(&glbl, size);
@@ -980,7 +986,7 @@ void Cg::addGlobalConstraints(const llvm::Module &m) {
     /*
     llvm::dbgs() << "Adding glbl constraint for: " << glbl <<
      "(thats val: " << val_id << ", obj: " << obj_id << ")\n";
-     */
+    */
 
     addGlobalConstraintForType(ConstraintType::AddressOf,
       type, obj_id, val_id);
@@ -1124,82 +1130,166 @@ Cg::mapIn(const Cg &rhs) {
   return std::move(ret);
 }
 
-void Cg::resolveDirCall(CgCache &base_cgs, CgCache &full_cgs,
-    llvm::ImmutableCallSite &cs, const llvm::Function *called_fcn,
-    CallInfo &caller_info) {
-  // If this is direct && is external
-  if (called_fcn->isDeclaration()) {
-    // Add it as an external function
-    addConstraintsForExternalCall(cs, called_fcn, caller_info);
-  // If it is to a function within our scc (recursion), then connect those
-  //   nodes
-  } else {
-    // llvm::dbgs() << "  called_fcn is: " << called_fcn->getName() << "\n";
-    auto it = callInfo_.find(called_fcn);
-    if (it != std::end(callInfo_)) {
-      auto &callee_pr = *it;
-      auto &callee_info = callee_pr.second.first;
-      addConstraintsForDirectCall(cs, called_fcn, caller_info, callee_info);
-      auto callee_cfg_node = localCFG_.getNode(callee_pr.second.second);
-      callee_cfg_node.addPred(cfgId_);
-    } else {
-      // Otherwise, get a copy of the nodes it is calling
-      //   NOTE: dest_cg should have already had its calls resolved
-      auto &call_info = dynInfo_.call_info;
-      std::vector<CsCFG::Id> new_stack(curStack_.size() + 1);
-      std::copy(std::begin(curStack_),
-          std::end(curStack_), std::begin(new_stack));
-      new_stack.back() = csCFG_.getId(cs.getInstruction());
-      // Check for the full cg:
-      auto tmp_cg = std::move(base_cgs.getCg(called_fcn).clone(
-            std::move(new_stack)));
-      const Cg *pcg = nullptr;
-      if (!call_info.hasDynData()) {
-        pcg = full_cgs.tryGetCg(called_fcn);
-      } else {
-        // If we don't have a valid call info, don't populate this cfg node
-        /*
-        llvm::dbgs() << "Considering stack: " <<
-          util::print_iter(tmp_cg.curStack_) << "\n";
-        */
-        if (!call_info.isValid(tmp_cg.curStack_)) {
-          llvm::dbgs() << "Skipping stack not found dynamically\n";
-          return;
-        }
-      }
-      if (pcg == nullptr) {
-        tmp_cg.resolveCalls(base_cgs, full_cgs);
+// Resolve an internal call
+void Cg::resolveDirCyclicCall(llvm::ImmutableCallSite &cs,
+    const llvm::Function *called_fcn, CallInfo &caller_info,
+    CallInfo &callee_info, CsFcnCFG::Id callee_node_id,
+    std::vector<std::vector<CsCFG::Id>> new_stacks) {
+  // If this is a cycle, we shouldn't have to add a frame to our stack...
+  // for each stack in curStacks_
+  //   If back != new_id
+  //     Add a new stack with this back
+  //     Check the new stack is valid
 
-        if (!call_info.hasDynData()) {
-          full_cgs.addCg(called_fcn, std::move(tmp_cg));
-          pcg = full_cgs.tryGetCg(called_fcn);
-        } else {
-          pcg = &tmp_cg;
-        }
-      }
-      auto &dest_cg = *pcg;
+  for (auto &stack : new_stacks) {
+    curStacks_.emplace_back(std::move(stack));
+  }
 
-      // Create a new copy of dest_cg's nodes in my cg
-      auto remap = mapIn(dest_cg);
+  addConstraintsForDirectCall(cs, called_fcn, caller_info, callee_info);
+  auto callee_cfg_node = localCFG_.getNode(callee_node_id);
+  callee_cfg_node.addPred(cfgId_);
+}
 
-      // Connect the call args into dest_cg
-      auto &callee_pr = remap.at(called_fcn);
-      auto &callee_info = callee_pr.first;
-      auto &callee_cfg_id = callee_pr.second;
-
-      addConstraintsForDirectCall(cs, called_fcn, caller_info, callee_info);
-
-      // llvm::dbgs() << "Have localCFG: " << localCFG_ << "\n";
-
-      // Finally, update my localCFG_
-      auto &callee_cfg_node = localCFG_.getNode(callee_cfg_id);
-      /*
-      llvm::dbgs() << "!! adding pred?: "
-         << localCFG_.getNode(cfgId_).fcn()->getName() << " <- " <<
-        callee_cfg_node.fcn()->getName() << "\n";
+void Cg::resolveDirAcyclicCall(CgCache &base_cgs, CgCache &full_cgs,
+    llvm::ImmutableCallSite &cs,
+    const llvm::Function *called_fcn, CallInfo &caller_info,
+    std::vector<std::vector<CsCFG::Id>> new_stacks) {
+  auto &call_info = dynInfo_.call_info;
+  // For each stack in curStacks_
+  //   new_stack = stack;
+  //   If new_stack.back() != new_id
+  //     stack.push_back(back);
+  //
+  //   if new_stack.valid():
+  //     new_stacks.push_back(new_stack)
+  // if new_stacks.empty()
+  //   Don't do call, invalid dyn call path
+  /*
+  if (cs.getInstruction()->getParent()->getParent()->getName() ==
+      "ngx_http_ssi_preconfiguration")
+  */
+  // if (called_fcn->getName() == "ngx_http_ssi_preconfiguration")
+  if (called_fcn->getName() == "ngx_http_block") {
+    llvm::dbgs() << "!!cs is: " << ValPrinter(cs.getInstruction()) << "\n";
+    /*
+    llvm::dbgs() << "  Checking stack: " << util::print_iter(new_stack) <<
+      "\n";
       */
-      callee_cfg_node.addPred(cfgId_);
+  }
+
+  // If we don't have a valid stack
+  if (call_info.hasDynData() && new_stacks.empty()) {
+    llvm::dbgs() << "Skipping call due to no valid dyn stack\n";
+    return;
+  }
+
+  // Check for the full cg:
+  auto tmp_cg = std::move(base_cgs.getCg(called_fcn).clone(
+        std::move(new_stacks)));
+  const Cg *pcg = nullptr;
+  if (!call_info.hasDynData()) {
+    pcg = full_cgs.tryGetCg(called_fcn);
+  }
+
+  if (pcg == nullptr) {
+    tmp_cg.resolveCalls(base_cgs, full_cgs);
+
+    if (!call_info.hasDynData()) {
+      full_cgs.addCg(called_fcn, std::move(tmp_cg));
+      pcg = full_cgs.tryGetCg(called_fcn);
+    } else {
+      pcg = &tmp_cg;
     }
+  }
+  auto &dest_cg = *pcg;
+
+  // Create a new copy of dest_cg's nodes in my cg
+  auto remap = mapIn(dest_cg);
+
+  // Connect the call args into dest_cg
+  auto &callee_pr = remap.at(called_fcn);
+  auto &callee_info = callee_pr.first;
+  auto &callee_cfg_id = callee_pr.second;
+
+  addConstraintsForDirectCall(cs, called_fcn, caller_info, callee_info);
+
+  // llvm::dbgs() << "Have localCFG: " << localCFG_ << "\n";
+
+  // Finally, update my localCFG_
+  auto &callee_cfg_node = localCFG_.getNode(callee_cfg_id);
+  /*
+  llvm::dbgs() << "!! adding pred?: "
+     << localCFG_.getNode(cfgId_).fcn()->getName() << " <- " <<
+    callee_cfg_node.fcn()->getName() << "\n";
+  */
+  callee_cfg_node.addPred(cfgId_);
+}
+
+std::vector<std::vector<CsCFG::Id>>
+Cg::getCalleeStacks(llvm::ImmutableCallSite &cs) {
+  auto &call_info = dynInfo_.call_info;
+  std::vector<std::vector<CsCFG::Id>> new_stacks;
+  for (auto &stack : curStacks_) {
+    auto new_id = csCFG_.getId(cs.getInstruction());
+    if (stack.back() != new_id) {
+      std::vector<CsCFG::Id> new_stack(stack.size() + 1);
+      std::copy(std::begin(stack), std::end(stack), std::begin(new_stack));
+      new_stack.back() = new_id;
+
+
+      if (call_info.hasDynData() && !call_info.isValid(new_stack)) {
+        continue;
+      }
+      new_stacks.emplace_back(std::move(new_stack));
+    }
+  }
+  return std::move(new_stacks);
+}
+
+void Cg::resolveDirCalls(CgCache &base_cgs, CgCache &full_cgs,
+    std::vector<call_tuple> &dir_calls) {
+
+  std::vector<call_tuple> acyc_calls;
+  for (auto &tup : dir_calls) {
+    auto &cs = std::get<0>(tup);
+    auto called_fcn = std::get<1>(tup);
+    auto &caller_info = *std::get<2>(tup);
+
+    // If this is direct && is external
+    if (called_fcn->isDeclaration()) {
+      // Add it as an external function
+      addConstraintsForExternalCall(cs, called_fcn, caller_info);
+    // If it is to a function within our scc (recursion), then connect those
+    //   nodes
+    } else {
+      llvm::dbgs() << "  called_fcn is: " << called_fcn->getName() << "\n";
+
+      auto it = callInfo_.find(called_fcn);
+      if (it != std::end(callInfo_)) {
+        auto &callee_info = it->second.first;
+        auto callee_node_id = it->second.second;
+        auto new_stacks = getCalleeStacks(cs);
+        resolveDirCyclicCall(cs, called_fcn, caller_info, callee_info,
+            callee_node_id, std::move(new_stacks));
+      } else {
+        acyc_calls.emplace_back(cs.getInstruction(), called_fcn, &caller_info);
+      }
+    }
+  }
+
+  // Now that we've resolved any recursive calls, or external calls, handle
+  //   acyclic calls
+  for (auto &tup : acyc_calls) {
+    auto &cs = std::get<0>(tup);
+    auto called_fcn = std::get<1>(tup);
+    auto &caller_info = *std::get<2>(tup);
+
+    auto new_stacks = getCalleeStacks(cs);
+
+    llvm::dbgs() << "Resolving acyc: " << ValPrinter(called_fcn) << "\n";
+
+    resolveDirAcyclicCall(base_cgs, full_cgs, cs, called_fcn, caller_info,
+        std::move(new_stacks));
   }
 }
 
@@ -1208,47 +1298,62 @@ void Cg::resolveDirCall(CgCache &base_cgs, CgCache &full_cgs,
 void Cg::resolveCalls(CgCache &base_cgs, CgCache &full_cgs) {
   auto &indir_info = dynInfo_.indir_info;
   // Resolve each call
+  std::vector<call_tuple> dir_calls;
   for (auto &caller_info : calls_) {
     auto ci = caller_info.ci();
     llvm::ImmutableCallSite cs(ci);
 
     auto called_fcn = LLVMHelper::getFcnFromCall(cs);
 
+    llvm::dbgs() << "Resolve call: " << ValPrinter(ci) << "\n";
+
     // If it is a direct call, add the appropriate constraints...
+    // llvm::dbgs() << "Resolve call: " << ValPrinter(ci) << "\n";
     if (called_fcn != nullptr) {
-      resolveDirCall(base_cgs, full_cgs,
-          cs, called_fcn, caller_info);
+      llvm::dbgs() << "  Have dir resolution: " << called_fcn->getName() <<
+        "\n";
+      dir_calls.emplace_back(cs, called_fcn, &caller_info);
     // Else add an external call constraint
     } else {
       // Check for indir info:
       if (indir_info.hasInfo()) {
         llvm::dbgs() << "have indir info!\n";
+        // llvm::dbgs() << "ci is: " << *ci << "\n";
         auto &targets = indir_info.getTargets(ci);
 
         for (auto &target : targets) {
           auto fcn_target = cast<llvm::Function>(target);
 
-          llvm::dbgs() << "Forcing direct resolution to: " <<
-            fcn_target->getName() << "\n";
-          resolveDirCall(base_cgs, full_cgs, cs, fcn_target, caller_info);
+          /*
+          llvm::dbgs() << "Forcing direct resolution of: " << ValPrinter(ci)
+            << "\n";
+          llvm::dbgs() << "  to: " << fcn_target->getName() << "\n";
+          */
+          llvm::dbgs() << "  Have dir resolution: " << fcn_target->getName() <<
+            "\n";
+          dir_calls.emplace_back(cs, fcn_target, &caller_info);
         }
 
         // Add spec assumption:
         // First build the assumption set
         std::vector<ValueMap::Id> fcn_asmps;
         for (auto val : targets) {
-          fcn_asmps.emplace_back(vals_.getDef(val));
+          // llvm::dbgs() << "Target is: " << ValPrinter(val) << "\n";
+          fcn_asmps.emplace_back(getDef(val));
         }
 
         // Now add the assumption
         as_.add(
             std14::make_unique<PtstoAssumption>(ci, fcn_asmps));
       } else {
-        llvm::dbgs() << "NO have indir info?\n";
+        llvm::dbgs() << "  Indir call?\n";
         addConstraintsForIndirectCall(cs, caller_info);
       }
     }
   }
+
+  resolveDirCalls(base_cgs, full_cgs, dir_calls);
+
   // Remove all calls after they have been resolved
   calls_.clear();
 }
@@ -1341,6 +1446,11 @@ void Cg::mergeScc(const Cg &rhs) {
   llvm::dbgs() << "Adding rhs with callinfos:\n";
   for (auto &pr : rhs.callInfo_) {
     llvm::dbgs() << "  " << pr.first->getName() << "\n";
+  }
+
+  llvm::dbgs() << "\n  My with callinfos:\n";
+  for (auto &pr : callInfo_) {
+    llvm::dbgs() << "    " << pr.first->getName() << "\n";
   }
   if_debug_enabled(
       for (auto &pr : rhs.callInfo_) {
@@ -1483,21 +1593,84 @@ Cg::Id Cg::getConstValue(const llvm::Constant *c) {
         return ValueMap::IntValue;
       case llvm::Instruction::PtrToInt:
         llvm::dbgs() << __LINE__ << ": getConstValue returns IntValue\n";
-        assert(0);
+        // assert(0);
         return ValueMap::IntValue;
       case llvm::Instruction::BitCast:
         {
-          auto cv_id = getConstValue(ce->getOperand(0));
-          // Now, if we cast from a struct to a non-struct, we need to merge
-          //   nodes...
+          auto pr = vals_.getConst(c);
+          auto dest_id = pr.second;
 
-          return cv_id;
+          if (pr.first) {
+            auto dest_val = ce->getOperand(0);
+
+            auto src_id = getDef(dest_val);
+
+            // Okay, if we cast from a struct to an array, we need to collapse
+            //   some nodes
+            // Technically this is a bitcast ptr(struct) -> ptr(array(type))
+            auto dest_type = c->getType();
+            auto src_type = dest_val->getType();
+            auto src_np_type =
+              cast<llvm::PointerType>(src_type)->getElementType();
+            auto dest_np_type =
+              cast<llvm::PointerType>(dest_type)->getElementType();
+            // We have a cast to an array type from a struct type
+            // First check to type
+            auto src_st_type = dyn_cast<llvm::StructType>(src_np_type);
+            if (llvm::isa<llvm::ArrayType>(dest_np_type) &&
+                src_st_type != nullptr) {
+              // Get each of the major subfields of the structure,
+              //   and copy them into our new dest
+              auto &si = modInfo_.getStructInfo(src_st_type);
+              auto &offsets = si.offsets();
+              for (auto offset : offsets) {
+                // Add a copy from src + offs to dest
+                add(ConstraintType::Copy, src_id, dest_id, offset);
+              }
+            } else {
+              add(ConstraintType::Copy, src_id, dest_id);
+            }
+          }
+
+          return dest_id;
+        }
+      case llvm::Instruction::Add:
+        {
+          auto pr = vals_.getConst(c);
+          auto dest_id = pr.second;
+
+          if (pr.first) {
+            auto op0 = ce->getOperand(0);
+            auto op1 = ce->getOperand(1);
+
+            bool op0_ptr = llvm::isa<llvm::PointerType>(op0->getType());
+            bool op1_ptr = llvm::isa<llvm::PointerType>(op1->getType());
+
+            // If neither operand is a ptr copy intval
+            if (!op0_ptr && !op1_ptr) {
+              add(ConstraintType::Copy, ValueMap::IntValue, dest_id);
+            } else {
+              // If either is a ptr, add copy
+              if (op0_ptr) {
+                add(ConstraintType::Copy, getConstValue(op0), dest_id);
+              }
+              if (op1_ptr) {
+                add(ConstraintType::Copy, getConstValue(op1), dest_id);
+              }
+            }
+          }
+
+          return dest_id;
         }
       default:
         llvm::errs() << "Const Expr not yet handled: " << *ce << "\n";
         llvm_unreachable(0);
     }
   } else if (llvm::isa<llvm::ConstantInt>(c)) {
+    // llvm::dbgs() << __LINE__ << ": getConstValue returns IntValue\n";
+    // assert(0);
+    return ValueMap::IntValue;
+  } else if (llvm::isa<llvm::ConstantFP>(c)) {
     // llvm::dbgs() << __LINE__ << ": getConstValue returns IntValue\n";
     // assert(0);
     return ValueMap::IntValue;

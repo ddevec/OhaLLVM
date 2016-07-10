@@ -190,7 +190,8 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
   // ProfilerStart("anders_opt.prof");
   if (!anders_no_opt) {
     util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "HVN");
-    mainCg_->optimize();
+    llvm::dbgs() << "FIXME: Opt broken?\n";
+    // mainCg_->optimize();
   }
   // ProfilerStop();
   llvm::dbgs() << "SparseBitmap =='s: " << Bitmap::numEq() << "\n";

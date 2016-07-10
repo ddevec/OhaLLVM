@@ -273,9 +273,9 @@ class Cg {
   static const int32_t ALLOC_SIZE_UNKOWN = -1;
 
   // Clone interface {{{
-  Cg clone(std::vector<CsCFG::Id> cur_stack) const {
+  Cg clone(std::vector<std::vector<CsCFG::Id>> cur_stacks) const {
     Cg ret(*this);
-    ret.curStack_ = std::move(cur_stack);
+    ret.curStacks_ = std::move(cur_stacks);
     return ret;
   }
   //}}}
@@ -379,6 +379,8 @@ class Cg {
   friend class CgCache;
   friend class CallInfo;
 
+
+  typedef std::tuple<llvm::ImmutableCallSite, const llvm::Function *, CallInfo *> call_tuple;  // NOLINT
   // Private helpers {{{
   Id getConstValue(const llvm::Constant *c);
   Id getDef(const llvm::Value *val);
@@ -394,9 +396,20 @@ class Cg {
   void addConstraintsForIndirectCall(llvm::ImmutableCallSite &cs,
       const CallInfo &call_info);
 
-  void resolveDirCall(CgCache &base_cgs, CgCache &full_cgs,
-      llvm::ImmutableCallSite &cs, const llvm::Function *called_fcn,
-      CallInfo &caller_info);
+  std::vector<std::vector<CsCFG::Id>> getCalleeStacks(
+      llvm::ImmutableCallSite &cs);
+
+  void resolveDirCyclicCall(llvm::ImmutableCallSite &cs,
+    const llvm::Function *called_fcn, CallInfo &caller_info,
+    CallInfo &callee_info, CsFcnCFG::Id callee_node_id,
+    std::vector<std::vector<CsCFG::Id>> new_stacks);
+  void resolveDirAcyclicCall(CgCache &base_cgs, CgCache &full_cgs,
+    llvm::ImmutableCallSite &cs,
+    const llvm::Function *called_fcn, CallInfo &caller_info,
+    std::vector<std::vector<CsCFG::Id>> new_stacks);
+
+  void resolveDirCalls(CgCache &base_cgs, CgCache &full_cgs,
+      std::vector<call_tuple> &dir_calls);
 
   bool addConstraintsForCall(llvm::ImmutableCallSite &cs);
 
@@ -464,7 +477,7 @@ class Cg {
 
   // The current call stack...
   CsCFG &csCFG_;
-  std::vector<CsCFG::Id> curStack_;
+  std::vector<std::vector<CsCFG::Id>> curStacks_;
 
   // For speculative assumptions
   DynamicInfo dynInfo_;

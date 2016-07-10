@@ -280,5 +280,13 @@ create_test(test_int_struct
     test_int_struct.c
   )
 
+create_test(test_list
+    test_list.c
+  )
+
+create_test(memcpy_hard
+    memcpy_hard.c
+  )
+
 add_subdirectory(dce)
 

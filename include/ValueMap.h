@@ -140,13 +140,24 @@ class ValueMap {
 
   std::set<Id>
   getIds(const llvm::Value *val) const {
-    auto pr = revMap_.equal_range(val);
     std::set<Id> ret;
-    for (auto it = pr.first, en=pr.second;
-        it != en; ++it) {
-      auto rep_id = getRep(it->second);
-      ret.emplace(rep_id);
+
+    if (auto c = dyn_cast<llvm::Constant>(val)) {
+      auto it = constMap_.find(c);
+      if (it == std::end(constMap_)) {
+        llvm::dbgs() << "No entry for constant: " << *c << "\n";
+        assert(0);
+      }
+      ret.emplace(it->second);
+    } else {
+      auto pr = revMap_.equal_range(val);
+      for (auto it = pr.first, en=pr.second;
+          it != en; ++it) {
+        auto rep_id = getRep(it->second);
+        ret.emplace(rep_id);
+      }
     }
+
     return std::move(ret);
   }
 
@@ -225,6 +236,7 @@ class ValueMap {
       }
       llvm::dbgs() << " -> " << next_id << "\n";
       */
+      // And add to revmap
       createMapping(c);
     }
 

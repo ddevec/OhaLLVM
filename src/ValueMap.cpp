@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <set>
+#include <unordered_set>
 #include <vector>
 
 #include "include/util.h"
@@ -151,7 +152,7 @@ util::ObjectRemap<Id> ValueMap::lowerAllocs() {
 
   llvm::dbgs() << "Init map_.size() is: " << map_.size() << "\n";
 
-  std::set<Id> seen;
+  std::unordered_set<Id> seen;
   auto update_seen = [&seen] (const Id &id) {
     auto rc = seen.emplace(id);
     return rc.second;
@@ -193,6 +194,8 @@ util::ObjectRemap<Id> ValueMap::lowerAllocs() {
       remap_id++;
     }
   }
+  // We're done with seen now
+  seen.clear();
 
 
   // Now that we've finished updating our remap tree, go and remap everything

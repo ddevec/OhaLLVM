@@ -30,6 +30,8 @@ typedef ExtInfo::StaticAllocInfo StaticAllocInfo;
 char ctype_name[] = "ctype";
 char filestruct_name[] = "struct._IO_FILE";
 char datetimestruct_name[] = "struct.tm";
+char pwnamstruct_name[] = "struct.passwd";
+char grnamstruct_name[] = "struct.group";
 
 char locale_name[] = "locale";
 char env_name[] = "env";
@@ -40,29 +42,16 @@ char terminfo_name[] = "terminfo";
 char datetime_name[] = "datetime_static";
 char textdomain_name[] = "textdomain_static";
 char gettext_name[] = "gettext_static";
+char strtok_name[] = "strtok";
+char pwnam_name[] = "pwnam";
+char grnam_name[] = "grnam";
 
 typedef ValueMap::Id Id;
-
-
-// Gets the type of a value, stripping the first layer of bitcasts if needed
-// NOTE: Does not strip away pointer type
-static const llvm::Type *getTypeOfVal(const llvm::Value *val) {
-  auto ret = val->getType();
-
-  if (auto ce = dyn_cast<llvm::ConstantExpr>(val)) {
-    if (ce->getOpcode() == llvm::Instruction::BitCast) {
-      // Also strip away pointer type
-      ret = ce->getOperand(0)->getType();
-    }
-  }
-
-  return ret;
-}
 
 // called from malloc-like allocations, to find the largest strcuture size the
 // untyped allocation is cast to.
 static const llvm::Type *findLargestType(ModInfo &info,
-    const llvm::Instruction &ins) {
+    const llvm::Value &ins) {
   auto biggest_type = ins.getType()->getContainedType(0);
 
   bool found = false;
@@ -203,7 +192,7 @@ struct ReturnNamedStructCons {
     auto named_obj_id = cg.vals().getNamed(name);
 
     // Copy the arg into CI
-    cg.add(ConstraintType::AddressOf, named_obj_id, ci_id);
+    cg.add(ConstraintType::Copy, named_obj_id, ci_id);
 
     return true;
   }
@@ -274,10 +263,10 @@ struct ReturnArgOrStaticCons {
     // First, handle the static return case
     // Add objects to the graph
     llvm::dbgs() << "get named: " << name << "\n";
-    auto ci_obj = cg.vals().getNamed(name);
+    auto named_id = cg.vals().getNamed(name);
     auto ci_id = ci.ret();
-    cg.add(ConstraintType::AddressOf,
-        ci_obj, ci_id);
+    cg.add(ConstraintType::Copy,
+        named_id, ci_id);
 
     // Now, handle the arg copy
     auto &args = ci.args();
@@ -298,7 +287,7 @@ struct MemcpyCons {
     auto first_arg = args[0];
     auto second_arg = args[1];
 
-    auto type = getTypeOfVal(dest);
+    auto type = findLargestType(cg.modInfo(), *dest);
 
     if (auto st = dyn_cast<llvm::StructType>(type)) {
       // Okay, for each field of the structure...
@@ -312,17 +301,14 @@ struct MemcpyCons {
         // The gep dests have equivalent ptsto as the argumens
         auto load_gep_dest = cg.vals().createPhonyID(cs.getArgument(1));
         auto store_gep_dest = cg.vals().createPhonyID(cs.getArgument(0));
-        auto store_id = cg.vals().createPhonyID();
 
         // Okay, now create the constraints
         // The load_dest is the destination address of the load:
         cg.add(ConstraintType::Copy, second_arg, load_gep_dest, i);
-        cg.add(ConstraintType::Load, load_dest, load_gep_dest, load_dest);
+        cg.add(ConstraintType::Load, load_gep_dest, load_dest);
 
         cg.add(ConstraintType::Copy, first_arg, store_gep_dest, i);
-
-        cg.add(ConstraintType::Store, store_id, load_dest,
-          store_gep_dest);
+        cg.add(ConstraintType::Store, load_dest, store_gep_dest);
 
         // Create a load at this id
         dout("Adding load: " << load_dest << " and store: " <<
@@ -343,6 +329,19 @@ struct MemcpyCons {
   }
 };
 
+
+// QSORT
+struct QSortCons {
+  bool operator()(Cg &, llvm::ImmutableCallSite &,
+      const CallInfo &) const {
+    // Okay, here is where things get ugly...
+    // We have to call compar (arg<3>) with base, base
+    // First, create a fake callee_info
+    llvm::dbgs() << "FIXME: qsort unsupported\n";
+
+    return true;
+  }
+};
 
 struct PthreadCreateCons {
   bool operator()(Cg &cg, llvm::ImmutableCallSite &cs,
@@ -1029,6 +1028,12 @@ class ReturnNamedString :
             AllocNamedString<name>, NoFreeData,
             AllocInfoNone, CannotAlloc> { };
 
+class ExtQsort :
+  public ExtInfoCRTP<QSortCons,
+            NoAllocData, NoFreeData,
+            AllocInfoNone, CannotAlloc> { };
+
+
 template <const char *name, size_t size>
 class ReturnNamedSize :
   public ExtInfoCRTP<ReturnNamedNSCons<name>,
@@ -1135,6 +1140,10 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
       std::make_tuple("free"),
       std::make_tuple(new Free<0>()));
 
+  // mmap?
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("mmap64"),
+      std::make_tuple(new Alloc<1>()));
   /*
   // Perl calls...
   info_.emplace(std::piecewise_construct,
@@ -1195,12 +1204,15 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
       std::make_tuple(new ReturnArg<0>()));
   info_.emplace(std::piecewise_construct,
       std::make_tuple("strtok"),
-      std::make_tuple(new ReturnArg<0>()));
+      std::make_tuple(new ReturnNamedString<strtok_name>()));
   info_.emplace(std::piecewise_construct,
       std::make_tuple("stpcpy"),
       std::make_tuple(new ReturnArg<0>()));
   info_.emplace(std::piecewise_construct,
       std::make_tuple("strcat"),
+      std::make_tuple(new ReturnArg<0>()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("strstr"),
       std::make_tuple(new ReturnArg<0>()));
   info_.emplace(std::piecewise_construct,
       std::make_tuple("strncat"),
@@ -1246,6 +1258,9 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
       std::make_tuple(new ReturnNamedStruct<datetime_name,
         datetimestruct_name>()));
   info_.emplace(std::piecewise_construct,
+      std::make_tuple("localtime_r"),
+      std::make_tuple(new ReturnArg<1>()));
+  info_.emplace(std::piecewise_construct,
       std::make_tuple("gmtime"),
       std::make_tuple(new ReturnNamedStruct<datetime_name,
         datetimestruct_name>()));
@@ -1253,6 +1268,17 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
   info_.emplace(std::piecewise_construct,
       std::make_tuple("textdomain"),
       std::make_tuple(new ReturnNamedString<textdomain_name>()));
+  // Returns pointer into pwnam data -- overwritten by next getpwnam
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("getpwnam"),
+      std::make_tuple(new ReturnNamedStruct<pwnam_name,
+        pwnamstruct_name>()));
+
+  // Returns pointer into grnam data -- overwritten by next getgrnam
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("getgrnam"),
+      std::make_tuple(new ReturnNamedStruct<grnam_name,
+        grnamstruct_name>()));
 
   // Stores Arg0 in Arg1
   info_.emplace(std::piecewise_construct,
@@ -1282,6 +1308,11 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
   info_.emplace(std::piecewise_construct,
       std::make_tuple("freopen"),
       std::make_tuple(new ReturnArg<2>()));
+
+  // fgets -- returns the string passed to it
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("fgets"),
+      std::make_tuple(new ReturnArg<0>()));
 
   // FIXME(ddevec) -- hack -- Ugh, ioctl -- Ignore for now?
   llvm::dbgs() << "FIXME: Treating ioctl as noop...\n";
@@ -1341,6 +1372,11 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
   info_.emplace(std::piecewise_construct,
       std::make_tuple("getenv"),
       std::make_tuple(new ReturnNamedString<env_name>()));
+
+  // Qsort...
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("qsort"),
+      std::make_tuple(new ExtQsort()));
 
   //}}}
 
@@ -1454,6 +1490,21 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
       std::make_tuple("puts"),
       std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
+      std::make_tuple("sethostname"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("gethostname"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("listen"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("socketpair"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("sendmsg"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
       std::make_tuple("write"),
       std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
@@ -1479,6 +1530,12 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
       std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
       std::make_tuple("rmdir"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("pwrite64"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("pread64"),
       std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
       std::make_tuple("read"),
@@ -1551,9 +1608,6 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
       std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
       std::make_tuple("fread"),
-      std::make_tuple(new ExtNoop()));
-  info_.emplace(std::piecewise_construct,
-      std::make_tuple("fgets"),
       std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
       std::make_tuple("ungetc"),
@@ -1835,9 +1889,6 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
       std::make_tuple("readlink"),
       std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
-      std::make_tuple("qsort"),
-      std::make_tuple(new ExtNoop()));
-  info_.emplace(std::piecewise_construct,
       std::make_tuple("sqrt"),
       std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
@@ -1988,7 +2039,19 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
       std::make_tuple("pthread_cond_init"),
       std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
-      std::make_tuple("sigemtpyset"),
+      std::make_tuple("srandom"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("sigsuspend"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("sigaction"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("sigprocmask"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("sigemptyset"),
       std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
       std::make_tuple("sigfillset"),
@@ -2001,6 +2064,9 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
       std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
       std::make_tuple("sigismember"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("epoll_create"),
       std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
       std::make_tuple("epoll_ctl"),
@@ -2107,6 +2173,12 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
   info_.emplace(std::piecewise_construct,
       std::make_tuple("__isnanl"),
       std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("llvm.dbg.declare"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("llvm.dbg.value"),
+      std::make_tuple(new ExtNoop()));
   /*
   info_.emplace("__finitel", ExtNoop);
   info_.emplace("getopt_long", ExtNoop);
@@ -2194,12 +2266,33 @@ void ExtLibInfo::addGlobalConstraints(const llvm::Module &m, Cg &cg) {
         arg_id, argv_id);
   }
 
-  // Now do errno
-  {
-    auto errno_obj = vals.createAlloc(nullptr, 1);
-    auto errno_id = vals.getNamed("errno");
-    cg.add(ConstraintType::Copy, errno_obj, errno_id);
-  }
+  auto add_constraints = [&cg, &vals] (const char *name, size_t size) {
+    auto obj = vals.createAlloc(nullptr, size);
+    auto id = vals.getNamed(name);
+    cg.add(ConstraintType::AddressOf, obj, id);
+  };
+
+  // Now do other named values...
+  add_constraints("errno", 1);
+  add_constraints("strtok", 1);
+  add_constraints("gettext_static", 1);
+  add_constraints("dir", 1);
+  auto tm_type = m.getTypeByName("struct.tm");
+  auto tm_size = modInfo_.getSizeOfType(tm_type);
+  add_constraints("datetime_static", tm_size);
+  add_constraints("ctype", 1);
+  add_constraints("textdomain_static", 1);
+  add_constraints("gettext_static", 1);
+  add_constraints("terminfo", 1);
+  add_constraints("clib", 1);
+  add_constraints("locale", 1);
+  add_constraints("errno", 1);
+  auto pw_type = m.getTypeByName("struct.passwd");
+  auto pw_size = modInfo_.getSizeOfType(pw_type);
+  add_constraints("pwnam", pw_size);
+  auto gr_type = m.getTypeByName("struct.group");
+  auto gr_size = modInfo_.getSizeOfType(gr_type);
+  add_constraints("grnam", gr_size);
 
   // Constraints for stdio
   {
@@ -2243,6 +2336,13 @@ void ExtLibInfo::init(const llvm::Module &m, ValueMap &map) {  //  NOLINT
   map.allocNamed(1, "argv");
   map.allocNamed(1, "arg");
   map.allocNamed(1, "stdio");
+  map.allocNamed(1, "strtok");
+  auto pw_type = m.getTypeByName("struct.passwd");
+  auto pw_size = modInfo_.getSizeOfType(pw_type);
+  map.allocNamed(pw_size, "pwnam");
+  auto gr_type = m.getTypeByName("struct.group");
+  auto gr_size = modInfo_.getSizeOfType(gr_type);
+  map.allocNamed(gr_size, "grnam");
 
   // Does the named data need constraints?
   // Largely no...

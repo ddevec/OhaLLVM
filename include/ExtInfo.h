@@ -125,13 +125,21 @@ class ExtLibInfo {
     return &inf == &UnknownFunction;
   }
 
-  const ExtInfo &getInfo(const llvm::CallInst *ci) const {
-    auto fcn = LLVMHelper::getFcnFromCall(ci);
+  const ExtInfo &getInfo(const llvm::Function *fcn) const {
     if (fcn == nullptr) {
       return UnknownFunction;
     }
 
-    return getInfo(fcn->getName());
+    auto &ret = getInfo(fcn->getName());
+    if (isUnknownFunction(ret) && fcn->isDeclaration()) {
+      llvm::dbgs() << "!!! Unknown external call: " << fcn->getName() << "\n";
+    }
+    return ret;
+  }
+
+  const ExtInfo &getInfo(const llvm::CallInst *ci) const {
+    auto fcn = LLVMHelper::getFcnFromCall(ci);
+    return getInfo(fcn);
   }
 
   const ExtInfo &getInfo(llvm::CallSite &cs) const {
@@ -144,6 +152,7 @@ class ExtLibInfo {
     return getInfo(ci);
   }
 
+ private:
   const ExtInfo &getInfo(const std::string &fcn) const {
     auto it = info_.find(fcn);
 
@@ -154,16 +163,15 @@ class ExtLibInfo {
 
     // We don't have it in info_, still check partial matches
     for (auto &pr : matchInfo_) {
-      if (fcn.find(pr.first)) {
+      if (fcn.find(pr.first) != std::string::npos) {
+        llvm::dbgs() << "  have match on: " << pr.first << "\n";
         return *pr.second;
       }
     }
 
-    llvm::dbgs() << "!!! Unknown external call: " << fcn << "\n";
     return UnknownFunction;
   }
 
- private:
   std::unordered_map<std::string, std::unique_ptr<ExtInfo>> info_;
   // Partial matches
   std::vector<std::pair<std::string, std::unique_ptr<ExtInfo>>> matchInfo_;

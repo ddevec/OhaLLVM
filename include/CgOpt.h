@@ -107,7 +107,7 @@ class OptNode : public PredNode<id_type> {
     implEdges_ |= rhs.implEdges_;
 
     rhs.ptsto_.clear();
-    // rhs.implEdges_.clear();
+    rhs.implEdges_.clear();
 
     PredNode<id_type>::unite(rhs);
   }
@@ -165,10 +165,16 @@ class Graph : public CRTP_Graph {
   Id merge(Id lhs, Id rhs) {
     auto lhs_rep = getRep(lhs);
     auto rhs_rep = getRep(rhs);
+    // DON'T MERGE WITH YOURSELF, IT WILL MAKE YOU SPEND ALL DAY DEBUGGING
+    //   SOMETHING STUPID
+    if (lhs_rep == rhs_rep) {
+      return lhs_rep;
+    }
     auto &lhs_node = getNode(lhs_rep);
     auto &rhs_node = getNode(rhs_rep);
     reps_.merge(lhs_rep, rhs_rep);
     auto rep_id = reps_.find(lhs_rep);
+    assert(rep_id == reps_.find(rhs_rep));
 
     if (rep_id == lhs) {
       lhs_node.unite(rhs_node);

@@ -244,11 +244,14 @@ class AndersNode {
 
     copySuccs_ |= rhs.copySuccs_;
 
-    gepSuccs_.reserve(gepSuccs_.size() + rhs.gepSuccs_.size());
     gepSuccs_.insert(std::end(gepSuccs_),
         std::begin(rhs.gepSuccs_), std::end(rhs.gepSuccs_));
 
     ptsto_ |= rhs.ptsto_;
+
+    // clear our oldPtsto_ so we propagate info to new gepSuccs_ on our
+    //    next iteration
+    oldPtsto_.clear();
 
     // Free up some memory
     rhs.ptsto_.clear();

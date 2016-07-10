@@ -195,7 +195,8 @@ bool CallContextInst::runOnModule(llvm::Module &m) {
     // Also check for setjmp/longjmp
     if (fcn != nullptr &&
         (fcn->getName() == "__sigsetjmp" ||
-        fcn->getName() == "__setjmp")) {
+        fcn->getName() == "__setjmp" ||
+        fcn->getName() == "_setjmp")) {
       llvm::CallSite cs(ci);
 
       std::vector<llvm::Value *> setjmp_args(args);

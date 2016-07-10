@@ -19,6 +19,11 @@ class CallInfo {
   typedef ValueMap::Id Id;
 
   CallInfo() = delete;
+  /*
+  CallInfo(const std::vector<Id> &args, Id ret, Id var_arg,
+      const llvm::Instruction *ci = nullptr) :
+    args_(args), ret_(ret), varArg_(var_arg), ci_(ci) { }
+  */
   // Can be constructed as either callee or caller...
   CallInfo(Cg &cg, llvm::ImmutableCallSite &callee_site);
   CallInfo(Cg &cg, const llvm::Function *called_fcn);

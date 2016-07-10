@@ -162,7 +162,7 @@ bool InstrDynAlias::runOnModule(llvm::Module &m) {
       std::list<llvm::Instruction *> phi_list;
 
       // Don't instrument malloc functions!
-      auto &ext_info = extInfo_->getInfo(fcn.getName());
+      auto &ext_info = extInfo_->getInfo(&fcn);
       if (ext_info.canAlloc()) {
         continue;
       }
@@ -180,7 +180,7 @@ bool InstrDynAlias::runOnModule(llvm::Module &m) {
 
           // FIXME: Use andersens results on nullptr???
           if (fcn != nullptr) {
-            auto &info = extInfo_->getInfo(fcn->getName());
+            auto &info = extInfo_->getInfo(fcn);
 
             if (!extInfo_->isUnknownFunction(info)) {
               ext_list.push_back(ci);
@@ -1039,6 +1039,7 @@ static llvm::RegisterPass<InstrDynAlias> X("insert-alias-profiling",
 // The dynamic ptsto pass loader {{{
 void DynAliasLoader::getAnalysisUsage(llvm::AnalysisUsage &au) const {
   au.addRequired<PtsNumberPass>();
+  au.addRequired<llvm::AliasAnalysis>();
   au.setPreservesAll();
 }
 
@@ -1141,6 +1142,8 @@ char DynAliasTester::ID = 0;
 void DynAliasTester::getAnalysisUsage(llvm::AnalysisUsage &au) const {
   au.addRequired<llvm::AliasAnalysis>();
   au.addRequired<DynAliasLoader>();
+  au.addRequired<UnusedFunctions>();
+
   au.setPreservesAll();
 }
 
@@ -1149,6 +1152,8 @@ bool DynAliasTester::runOnModule(llvm::Module &) {
   dynAA_ = &getAnalysis<DynAliasLoader>();
 
   auto &aa = getAnalysis<llvm::AliasAnalysis>();
+
+  auto &used = getAnalysis<UnusedFunctions>();
 
   // Now test the load/store aliases for the dynamic alias set
 
@@ -1173,6 +1178,12 @@ bool DynAliasTester::runOnModule(llvm::Module &) {
         " " << FullValPrint(load_id, dynAA_->map()) << "\n";
       continue;
     }
+
+    if (!used.isUsed(li->getParent())) {
+      llvm::dbgs() << "WARNING: Unused load inst? " << ValPrinter(li) << "\n";
+      continue;
+    }
+
     num_good_load++;
     auto load_src = li->getOperand(0);
 
@@ -1193,6 +1204,12 @@ bool DynAliasTester::runOnModule(llvm::Module &) {
           store_id << FullValPrint(store_id, dynAA_->map()) << "\n";
         continue;
       }
+
+      if (!used.isUsed(si->getParent())) {
+        llvm::dbgs() << "WARNING: Unused store inst? " <<
+          ValPrinter(si) << "\n";
+        continue;
+      }
       num_good_store++;
       auto store_dest = si->getOperand(1);
 
@@ -1203,6 +1220,14 @@ bool DynAliasTester::runOnModule(llvm::Module &) {
       // To do so,
       //   First, get a list of all store objects associated with this alloc,
       //   Then,
+      /*
+      static int32_t i = 0;
+      if (i == 2298) {
+        llvm::dbgs() << "load is: " << ValPrinter(li) << "\n";
+        llvm::dbgs() << "store is: " << ValPrinter(si) << "\n";
+      }
+      llvm::dbgs() << "alias check : " << i++ << "\n";
+      */
       if (aa.alias(llvm::AliasAnalysis::Location(load_src),
                llvm::AliasAnalysis::Location(store_dest)) ==
           llvm::AliasAnalysis::NoAlias) {

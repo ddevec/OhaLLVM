@@ -2,6 +2,9 @@
  * Copyright (C) 2015 David Devecsery
  */
 
+#include <sys/types.h>
+#include <unistd.h>
+
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -221,11 +224,15 @@ void __DynAlias_do_finish() {
     logname = envname;
   }
 
-  std::string outfilename(logname);
+  std::ostringstream outfilename;
+
+  outfilename << logname << "." << getpid();
+
+  std::ofstream ofil(outfilename.str());
 
   // If there is already an outfilename, merge the two
   {
-    std::ifstream logfile(outfilename);
+    std::ifstream logfile(outfilename.str());
     if (logfile.is_open()) {
       for (std::string line; std::getline(logfile, line, ':'); ) {
         // First parse the first int till the :
@@ -246,7 +253,7 @@ void __DynAlias_do_finish() {
     }
   }
 
-  FILE *out = fopen(outfilename.c_str(), "w");
+  FILE *out = fopen(outfilename.str().c_str(), "w");
   // Print to the logfile
   for (auto &val_pr : load_to_store_alias) {
     fprintf(out, "%u:", val_pr.first);
