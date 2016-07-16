@@ -50,7 +50,7 @@ extern "C" {
 void __DynContext_do_init() { }
 
 void __DynContext_do_finish() {
-  const char *logname = "dyn_calls.log";
+  const char *logname = "profile.callstack";
 
   char *envname = getenv("SFS_LOGFILE");
   if (envname != nullptr) {

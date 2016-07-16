@@ -36,7 +36,7 @@ void __InstrIndirCalls_init_inst(void) {
 }
 
 void __InstrIndirCalls_finish_inst(void) {
-  const char *logname = "dyn_indir.log";
+  const char *logname = "profile.indir";
 
   char *envname = getenv("SFS_LOGFILE");
   if (envname != nullptr) {
@@ -47,10 +47,8 @@ void __InstrIndirCalls_finish_inst(void) {
 
   outfilename << logname << "." << getpid();
 
-  std::ofstream ofil(outfilename.str());
-
-
   // Print out my stuff...
+  /*
   // First open and read the file, if it exists
   {
     std::ifstream logfile(outfilename.str());
@@ -73,8 +71,24 @@ void __InstrIndirCalls_finish_inst(void) {
       }
     }
   }
+  */
 
   // Now, create the outfile
+  std::ofstream ofil(outfilename.str());
+
+  // Write out counts:
+  for (size_t i = 0; i < called_fcns.size(); i++) {
+    auto &set = called_fcns[i];
+
+    ofil << i << ":";
+
+    for (int32_t id : set) {
+      ofil << " " << id;
+    }
+    ofil << std::endl;
+  }
+
+  /*
   FILE *out = fopen(outfilename.str().c_str(), "w");
 
   for (size_t i = 0; i < called_fcns.size(); i++) {
@@ -88,6 +102,7 @@ void __InstrIndirCalls_finish_inst(void) {
     fprintf(out, "\n");
   }
   fclose(out);
+  */
 }
 
 void __InstrIndirCalls_fcn_call(int32_t id, void *addr) {

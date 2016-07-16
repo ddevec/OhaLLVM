@@ -173,7 +173,6 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
   }
 
   // "Likely Invariant" assumptions made by the pass
-  AssumptionSet as;
   ModInfo mod_info(m);
   ExtLibInfo ext_info(mod_info);
 
@@ -183,8 +182,8 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
   {
     util::PerfTimerPrinter cg_setup_timer(llvm::dbgs(), "Cg Setup");
     cgCache_ =
-      std14::make_unique<CgCache>(m, *dynInfo_, fcn_cfg, mod_info, ext_info, as,
-          cs_cfg);
+      std14::make_unique<CgCache>(m, *dynInfo_, fcn_cfg, mod_info, ext_info,
+          specAssumptions_, cs_cfg);
     callCgCache_ = std14::make_unique<CgCache>(fcn_cfg);
 
     // Now, populate main
@@ -238,6 +237,9 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
     // Fill our online graph with the initial constraint set
     graph_.fill();
   }
+
+  extern void printStackStats();
+  printStackStats();
 
   // Solve!
   {

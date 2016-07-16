@@ -1126,6 +1126,10 @@ Cg::mapIn(const Cg &rhs) {
     rhs_pr.second = cfg_remap[rhs_pr.second];
   }
 
+  // Also merge any invalid stacks gathered from their cg
+  invalidStacks_.insert(std::begin(rhs.invalidStacks_),
+      std::end(rhs.invalidStacks_));
+
   // Return the externally visible remapping
   return std::move(ret);
 }
@@ -1150,10 +1154,19 @@ void Cg::resolveDirCyclicCall(llvm::ImmutableCallSite &cs,
   callee_cfg_node.addPred(cfgId_);
 }
 
+std::set<std::vector<CsCFG::Id>> g_valid_stacks;
+std::set<std::vector<CsCFG::Id>> g_invalid_stacks;
+
+void printStackStats() {
+  llvm::dbgs() << "num valid stacks: " << g_valid_stacks.size() << "\n";
+  llvm::dbgs() << "num invalid stacks: " << g_invalid_stacks.size() << "\n";
+}
+
 void Cg::resolveDirAcyclicCall(CgCache &base_cgs, CgCache &full_cgs,
     llvm::ImmutableCallSite &cs,
     const llvm::Function *called_fcn, CallInfo &caller_info,
-    std::vector<std::vector<CsCFG::Id>> new_stacks) {
+    std::vector<std::vector<CsCFG::Id>> new_stacks,
+    std::vector<std::vector<CsCFG::Id>> invalid_stacks) {
   auto &call_info = dynInfo_.call_info;
   // For each stack in curStacks_
   //   new_stack = stack;
@@ -1180,6 +1193,12 @@ void Cg::resolveDirAcyclicCall(CgCache &base_cgs, CgCache &full_cgs,
   // If we don't have a valid stack
   if (call_info.hasDynData() && new_stacks.empty()) {
     llvm::dbgs() << "Skipping call due to no valid dyn stack\n";
+    // Add invalid stacks which made me skip this call to my list of invalid
+    //   stacks!
+    for (auto &stack : invalid_stacks) {
+      llvm::dbgs() << "  stack: " << util::print_iter(stack) << "\n";
+      invalidStacks_.emplace(std::move(stack));
+    }
     return;
   }
 
@@ -1226,7 +1245,8 @@ void Cg::resolveDirAcyclicCall(CgCache &base_cgs, CgCache &full_cgs,
 }
 
 std::vector<std::vector<CsCFG::Id>>
-Cg::getCalleeStacks(llvm::ImmutableCallSite &cs) {
+Cg::getCalleeStacks(llvm::ImmutableCallSite &cs,
+    std::vector<std::vector<CsCFG::Id>> *pinvalid_stacks) {
   auto &call_info = dynInfo_.call_info;
   std::vector<std::vector<CsCFG::Id>> new_stacks;
   for (auto &stack : curStacks_) {
@@ -1238,6 +1258,10 @@ Cg::getCalleeStacks(llvm::ImmutableCallSite &cs) {
 
 
       if (call_info.hasDynData() && !call_info.isValid(new_stack)) {
+        if (pinvalid_stacks != nullptr) {
+          pinvalid_stacks->emplace_back(std::move(new_stack));
+        }
+        // This is an invalid stack
         continue;
       }
       new_stacks.emplace_back(std::move(new_stack));
@@ -1268,7 +1292,7 @@ void Cg::resolveDirCalls(CgCache &base_cgs, CgCache &full_cgs,
       if (it != std::end(callInfo_)) {
         auto &callee_info = it->second.first;
         auto callee_node_id = it->second.second;
-        auto new_stacks = getCalleeStacks(cs);
+        auto new_stacks = getCalleeStacks(cs, nullptr);
         resolveDirCyclicCall(cs, called_fcn, caller_info, callee_info,
             callee_node_id, std::move(new_stacks));
       } else {
@@ -1284,12 +1308,13 @@ void Cg::resolveDirCalls(CgCache &base_cgs, CgCache &full_cgs,
     auto called_fcn = std::get<1>(tup);
     auto &caller_info = *std::get<2>(tup);
 
-    auto new_stacks = getCalleeStacks(cs);
+    std::vector<std::vector<CsCFG::Id>> invalid_stacks;
+    auto new_stacks = getCalleeStacks(cs, &invalid_stacks);
 
-    llvm::dbgs() << "Resolving acyc: " << ValPrinter(called_fcn) << "\n";
+    // llvm::dbgs() << "Resolving acyc: " << ValPrinter(called_fcn) << "\n";
 
     resolveDirAcyclicCall(base_cgs, full_cgs, cs, called_fcn, caller_info,
-        std::move(new_stacks));
+        std::move(new_stacks), std::move(invalid_stacks));
   }
 }
 
@@ -1305,19 +1330,21 @@ void Cg::resolveCalls(CgCache &base_cgs, CgCache &full_cgs) {
 
     auto called_fcn = LLVMHelper::getFcnFromCall(cs);
 
-    llvm::dbgs() << "Resolve call: " << ValPrinter(ci) << "\n";
+    // llvm::dbgs() << "Resolve call: " << ValPrinter(ci) << "\n";
 
     // If it is a direct call, add the appropriate constraints...
     // llvm::dbgs() << "Resolve call: " << ValPrinter(ci) << "\n";
     if (called_fcn != nullptr) {
+      /*
       llvm::dbgs() << "  Have dir resolution: " << called_fcn->getName() <<
         "\n";
+      */
       dir_calls.emplace_back(cs, called_fcn, &caller_info);
     // Else add an external call constraint
     } else {
       // Check for indir info:
       if (indir_info.hasInfo()) {
-        llvm::dbgs() << "have indir info!\n";
+        // llvm::dbgs() << "have indir info!\n";
         // llvm::dbgs() << "ci is: " << *ci << "\n";
         auto &targets = indir_info.getTargets(ci);
 
@@ -1329,24 +1356,30 @@ void Cg::resolveCalls(CgCache &base_cgs, CgCache &full_cgs) {
             << "\n";
           llvm::dbgs() << "  to: " << fcn_target->getName() << "\n";
           */
+          /*
           llvm::dbgs() << "  Have dir resolution: " << fcn_target->getName() <<
             "\n";
+          */
           dir_calls.emplace_back(cs, fcn_target, &caller_info);
         }
 
         // Add spec assumption:
         // First build the assumption set
-        std::vector<ValueMap::Id> fcn_asmps;
+        std::vector<const llvm::Value *> fcn_asmps;
         for (auto val : targets) {
           // llvm::dbgs() << "Target is: " << ValPrinter(val) << "\n";
-          fcn_asmps.emplace_back(getDef(val));
+          fcn_asmps.emplace_back(val);
         }
 
         // Now add the assumption
+        // Note the assumption is about the callsites called fcn ptr
+        llvm::dbgs() << "Adding pts asmp @: " << ValPrinter(ci) << "\n";
+        llvm::dbgs() << "   arg: " << ValPrinter(cs.getCalledValue()) << "\n";
         as_.add(
-            std14::make_unique<PtstoAssumption>(ci, fcn_asmps));
+            std14::make_unique<PtstoAssumption>(cs.getCalledValue(),
+              fcn_asmps));
       } else {
-        llvm::dbgs() << "  Indir call?\n";
+        // llvm::dbgs() << "  Indir call?\n";
         addConstraintsForIndirectCall(cs, caller_info);
       }
     }

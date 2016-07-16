@@ -29,8 +29,8 @@
 //
 // Lets have a "calc dependencies" routine
 
-typedef std::unordered_multimap<ValueMap::Id, llvm::Value *,
-        ValueMap::Id::hasher> free_location_multimap;
+typedef std::unordered_multimap<ValueMap::Id, llvm::Value *>
+    free_location_multimap;
 
 class SetCache {  //{{{
  public:
@@ -523,7 +523,7 @@ class Assumption {  //{{{
 class PtstoAssumption : public Assumption {  //{{{
  public:
     PtstoAssumption(const llvm::Value *inst,
-        const std::vector<ValueMap::Id> &ptstos) :
+        const std::vector<const llvm::Value *> &ptstos) :
           Assumption(Assumption::Kind::DynPtsto),
           instOrArg_(inst), ptstos_(ptstos) { }
 
@@ -536,11 +536,7 @@ class PtstoAssumption : public Assumption {  //{{{
     }
 
     // no more remap
-    void remap(const util::ObjectRemap<ValueMap::Id> &remap) override {
-      for (auto &id : ptstos_) {
-        id = remap[id];
-      }
-    }
+    void remap(const util::ObjectRemap<ValueMap::Id> &) override { }
 
  protected:
     std::vector<std::unique_ptr<InstrumentationSite>>
@@ -558,7 +554,7 @@ class PtstoAssumption : public Assumption {  //{{{
  private:
     // ValueMap::Id objID_;
     const llvm::Value *instOrArg_;
-    std::vector<ValueMap::Id> ptstos_;
+    std::vector<const llvm::Value *> ptstos_;
 };
 //}}}
 

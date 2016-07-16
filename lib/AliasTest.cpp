@@ -16,7 +16,6 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Analysis/ProfileInfo.h"
 #include "llvm/Constants.h"
 #include "llvm/IntrinsicInst.h"
 #include "llvm/Module.h"

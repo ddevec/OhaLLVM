@@ -35,6 +35,24 @@ void fini(void) {
   std::cout << "visit count: " << visit_cnt << std::endl;
 }
 */
+[[ gnu::unused ]]
+static void print_trace(void) {
+  void *array[10];
+  size_t size;
+  char **strings;
+  size_t i;
+
+  size = backtrace(array, 10);
+  strings = backtrace_symbols(array, size);
+
+  std::cerr << "BACKTRACE:" << std::endl;
+  for (i = 0; i < size; i++) {
+    std::cerr << "\t" << strings[i] << std::endl;
+  }
+
+  free(strings);
+}
+
 
 
 class AddrRange {
@@ -86,6 +104,9 @@ class AddrRange {
 std::map<AddrRange, std::vector<int32_t>> addr_to_objid;
 std::vector<std::vector<void *>> stack_allocs;
 
+// Initialize to 0, to represent the "main" call node
+thread_local std::vector<int32_t> stack = { 0 };
+
 extern "C" {
 
 void __specsfs_alloc_fcn(int32_t obj_id, void *addr, int64_t size);
@@ -117,15 +138,54 @@ void __specsfs_do_call() {
   stack_allocs.emplace_back();
 }
 
+void __specsfs_callstack_push(int32_t id) {
+  if (stack.empty() || stack.back() != id) {
+    stack.push_back(id);
+  }
+}
+
+void __specsfs_callstack_pop(int32_t id) {
+  // if (!stack.empty() && stack.back() == id)
+  if (stack.back() == id) {
+    stack.pop_back();
+  }
+}
+
+void __specsfs_callstack_check(int32_t check_id, int32_t size, int32_t **ids) {
+  // Check if stack matches any in ids
+  for (int i = 0; i < size; ++i) {
+    int32_t *id = ids[i];
+    int32_t size = id[0];
+    ++id;
+
+    if (size != static_cast<int32_t>(stack.size())) {
+      continue;
+    }
+
+    bool clear = false;
+    for (int j = size-1; j >= 0; --j) {
+      if (stack[j] != id[j]) {
+        clear = true;
+        break;
+      }
+    }
+
+    if (!clear) {
+      std::cerr << "stack check failed!" << std::endl;
+      std::cerr << "check id: " << check_id << std::endl;
+      print_trace();
+      abort();
+    }
+  }
+}
+
 
 void __specsfs_alloca_fcn(int32_t obj_id, void *addr,
     int64_t size) {
   alloca_cnt++;
   // Size is in bits...
-  size /= 8;
   // Handle alloca
   // Add addresses to stack frame
-  // std::cout << "stacking: (" << obj_id << ") " << addr << std::endl;
   stack_allocs.back().push_back(addr);
   // Add ptstos to ptsto map
 #ifndef NDEBUG
@@ -156,7 +216,6 @@ void __specsfs_alloc_fcn(int32_t obj_id, void *addr,
     int64_t size) {
   malloc_cnt++;
   // Size is in bits...
-  size /= 8;
   // Add ptsto to map
   /*
   if (obj_id == 70 ||
@@ -188,6 +247,7 @@ void __specsfs_alloc_fcn(int32_t obj_id, void *addr,
       << size << std::endl;
   }
   */
+  // std::cerr << "allocing: (" << obj_id << ") " << addr << std::endl;
 
   AddrRange cur_range(addr, size);
   auto ret = addr_to_objid.emplace(cur_range,
@@ -240,24 +300,6 @@ void __DynPtsto_do_visit(int32_t val_id, void *addr) {
   }
 }
 */
-
-[[ gnu::unused ]]
-static void print_trace(void) {
-  void *array[10];
-  size_t size;
-  char **strings;
-  size_t i;
-
-  size = backtrace(array, 10);
-  strings = backtrace_symbols(array, size);
-
-  std::cerr << "BACKTRACE:" << std::endl;
-  for (i = 0; i < size; i++) {
-    std::cerr << "\t" << strings[i] << std::endl;
-  }
-
-  free(strings);
-}
 
 void __specsfs_visit_fcn(int32_t id) {
   std::cerr << "Visit failed!\n";

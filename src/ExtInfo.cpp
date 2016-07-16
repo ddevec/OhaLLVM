@@ -927,8 +927,10 @@ std::vector<AllocInfo> UnknownExtInfo::getAllocData(
 std::vector<llvm::Value *> UnknownExtInfo::getFreeData(
     llvm::Module &m, llvm::CallSite &ci,
     ValueMap &map, llvm::Instruction **insert_after) const {
+  /*
   llvm::dbgs() << "WARNING: Unknown free data: " <<
     ci.getCalledFunction()->getName() << "\n";
+  */
   // Do nothing
   return NoFreeData()(m, ci, map, insert_after);
 }
@@ -1378,9 +1380,22 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
       std::make_tuple("qsort"),
       std::make_tuple(new ExtQsort()));
 
+  // va_start...
+  // TODO(ddevec) - store the varargs field from the callinfo for the
+  //   callsite's function into the va_arg's 2nd (from 0) idx, store the
+  //   va_list's value in its 3rd addr
+  /*
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("llvm.va_start"),
+      std::make_tuple(new VaStart()));
+  */
+
   //}}}
 
   // Noop external calls {{{
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("llvm.va_end"),
+      std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
       std::make_tuple("atoi"),
       std::make_tuple(new ExtNoop()));
@@ -1398,6 +1413,36 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
       std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
       std::make_tuple("unlink"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("setenv"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("sigaltstack"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("sysinfo"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("tputs"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("tcgetattr"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("tcsetattr"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("tcflush"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("tgetflag"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("tgetnum"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("tgetent"),
       std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
       std::make_tuple("rename"),

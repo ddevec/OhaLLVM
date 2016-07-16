@@ -4,9 +4,9 @@
 
 #include "lib/UnusedFunctions.h"
 
+#include "lib/EdgeCountPass.h"
+
 #include "llvm/Function.h"
-#include "llvm/Analysis/ProfileInfo.h"
-#include "llvm/Analysis/ProfileInfoLoader.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 
@@ -19,9 +19,9 @@ UnusedFunctions::UnusedFunctions() : llvm::ModulePass(ID),
   ignoreUnused_(IgnoreDynInfo) { }
 
 void UnusedFunctions::getAnalysisUsage(llvm::AnalysisUsage &AU) const {
-  AU.setPreservesAll();
-  AU.addRequired<llvm::ProfileInfo>();
+  AU.addRequired<DynEdgeLoader>();
   // AU.addRequired<llvm::ProfileInfoLoader>();
+  AU.setPreservesAll();
 }
 
 bool UnusedFunctions::runOnModule(llvm::Module &m) {
@@ -33,40 +33,47 @@ bool UnusedFunctions::runOnModule(llvm::Module &m) {
   int used_bbs = 0;
   int unused_bbs = 0;
 
-  auto &PI = getAnalysis<llvm::ProfileInfo>();
+  auto &dyn_edges = getAnalysis<DynEdgeLoader>();
 
   // Check for unused functions
-  for (auto &fcn : m) {
-    // llvm::dbgs() << "Iterating fcn: " << fcn.getName() << "\n";
-    if (fcn.isDeclaration()) {
-      continue;
-    }
+  if (dyn_edges.hasDynData()) {
+    llvm::dbgs() << "UnusedFunctions: Successfully Loaded\n";
+    for (auto &fcn : m) {
+      // llvm::dbgs() << "Iterating fcn: " << fcn.getName() << "\n";
+      if (fcn.isDeclaration()) {
+        continue;
+      }
 
-    auto execution_count = PI.getExecutionCount(&fcn);
-    // llvm::dbgs() << "  ExecutionCount is: " << execution_count << "\n";
+      auto execution_count = dyn_edges.getExecutionCount(&fcn);
+      // llvm::dbgs() << "  ExecutionCount is: " << execution_count << "\n";
 
-    if (execution_count < 1) {
-      unused_fcns++;
-      // llvm::dbgs() << "Found unused fcn: " << fcn.getName() << "!\n";
-    } else {
-      used_fcns++;
-      visited_.insert(&fcn);
-    }
-  }
-
-  // Check for unused Basic Blocks
-  for (auto &fcn : m) {
-    for (auto &bb : fcn) {
-      // llvm::dbgs() << "Scanning bb: " << bb.getName() << "\n";
-      if (PI.getExecutionCount(&bb) < 1) {
-        // llvm::dbgs() << "  Unused\n";
-        unused_bbs++;
+      if (execution_count < 1) {
+        unused_fcns++;
+        // llvm::dbgs() << "Found unused fcn: " << fcn.getName() << "!\n";
       } else {
-        visitedBB_.insert(&bb);
-        // llvm::dbgs() << "  Used\n";
-        used_bbs++;
+        used_fcns++;
+        visited_.insert(&fcn);
       }
     }
+
+    // Check for unused Basic Blocks
+    for (auto &fcn : m) {
+      for (auto &bb : fcn) {
+        // llvm::dbgs() << "Scanning bb: " << bb.getName() << "\n";
+        if (dyn_edges.getExecutionCount(&bb) < 1) {
+          // llvm::dbgs() << "  Unused\n";
+          unused_bbs++;
+        } else {
+          visitedBB_.insert(&bb);
+          // llvm::dbgs() << "  Used\n";
+          used_bbs++;
+        }
+      }
+    }
+    allUsed_ = false;
+  } else {
+    llvm::dbgs() << "UnusedFunctions: No logfile loaded\n";
+    allUsed_ = true;
   }
 
   // llvm::dbgs() << "num used_fcns: " << used_fcns << "\n";
@@ -74,15 +81,6 @@ bool UnusedFunctions::runOnModule(llvm::Module &m) {
 
   // llvm::dbgs() << "num used_bbs: " << used_bbs << "\n";
   // llvm::dbgs() << "num unused_bbs: " << unused_bbs << "\n";
-
-
-  if (used_fcns == 0) {
-    llvm::dbgs() << "UnusedFunctions: No logfile loaded\n";
-    allUsed_ = true;
-  } else {
-    llvm::dbgs() << "UnusedFunctions: Successfully Loaded\n";
-    allUsed_ = false;
-  }
 
   return false;
 }

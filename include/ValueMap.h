@@ -116,7 +116,7 @@ class ValueMap {
   // Used when reading the function, if val does not exist, will create val, if
   //   it does exist will return the only id of val, if val has multiple ids
   //   will error in debug mode.
-  const Id getDef(const llvm::Value *val) {
+  Id getDef(const llvm::Value *val) {
     // lb will be end when revMap is emtpy...
     auto it = revMap_.find(val);
     if (it == std::end(revMap_)) {

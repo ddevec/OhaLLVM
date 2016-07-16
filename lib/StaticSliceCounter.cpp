@@ -14,6 +14,7 @@
 #include "include/lib/UnusedFunctions.h"
 #include "include/lib/DynAlias.h"
 #include "include/lib/IndirFcnTarget.h"
+#include "include/lib/EdgeCountPass.h"
 
 #include "llvm/Constants.h"
 #include "llvm/Pass.h"
@@ -23,7 +24,6 @@
 #include "llvm/Module.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/Dominators.h"
-#include "llvm/Analysis/ProfileInfo.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/CFG.h"
 #include "llvm/Support/Debug.h"
@@ -48,7 +48,7 @@ class StaticSliceCounter : public llvm::ModulePass {
   void getAnalysisUsage(llvm::AnalysisUsage &usage) const {
     usage.addRequired<UnusedFunctions>();
     usage.addRequired<DynAliasLoader>();
-    usage.addRequired<llvm::ProfileInfo>();
+    usage.addRequired<DynEdgeLoader>();
     usage.setPreservesAll();
   }
 
@@ -75,7 +75,7 @@ class StaticSliceCounter : public llvm::ModulePass {
     std::ifstream in_file(infilename, std::ifstream::in);
 
     auto &dyn_info = getAnalysis<UnusedFunctions>();
-    auto &pi = getAnalysis<llvm::ProfileInfo>();
+    auto &dyn_edge = getAnalysis<DynEdgeLoader>();
 
     InstLabeler lblr(m, &dyn_info);
 
@@ -122,7 +122,8 @@ class StaticSliceCounter : public llvm::ModulePass {
       for (auto pbb : bbs) {
         // Get edge count of bb
         // 2 insts per bb, one for start one for end
-        int64_t inc_amt = static_cast<int64_t>(pi.getExecutionCount(pbb) * 2);
+        int64_t inc_amt =
+          static_cast<int64_t>(dyn_edge.getExecutionCount(pbb) * 2);
         num_insts += inc_amt;
         num_bb_insts += inc_amt;
         auto pr = fcn_to_bb.emplace(pbb->getParent(),
@@ -144,22 +145,26 @@ class StaticSliceCounter : public llvm::ModulePass {
 
         if (llvm::isa<llvm::LoadInst>(pinst)) {
           int64_t inc_amt =
-            static_cast<int64_t>(pi.getExecutionCount(pinst->getParent()));
+            static_cast<int64_t>(
+                dyn_edge.getExecutionCount(pinst->getParent()));
           num_insts += inc_amt;
           num_load_insts += inc_amt;
         } else if (llvm::isa<llvm::SelectInst>(pinst)) {
           int64_t inc_amt =
-            static_cast<int64_t>(pi.getExecutionCount(pinst->getParent()));
+            static_cast<int64_t>(
+                dyn_edge.getExecutionCount(pinst->getParent()));
           num_insts += inc_amt;
           num_select_insts += inc_amt;
         } else if (llvm::isa<llvm::StoreInst>(pinst)) {
           int64_t inc_amt =
-            static_cast<int64_t>(pi.getExecutionCount(pinst->getParent()));
+            static_cast<int64_t>(
+                dyn_edge.getExecutionCount(pinst->getParent()));
           num_insts += inc_amt;
           num_store_insts += inc_amt;
         } else if (llvm::isa<llvm::CallInst>(pinst)) {
           int64_t inc_amt =
-            static_cast<int64_t>(pi.getExecutionCount(pinst->getParent()));
+            static_cast<int64_t>(
+                dyn_edge.getExecutionCount(pinst->getParent()));
           num_insts += inc_amt;
           num_call_insts += inc_amt;
         }

@@ -597,6 +597,11 @@ class StaticSlice : public llvm::ModulePass {
           auto id = info.getContext(bi->getCondition(), pos.stack());
           ret.emplace_back(info, id);
         }
+      } else if (auto cmpxchg = dyn_cast<llvm::AtomicCmpXchgInst>(pinst)) {
+        auto id = info.getContext(cmpxchg->getCompareOperand(), pos.stack());
+        ret.emplace_back(info, id);
+        auto id2 = info.getContext(cmpxchg->getNewValOperand(), pos.stack());
+        ret.emplace_back(info, id2);
       } else if (auto armw = dyn_cast<llvm::AtomicRMWInst>(pinst)) {
         // Ignore rmw?
         auto id = info.getContext(armw->getValOperand(), pos.stack());

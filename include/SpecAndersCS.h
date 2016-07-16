@@ -7,6 +7,7 @@
 
 #include <map>
 #include <memory>
+#include <set>
 #include <vector>
 
 #include "include/AndersGraph.h"
@@ -71,6 +72,14 @@ class SpecAndersCS : public llvm::ModulePass,
 
   const AssumptionSet &getSpecAssumptions() const {
     return specAssumptions_;
+  }
+
+  const std::set<std::vector<CsCFG::Id>> getInvalidStacks() const {
+    return mainCg_->invalidStacks();
+  }
+
+  const CsCFG &getCsCFG() const {
+    return mainCg_->csCFG();
   }
 
   ValueMap &getValueMap() {

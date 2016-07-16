@@ -162,7 +162,7 @@ void BddPtstoSet::updateGeps(const Cg &cg) {
   //   compute the valid offsets that could be used below that
 
   // We Make a set of valid offsets (from the CG)
-  llvm::dbgs() << "offs size is: " << off_to_obj.size() << "\n";
+  // llvm::dbgs() << "offs size is: " << off_to_obj.size() << "\n";
   bdd off_mask = bddfalse;
   for (auto &offs : util::reverse(validOffs_)) {
     // assert(static_cast<size_t>(offs) < off_to_obj.size());
@@ -191,7 +191,7 @@ void BddPtstoSet::updateGeps(const Cg &cg) {
 
     geps_[offs] |= f & off_mask;
   }
-  llvm::dbgs() << "geps_ loop done\n";
+  // llvm::dbgs() << "geps_ loop done\n";
 }
 
 //}}}

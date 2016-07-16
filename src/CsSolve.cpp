@@ -567,7 +567,10 @@ void SpecAndersCS::handleGraphChange(
     Worklist<AndersGraph::Id> &wl,
     std::vector<uint32_t> &priority) {
   // And grow our priority list now...
-  priority.resize(graph_.size(), 0);
+  while (priority.size() < graph_.size()) {
+    priority.push_back(0);
+  }
+  // priority.resize(graph_.size(), 0);
 
   // Finally, add any node with a non-zero ptsto to our graph...
   for (Id node_id(old_size); node_id < Id(graph_.size()); ++node_id) {
@@ -711,8 +714,10 @@ void SpecAndersCS::addIndirEdges(const CallInfo &caller_ci,
     auto callee_arg_id = *callee_arg_it;
     auto caller_arg_id = *caller_arg_it;
 
-    llvm::dbgs() << "got callee_arg: " << callee_arg_id << "\n";
+    /*
+    llvm::dbgs() << got callee_arg: " << callee_arg_id << "\n";
     llvm::dbgs() << "graph size: " << graph_.size() << "\n";
+    */
     auto &callee_arg_node = graph_.getNode(callee_arg_id);
     auto &caller_arg_node = graph_.getNode(caller_arg_id);
 

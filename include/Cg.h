@@ -313,6 +313,10 @@ class Cg {
     return vals_;
   }
 
+  const CsCFG &csCFG() const {
+    return csCFG_;
+  }
+
   ExtLibInfo &extInfo() {
     return extInfo_;
   }
@@ -331,6 +335,10 @@ class Cg {
 
   const CsFcnCFG &localCFG() const {
     return localCFG_;
+  }
+
+  const std::set<std::vector<CsCFG::Id>> invalidStacks() const {
+    return invalidStacks_;
   }
   //}}}
 
@@ -397,7 +405,8 @@ class Cg {
       const CallInfo &call_info);
 
   std::vector<std::vector<CsCFG::Id>> getCalleeStacks(
-      llvm::ImmutableCallSite &cs);
+      llvm::ImmutableCallSite &cs,
+      std::vector<std::vector<CsCFG::Id>> *pinvalid_stacks);
 
   void resolveDirCyclicCall(llvm::ImmutableCallSite &cs,
     const llvm::Function *called_fcn, CallInfo &caller_info,
@@ -406,7 +415,8 @@ class Cg {
   void resolveDirAcyclicCall(CgCache &base_cgs, CgCache &full_cgs,
     llvm::ImmutableCallSite &cs,
     const llvm::Function *called_fcn, CallInfo &caller_info,
-    std::vector<std::vector<CsCFG::Id>> new_stacks);
+    std::vector<std::vector<CsCFG::Id>> new_stacks,
+    std::vector<std::vector<CsCFG::Id>> invalid_stacks);
 
   void resolveDirCalls(CgCache &base_cgs, CgCache &full_cgs,
       std::vector<call_tuple> &dir_calls);
@@ -478,6 +488,7 @@ class Cg {
   // The current call stack...
   CsCFG &csCFG_;
   std::vector<std::vector<CsCFG::Id>> curStacks_;
+  std::set<std::vector<CsCFG::Id>> invalidStacks_;
 
   // For speculative assumptions
   DynamicInfo dynInfo_;

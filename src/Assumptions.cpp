@@ -237,6 +237,7 @@ bool AllocInst::doInstrument(llvm::Module &m, const ExtLibInfo &ext_info) {
 
   auto alloc_ptr = allocInst_;
   if (allocInst_->getType() != i8_ptr_type) {
+    llvm::dbgs() << "inst is: " << ValPrinter(allocInst_) << "\n";
     alloc_ptr = new llvm::BitCastInst(allocInst_, i8_ptr_type);
     alloc_ptr->insertAfter(allocInst_);
   }
@@ -451,8 +452,9 @@ bool SetCheckInst::doInstrument(llvm::Module &m, const ExtLibInfo &) {
 
   // Okay, we have two options here, an argument or an instruction
   auto assign_inst = assignInst_;
-  // llvm::dbgs() << " Have asignInst_: " << *assignInst_ << "\n";
+  llvm::dbgs() << " Have asignInst_: " << *assignInst_ << "\n";
   if (assignInst_->getType() != i8_ptr_type) {
+    llvm::dbgs() << "assignInst_ is: " << ValPrinter(assignInst_) << "\n";
     assign_inst = new llvm::BitCastInst(assignInst_, i8_ptr_type);
   }
 
@@ -568,7 +570,7 @@ bool VisitInst::doInstrument(llvm::Module &m, const ExtLibInfo &) {
 // Calc Assumptions {{{
 std::vector<std::unique_ptr<InstrumentationSite>>
 PtstoAssumption::calcDependencies(
-    ValueMap &omap, llvm::Module &,
+    ValueMap &map, llvm::Module &,
     const free_location_multimap &free_locations,
     SetCache &set_cache) const {
   std::vector<std::unique_ptr<InstrumentationSite>> ret;
@@ -581,35 +583,46 @@ PtstoAssumption::calcDependencies(
   auto ptr_inst = instOrArg_;
   // This is wrong... Should check that ptr_inst isn't within a set of
   //    values...
-  ret.emplace_back(new SetCheckInst(ptr_inst, ptstos_, set_cache));
+  // Must map the values to their ids:
+  std::vector<ValueMap::Id> pts_ids;
+  for (auto &val : ptstos_) {
+    llvm::dbgs() << "Have val: " << ValPrinter(val) << "\n";
+    for (auto &id : map.getIds(val)) {
+      pts_ids.push_back(id);
+    }
+  }
+  llvm::dbgs() << "making new setcheck for: " << ValPrinter(ptr_inst) << "\n";
+  ret.emplace_back(new SetCheckInst(ptr_inst, pts_ids, set_cache));
 
   // Now, create an allocation site for each ptsto in this instruction
-  for (auto &obj_id : ptstos_) {
-    // No need to check free/allocs for special ids, they are global
-    assert(obj_id != ValueMap::UniversalValue);
-    if (omap.isSpecial(obj_id)) {
+  for (auto &val : ptstos_) {
+    // if val is special/null...
+    if (val == nullptr) {
       continue;
     }
-    auto val = omap.getValue(obj_id);
+
     auto ptr_inst = dyn_cast<llvm::Instruction>(val);
-    if (ptr_inst != nullptr) {
-      ret.emplace_back(new AllocInst(const_cast<llvm::Instruction *>(ptr_inst),
-            obj_id));
-    } else {
-      // UGH, need to find equivalencies too
-      set_cache.addGVUse(obj_id);
+    for (auto obj_id : map.getIds(val)) {
+      if (ptr_inst != nullptr) {
+          ret.emplace_back(
+              new AllocInst(const_cast<llvm::Instruction *>(ptr_inst),
+                obj_id));
+      } else {
+        // UGH, need to find equivalencies too
+        set_cache.addGVUse(obj_id);
+      }
+
+      // And the free insts...
+      auto free_pr = free_locations.equal_range(obj_id);
+      std::for_each(free_pr.first, free_pr.second,
+          [&ret, &map, &set_cache]
+          (const std::pair<ValueMap::Id, llvm::Value *> &pr) {
+        auto &free_inst = pr.second;
+
+        ret.emplace_back(new FreeInst(cast<llvm::Instruction>(free_inst),
+            set_cache));
+      });
     }
-
-    // And the free insts...
-    auto free_pr = free_locations.equal_range(obj_id);
-    std::for_each(free_pr.first, free_pr.second,
-        [&ret, &omap, &set_cache]
-        (const std::pair<const ValueMap::Id, llvm::Value *> &pr) {
-      auto free_inst = pr.second;
-
-      ret.emplace_back(new FreeInst(cast<llvm::Instruction>(free_inst),
-          set_cache));
-    });
   }
   return ret;
 }
@@ -632,7 +645,7 @@ DeadCodeAssumption::calcDependencies(
 // Approx Assumptions {{{
 std::vector<std::unique_ptr<InstrumentationSite>>
 PtstoAssumption::approxDependencies(
-    ValueMap &omap, const llvm::Module &) const {
+    ValueMap &map, const llvm::Module &) const {
   std::vector<std::unique_ptr<InstrumentationSite>> ret;
   // A ptsto assumption depends on the store to the pointer
   // (the instruction at objID_), and the allocation/free sites of all of the
@@ -641,32 +654,36 @@ PtstoAssumption::approxDependencies(
   // we've run our ptsto analysis
 
   // First create an assignment site for this instruction
-  // auto ptr_inst = cast<llvm::Instruction>(omap.valueAtID(objID_));
-  // assert(omap.getValue(inst_).val() != 350);
+  // auto ptr_inst = cast<llvm::Instruction>(map.valueAtID(objID_));
+  // assert(map.getValue(inst_).val() != 350);
   static SetCache bleh;
-  ret.emplace_back(new SetCheckInst(instOrArg_, ptstos_, bleh));
+  std::vector<ValueMap::Id> pts_ids;
+  for (auto &val : ptstos_) {
+    for (auto &id : map.getIds(val)) {
+      pts_ids.push_back(id);
+    }
+  }
+  ret.emplace_back(new SetCheckInst(instOrArg_, pts_ids, bleh));
 
   // Now, create a double allocation site for each ptsto in this instruction
   // NOTE: The double is to approximate the free cost
-  for (auto &obj_id : ptstos_) {
-    // No need to check free/allocs for special ids, they are global
-    if (omap.isSpecial(obj_id)) {
-      continue;
-    }
-    auto val = omap.getValue(obj_id);
+  for (auto &val : ptstos_) {
     if (val == nullptr) {
       llvm::dbgs() << "val unused?\n";
       continue;
     }
-    auto ptr_inst = dyn_cast<llvm::Instruction>(val);
-    if (ptr_inst != nullptr) {
-      ret.emplace_back(new DoubleAllocInst(
-            const_cast<llvm::Instruction *>(ptr_inst), obj_id));
-    } else {
-      // This is a global variable, or function...
-      llvm::dbgs() << "Global assumption? " << FullValPrint(obj_id, omap)
-        << "\n";
-      assert(llvm::isa<llvm::GlobalValue>(val));
+
+    for (auto &obj_id : map.getIds(val)) {
+      auto ptr_inst = dyn_cast<llvm::Instruction>(val);
+      if (ptr_inst != nullptr) {
+        ret.emplace_back(new DoubleAllocInst(
+              const_cast<llvm::Instruction *>(ptr_inst), obj_id));
+      } else {
+        // This is a global variable, or function...
+        llvm::dbgs() << "Global assumption? " << FullValPrint(obj_id, map)
+          << "\n";
+        assert(llvm::isa<llvm::GlobalValue>(val));
+      }
     }
   }
 

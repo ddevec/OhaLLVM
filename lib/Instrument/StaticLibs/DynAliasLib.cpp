@@ -217,7 +217,7 @@ extern "C" {
 void __DynAlias_do_init() { }
 
 void __DynAlias_do_finish() {
-  const char *logname = "dyn_alias.log";
+  const char *logname = "profile.alias";
 
   char *envname = getenv("SFS_LOGFILE");
   if (envname != nullptr) {
@@ -228,9 +228,8 @@ void __DynAlias_do_finish() {
 
   outfilename << logname << "." << getpid();
 
-  std::ofstream ofil(outfilename.str());
-
   // If there is already an outfilename, merge the two
+  /*
   {
     std::ifstream logfile(outfilename.str());
     if (logfile.is_open()) {
@@ -252,16 +251,19 @@ void __DynAlias_do_finish() {
       }
     }
   }
+  */
 
-  FILE *out = fopen(outfilename.str().c_str(), "w");
-  // Print to the logfile
+  // Now, create the outfile
+  std::ofstream ofil(outfilename.str());
+
+  // Write out counts:
   for (auto &val_pr : load_to_store_alias) {
-    fprintf(out, "%u:", val_pr.first);
+    ofil << val_pr.first << ":";
 
-    for (auto &obj_id : val_pr.second) {
-      fprintf(out, " %d", obj_id);
+    for (int32_t id : val_pr.second) {
+      ofil << " " << id;
     }
-    fprintf(out, "\n");
+    ofil << std::endl;
   }
 }
 

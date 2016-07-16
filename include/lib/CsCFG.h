@@ -79,6 +79,10 @@ class CsCFG : public llvm::ModulePass {
     return ret;
   }
 
+  const SEG::Node &getNode(Id id) const {
+    return csGraph_.getNode(util::convert_id<SEG::NodeID>(id));
+  }
+
   const std::set<const llvm::Instruction *> &
   getSCC(const llvm::Instruction *fcn) const {
     return getSCC(getId(fcn));

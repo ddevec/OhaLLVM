@@ -142,7 +142,7 @@ set(SPECSFS_SOURCES
   src/Assumptions.cpp
   #src/DynPtstoOpt.cpp
 
-  #src/InsertSpecAssumptions.cpp
+  src/InsertSpecAssumptions.cpp
 
   # Helper to print instructions quickly
   src/InstPrinter.cpp
@@ -151,6 +151,7 @@ set(SPECSFS_SOURCES
   lib/Instrument/IndirFcnTarget.cpp
   lib/Instrument/DynPtsto.cpp
   lib/Instrument/DynAlias.cpp
+  lib/Instrument/EdgeCountPass.cpp
   lib/Instrument/CallContextPass.cpp
   # lib/Instrument/DynPtstoCheck.cpp
  
@@ -163,6 +164,8 @@ set(SPECSFS_SOURCES
   lib/FcnCFG.cpp
   lib/CsCFG.cpp
   lib/CallDests.cpp
+
+  lib/ExitInst.cpp
 
   lib/StaticSlice.cpp
   lib/StaticSliceCounter.cpp
@@ -203,6 +206,10 @@ set(SPECSFS_HEADERS
   lib/CsCFG.h
   lib/CallContextPass.h
   lib/CallDests.h
+
+  lib/ExitInst.h
+
+  lib/EdgeCountPass.h
   )
 
 add_llvm_loadable_module(SpecSFS
@@ -243,6 +250,15 @@ add_library(prof_alias STATIC
   ${PROF_DYNALIAS_SOURCES}
   )
 add_cpplint_target(prof_alias ${PROF_DYNALIAS_SOURCES})
+
+set(PROF_DYNALIAS_SOURCES
+  lib/Instrument/StaticLibs/DynEdgeCountLib.cpp
+  lib/Instrument/StaticLibs/SignalHandler.cpp
+  )
+add_library(prof_edge STATIC
+  ${PROF_DYNALIAS_SOURCES}
+  )
+add_cpplint_target(prof_edge ${PROF_DYNALIAS_SOURCES})
 
 set(PROF_DYNCALLSTACK_SOURCES
   lib/Instrument/StaticLibs/DynCallStackLib.cpp

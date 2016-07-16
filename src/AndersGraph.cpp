@@ -317,7 +317,7 @@ AndersGraph::mapIn(const llvm::Function *fcn) {
   llvm::dbgs() << "pcallee_cg has graph: " << pcallee_cg->localCFG() <<
     "\n";
   */
-  llvm::dbgs() << "Mapping in pcallee_cg for: " << fcn->getName() << "\n";
+  llvm::dbgs() << "Mapping " << fcn->getName() << " into Cg\n";
   auto ret = cg_->mapIn(*pcallee_cg);
   /*
   llvm::dbgs() << "cg_ now has graph: " << cg_->localCFG() << "\n";

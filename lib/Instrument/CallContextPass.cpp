@@ -26,7 +26,7 @@
 #include "llvm/Support/Debug.h"
 
 static llvm::cl::opt<std::string>
-  DynCallGraphFilename("dyn-calls-file", llvm::cl::init("dyn_calls.log"),
+  DynCallGraphFilename("dyn-calls-file", llvm::cl::init("profile.calls"),
       llvm::cl::value_desc("filename"),
       llvm::cl::desc("Ptsto file saved/loaded by CallContextLoader analysis"));
 
