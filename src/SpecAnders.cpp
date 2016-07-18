@@ -174,7 +174,8 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
 
   // Clear the def-use graph
   // It should already be cleared, but I'm paranoid
-  const auto &cons_pass = getAnalysis<ConstraintPass>();
+  auto &cons_pass = getAnalysis<ConstraintPass>();
+  cp_ = &cons_pass;
   // Our main cg is the one inhereted from cons_pass
   mainCg_ = std14::make_unique<Cg>(cons_pass.getCG());
 

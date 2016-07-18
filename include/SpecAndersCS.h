@@ -12,6 +12,7 @@
 
 #include "include/AndersGraph.h"
 #include "include/Assumptions.h"
+#include "include/ConstraintPass.h"
 #include "include/lib/UnusedFunctions.h"
 #include "include/lib/IndirFcnTarget.h"
 
@@ -110,6 +111,10 @@ class SpecAndersCS : public llvm::ModulePass,
     return graph_.getNode(rep_id).ptsto();
   }
 
+  ConstraintPass &getConstraintPass() {
+    return *consPass_;
+  }
+
  private:
   // Takes dynamic pointsto information, as well as hot/cold basic block
   //   information, and trims the edges of the DUG appropriately
@@ -143,6 +148,8 @@ class SpecAndersCS : public llvm::ModulePass,
   std::unique_ptr<CgCache> callCgCache_;
   Cg *mainCg_;
   AssumptionSet specAssumptions_;
+
+  ConstraintPass *consPass_;
 
   std::map<ValueMap::Id, ValueMap::Id> hcdPairs_;
 

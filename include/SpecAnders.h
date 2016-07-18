@@ -13,6 +13,7 @@
 #include "include/Assumptions.h"
 #include "include/Cg.h"
 #include "include/ValueMap.h"
+#include "include/ConstraintPass.h"
 
 #include "llvm/Pass.h"
 #include "llvm/Function.h"
@@ -101,6 +102,10 @@ class SpecAnders : public llvm::ModulePass,
     return graph_.getNode(rep_id).ptsto();
   }
 
+  ConstraintPass &getConstraintPass() {
+    return *cp_;
+  }
+
  private:
   // Takes dynamic pointsto information, as well as hot/cold basic block
   //   information, and trims the edges of the DUG appropriately
@@ -138,6 +143,8 @@ class SpecAnders : public llvm::ModulePass,
   std::unique_ptr<Cg> mainCg_;
   std::unique_ptr<CgCache> cgCache_;
   std::unique_ptr<CgCache> callCgCache_;
+
+  ConstraintPass *cp_;
 
   std::unordered_map<const llvm::Value *, PtstoSet> ptsCache_;
 

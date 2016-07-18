@@ -52,6 +52,30 @@ static bool isGiriCall(const llvm::Function *dir_fcn) {
     return true;
   }
 
+  if (dir_fcn->getName() == "recordCall") {
+    return true;
+  }
+
+  if (dir_fcn->getName() == "recordExtCall") {
+    return true;
+  }
+
+  if (dir_fcn->getName() == "giriCtor") {
+    return true;
+  }
+
+  if (dir_fcn->getName() == "recordFork") {
+    return true;
+  }
+
+  if (dir_fcn->getName() == "recordSelect") {
+    return true;
+  }
+
+  if (dir_fcn->getName() == "recordExtCallRet") {
+    return true;
+  }
+
   if (dir_fcn->getName() == "recordLoad") {
     return true;
   }
@@ -61,6 +85,22 @@ static bool isGiriCall(const llvm::Function *dir_fcn) {
   }
 
   if (dir_fcn->getName() == "recordReturn") {
+    return true;
+  }
+
+  if (dir_fcn->getName() == "recordInit") {
+    return true;
+  }
+
+  if (dir_fcn->getName() == "recordStrLoad") {
+    return true;
+  }
+
+  if (dir_fcn->getName() == "recordStrStore") {
+    return true;
+  }
+
+  if (dir_fcn->getName() == "recordStrcatStore") {
     return true;
   }
 
@@ -118,9 +158,6 @@ void SpecSFSInstrumenter::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
 
   // We require SpecSFS, to provide assumptions and ObjID->llvm::Value mappings
   usage.addRequired<llvm::AliasAnalysis>();
-
-  // We use the constraitnpass to get unique ids for pointer values
-  usage.addRequired<ConstraintPass>();
 }
 
 SpecSFSInstrumenter::SpecSFSInstrumenter() : llvm::ModulePass(ID) { }
@@ -491,9 +528,25 @@ bool SpecSFSInstrumenter::runOnModule(llvm::Module &m) {
   setupTypes(m);
 
   auto &aa = getAnalysis<AliasAnalysis>();
-  auto &cp = getAnalysis<ConstraintPass>();
   auto &uf = getAnalysis<UnusedFunctions>();
   auto &indir = getAnalysis<IndirFunctionInfo>();
+
+  const AssumptionSet *passumptions = nullptr;
+  ConstraintPass *pcp;
+
+  if (auto panders = getAnalysisIfAvailable<SpecAnders>()) {
+    llvm::dbgs() << "Have anders ptsto\n";
+    passumptions = &panders->getSpecAssumptions();
+    pcp = &panders->getConstraintPass();
+  } else if (auto pcsa = getAnalysisIfAvailable<SpecAndersCS>()) {
+    llvm::dbgs() << "Have cs anders ptsto\n";
+    passumptions = &pcsa->getSpecAssumptions();
+    pcp = &pcsa->getConstraintPass();
+  } else {
+    llvm_unreachable("Don't have valid AA?\n");
+  }
+  // llvm::dbgs() << "Have " << assumptions.size() << " assumptions\n";
+  auto &cp = *pcp;
 
   auto cg = cp.getCG();
   auto &map = cg.vals();
@@ -519,19 +572,10 @@ bool SpecSFSInstrumenter::runOnModule(llvm::Module &m) {
   // ALSO: grab a measure of how much it really costs... ya know, for good
   //    measure
   // First, get all assumptions for SpecSFS
-  const AssumptionSet *passumptions = nullptr;
 
-  if (auto panders = getAnalysisIfAvailable<SpecAnders>()) {
-    llvm::dbgs() << "Have anders ptsto\n";
-    passumptions = &panders->getSpecAssumptions();
-  } else if (auto pcsa = getAnalysisIfAvailable<SpecAndersCS>()) {
-    llvm::dbgs() << "Have cs anders ptsto\n";
-    passumptions = &pcsa->getSpecAssumptions();
-
+  if (auto pcsa = getAnalysisIfAvailable<SpecAndersCS>()) {
     // If we have cs analysis, add callstack checks
     addCallstackChecks(m, *pcsa);
-  } else {
-    llvm_unreachable("Don't have valid AA?\n");
   }
   // llvm::dbgs() << "Have " << assumptions.size() << " assumptions\n";
 
@@ -614,6 +658,9 @@ bool SpecSFSInstrumenter::runOnModule(llvm::Module &m) {
     auto malloc_fcn = getAllocFunction(m);
     auto &insert_pos = *std::begin(main_fcn->getEntryBlock());
     for (auto fcn : orig_fcns) {
+      if (isGiriCall(fcn)) {
+        continue;
+      }
       for (auto fcn_id : map.getIds(fcn)) {
         // Can't do indir call to intrinsic?
         if (!fcn->isIntrinsic() && set_cache.gvUsed(fcn_id)) {

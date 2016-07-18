@@ -141,6 +141,8 @@ void SpecAndersCS::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   usage.addRequired<IndirFunctionInfo>();
   usage.addRequired<CsCFG>();
   usage.addRequired<CallContextLoader>();
+
+  usage.addRequired<ConstraintPass>();
   // For dynamic ptsto removal
   // usage.addRequired<DynPtstoLoader>();
   usage.addRequired<llvm::ProfileInfo>();
@@ -158,6 +160,8 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
   auto &indir_info = getAnalysis<IndirFunctionInfo>();
   auto &call_info = getAnalysis<CallContextLoader>();
   auto &cs_cfg = getAnalysis<CsCFG>();
+
+  consPass_ = &getAnalysis<ConstraintPass>();
 
   // FIXME: Acutally construct?
   dynInfo_ = std14::make_unique<DynamicInfo>(unused_fcns,

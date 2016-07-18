@@ -44,6 +44,10 @@ class CallContextLoader : public llvm::ModulePass {
     auto it = std::lower_bound(std::begin(callsites_), std::end(callsites_),
         check);
 
+    if (it == std::end(callsites_)) {
+      return false;
+    }
+
     auto &dyn_check = *it;
     if (dyn_check.size() < check.size()) {
       return false;
