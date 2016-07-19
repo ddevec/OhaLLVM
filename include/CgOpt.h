@@ -170,6 +170,10 @@ class Graph : public CRTP_Graph {
     if (lhs_rep == rhs_rep) {
       return lhs_rep;
     }
+    // I'M STILL SUPER PARANOID
+    assert(lhs != rhs);
+
+
     auto &lhs_node = getNode(lhs_rep);
     auto &rhs_node = getNode(rhs_rep);
     reps_.merge(lhs_rep, rhs_rep);
@@ -191,6 +195,11 @@ class Graph : public CRTP_Graph {
 
   Id getRep(Id id) {
     return reps_.find(id);
+  }
+
+  Id getId(Node &node) const {
+    return Id((reinterpret_cast<intptr_t>(&node) -
+        reinterpret_cast<intptr_t>(nodes_.data())) / sizeof(Node));
   }
 
  private:

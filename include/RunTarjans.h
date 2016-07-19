@@ -7,6 +7,8 @@
 #include <vector>
 #include <algorithm>
 
+extern size_t check_val;
+
 template<typename node_type>
 class __should_visit_default {
  public:
@@ -109,8 +111,14 @@ class DoRunTarjans {
         // node.unite(seg_, merge_node);
         graph_.merge(merge_id, node_id);
 
+        if (static_cast<size_t>(merge_id) == check_val ||
+            static_cast<size_t>(node_id) == check_val) {
+          llvm::dbgs() << "  tarjan merge: " << merge_id << " and "
+              << node_id << "\n";
+        }
+
         // Must re-get node, as we just merged...
-        scc_visit_(graph_.getNode(merge_id), merge_id);
+        // scc_visit_(graph_.getNode(merge_id), merge_id);
       }
 
       // Must re-get node, as we just merged...

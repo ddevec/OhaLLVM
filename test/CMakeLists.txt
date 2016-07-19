@@ -288,5 +288,9 @@ create_test(memcpy_hard
     memcpy_hard.c
   )
 
+create_test(test_opt
+    test_opt.c
+  )
+
 add_subdirectory(dce)
 

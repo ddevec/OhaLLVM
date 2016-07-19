@@ -6,6 +6,7 @@
 #include <cstdint>
 
 #include <algorithm>
+#include <limits>
 #include <map>
 #include <set>
 #include <tuple>
@@ -106,6 +107,9 @@ class HVNData {
   //}}}
 };
 
+size_t check_val = std::numeric_limits<size_t>::max();
+// size_t check_val = 1034406;
+
 size_t Cg::updateConstraints(OptGraph &graph) {
   std::unordered_map<GraphId, GraphId> rep_remapping;
 
@@ -132,10 +136,21 @@ size_t Cg::updateConstraints(OptGraph &graph) {
         if (!rc.second) {
           vals_.merge(util::convert_id<Id>(node_id),
               util::convert_id<Id>(rc.first->second));
+
+          if (static_cast<size_t>(node_id) == check_val ||
+              static_cast<size_t>(rc.first->second) == check_val) {
+            llvm::dbgs() << "  val merge: " << node_id << " and " <<
+              rc.first->second << "\n";
+          }
         }
       } else {
         vals_.merge(util::convert_id<Id>(node_id),
             util::convert_id<Id>(rep_id));
+        if (static_cast<size_t>(node_id) == check_val ||
+            static_cast<size_t>(rep_id) == check_val) {
+          llvm::dbgs() << "  val merge2: " << node_id << " and " <<
+            rep_id << "\n";
+        }
       }
     }
   }
@@ -386,6 +401,11 @@ size_t Cg::HVN() {
   std::unordered_map<util::SparseBitmap<int32_t>, GraphId> pts_to_pe;
 
   for (GraphId id(0); id < GraphId(hvn_graph.size()); id++) {
+    // Only handle rep nodes! the others are nonptrs...
+    if (hvn_graph.getRep(id) != id) {
+      continue;
+    }
+
     auto &node = hvn_graph.getNode(id);
     // We're done w/ preds now, clear them
     node.clearPreds();
@@ -394,15 +414,29 @@ size_t Cg::HVN() {
 
     if (ptsto.empty() || ptsto.test(HVNNode::PENonPtr)) {
       // assert(ptsto.count() <= 1);
+      /*
+      if (ptsto.count() > 1) {
+        llvm::dbgs() << "  non-empty PENonPtr: " << ptsto << "\n";
+        llvm::dbgs() << "    id: " << id << "\n";
+      }
+      */
       node.makeNonPtr();
     }
 
-    auto ret = pts_to_pe.emplace(ptsto, hvn_graph.getRep(id));
+    auto hvn_rep_id = hvn_graph.getRep(id);
+    auto ret = pts_to_pe.emplace(ptsto, hvn_rep_id);
     if (!ret.second) {
       auto it = ret.first;
 
       // auto &rep_node = hvn_graph.getNode(it->second);
 
+      if (static_cast<size_t>(id) == check_val ||
+          static_cast<size_t>(it->second) == check_val) {
+        llvm::dbgs() << "  Merging1: " << id << " and " << it->second << "\n";
+        llvm::dbgs() << "    with pts: " << ptsto << "\n";
+        llvm::dbgs() << "    with it.first: " << it->first << "\n";
+        llvm::dbgs() << "    nodeid: " << hvn_graph.getId(node) << "\n";
+      }
       auto rep_id = hvn_graph.merge(id, it->second);
       it->second = rep_id;
     }
@@ -636,6 +670,10 @@ size_t Cg::HU() {
 
       // auto &rep_node = hvn_graph.getNode(it->second);
 
+      if (static_cast<size_t>(id) == check_val ||
+          static_cast<size_t>(it->second) == check_val) {
+        llvm::dbgs() << "  Merging: " << id << " and " << it->second << "\n";
+      }
       auto rep_id = hvn_graph.merge(id, it->second);
       it->second = rep_id;
     }

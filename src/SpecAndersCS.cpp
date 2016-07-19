@@ -223,8 +223,8 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
     util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "optimize");
     // Runs HVN HRU and HCD
     ProfilerStart("csa_opt.prof");
-    llvm::dbgs() << "FIXME: Opt broken?\n";
-    // mainCg_->optimize();
+    // llvm::dbgs() << "FIXME: Opt broken?\n";
+    mainCg_->optimize();
     ProfilerStop();
   }
   llvm::dbgs() << "SparseBitmap =='s: " << Bitmap::numEq() << "\n";

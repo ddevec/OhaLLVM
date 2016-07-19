@@ -1196,7 +1196,7 @@ void Cg::resolveDirAcyclicCall(CgCache &base_cgs, CgCache &full_cgs,
     // Add invalid stacks which made me skip this call to my list of invalid
     //   stacks!
     for (auto &stack : invalid_stacks) {
-      llvm::dbgs() << "  stack: " << util::print_iter(stack) << "\n";
+      // llvm::dbgs() << "  stack: " << util::print_iter(stack) << "\n";
       invalidStacks_.emplace(std::move(stack));
     }
     return;
@@ -1286,7 +1286,7 @@ void Cg::resolveDirCalls(CgCache &base_cgs, CgCache &full_cgs,
     // If it is to a function within our scc (recursion), then connect those
     //   nodes
     } else {
-      llvm::dbgs() << "  called_fcn is: " << called_fcn->getName() << "\n";
+      // llvm::dbgs() << "  called_fcn is: " << called_fcn->getName() << "\n";
 
       auto it = callInfo_.find(called_fcn);
       if (it != std::end(callInfo_)) {
@@ -1373,8 +1373,10 @@ void Cg::resolveCalls(CgCache &base_cgs, CgCache &full_cgs) {
 
         // Now add the assumption
         // Note the assumption is about the callsites called fcn ptr
+        /*
         llvm::dbgs() << "Adding pts asmp @: " << ValPrinter(ci) << "\n";
         llvm::dbgs() << "   arg: " << ValPrinter(cs.getCalledValue()) << "\n";
+        */
         as_.add(
             std14::make_unique<PtstoAssumption>(cs.getCalledValue(),
               fcn_asmps));
@@ -1476,6 +1478,7 @@ void Cg::mergeScc(const Cg &rhs) {
   //     -- This includes "ValueMaps"
 
   // First, sanity check that rhs and I are disjoint
+  /*
   llvm::dbgs() << "Adding rhs with callinfos:\n";
   for (auto &pr : rhs.callInfo_) {
     llvm::dbgs() << "  " << pr.first->getName() << "\n";
@@ -1485,6 +1488,7 @@ void Cg::mergeScc(const Cg &rhs) {
   for (auto &pr : callInfo_) {
     llvm::dbgs() << "    " << pr.first->getName() << "\n";
   }
+  */
   if_debug_enabled(
       for (auto &pr : rhs.callInfo_) {
         assert(callInfo_.find(pr.first) == std::end(callInfo_));
@@ -1715,11 +1719,14 @@ Cg::Id Cg::getConstValue(const llvm::Constant *c) {
 
 Cg::Id Cg::getDef(const llvm::Value *val) {
   // NOTE: Constants handles globals
+  Cg::Id ret;
   if (auto c = dyn_cast<llvm::Constant>(val)) {
-    return vals_.getRep(getConstValue(c));
+    ret = vals_.getRep(getConstValue(c));
+  } else {
+    ret = vals_.getDef(val);
   }
 
-  return vals_.getDef(val);
+  return ret;
 }
 
 

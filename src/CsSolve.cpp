@@ -2,7 +2,7 @@
  * Copyright (C) 2016 David Devecsery
  */
 
-// #define SPECANDERS_DEBUG
+#define SPECANDERS_DEBUG
 
 #ifdef SPECANDERS_DEBUG
 #  define adout(...) llvm::dbgs() << __VA_ARGS__
@@ -31,11 +31,11 @@ static size_t lcd_merge_count = 0;
 typedef AndersGraph::Id Id;
 
 // SCC Helpers (For anders) {{{
-class RunNuutila {
+class CSRunNuutila {
  public:
   static const int32_t IndexInvalid = -1;
 
-  RunNuutila(AndersGraph &g, const std::unordered_set<Id> &nodes,
+  CSRunNuutila(AndersGraph &g, const std::unordered_set<Id> &nodes,
       Worklist<AndersGraph::Id> &wl, const std::vector<uint32_t> &priority) :
       graph_(g), wl_(wl), priority_(priority) {
     // For each candidate node, visit it if it hasn't been visited, and compute
@@ -47,7 +47,9 @@ class RunNuutila {
       // llvm::dbgs() << "  ITER NUUTILA: " << nodeStack_.size() <<  "\n";
       auto &node_data = getData(pnode->id());
       if (g.isRep(*pnode) && node_data.root == IndexInvalid) {
+        // llvm::dbgs() << "  NUUTILA VISIT: " << pnode_id <<  "\n";
         visit2(pnode->id());
+        // llvm::dbgs() << "  VISIT DONE\n";
       }
     }
     // llvm::dbgs() << "END NUUTILA\n";
@@ -72,13 +74,12 @@ class RunNuutila {
   }
 
   void visit2(Id node_id) {
+    // llvm::dbgs() << "    IN VISIT2\n";
     assert(merged_.find(node_id) == std::end(merged_));
     assert(graph_.isRep(node_id));
     auto &node_data = getRepData(node_id);
 
-    /*
-    llvm::dbgs() << "Visit: " << node_id << ": dfs = " << nextIndex_ << "\n";
-    */
+    // llvm::dbgs() << "Visit: " << node_id << ": dfs = " << nextIndex_ << "\n";
     node_data.root = nextIndex_;
     auto dfs_idx = nextIndex_;
     nextIndex_++;
@@ -94,9 +95,7 @@ class RunNuutila {
 
       // Ignore merged successors
       if (merged_.find(dest_id) == std::end(merged_)) {
-        /*
-        llvm::dbgs() << "      " << node_id << " succ: " << dest_id << "\n";
-        */
+        // llvm::dbgs() << "      " << node_id << " succ: " << dest_id << "\n";
         if (dest_data->root == IndexInvalid) {
           visit2(graph_.getRep(dest_id));
 
@@ -143,12 +142,10 @@ class RunNuutila {
         if (rep_next_id != node_rep.id()) {
           lcd_merge_count++;
           auto &nd = graph_.getNode(rep_next_id);
+
           /*
-          if (node_id == ObjectMap::NullValue ||
-              nd.id() == ObjectMap::NullValue) {
-            llvm::dbgs() << "Nuutilia merge null: " << node_id << " : " <<
-              nd.id() << "\n";
-          }
+          llvm::dbgs() << "Nuutila merge: " << node_id << ", " << rep_next_id
+              << "\n";
           */
           graph_.merge(node_rep, nd);
         }
@@ -546,9 +543,9 @@ bool SpecAndersCS::solve() {
     // llvm::dbgs() << "lcd_nodes.size(): " << lcd_nodes.size() << "\n";
     if (lcd_nodes.size() > LCD_SIZE ||
         (vtime - lcd_last_time) > LCD_PERIOD) {
-      // llvm::dbgs() << " !! Running lcd\n";
+      llvm::dbgs() << " !! Running lcd\n";
       // Do lcd
-      RunNuutila(graph_, lcd_nodes, work, priority);
+      CSRunNuutila(graph_, lcd_nodes, work, priority);
       // Clear lcd_nodes
       lcd_nodes.clear();
       lcd_last_time = vtime;
