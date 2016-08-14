@@ -89,7 +89,7 @@ class OptNode : public PredNode<id_type> {
     indirect_ = true;
   }
 
-  void setRef() {
+  void setRef(Id) {
     ref_ = true;
   }
 
@@ -126,6 +126,56 @@ class OptNode : public PredNode<id_type> {
   bool ref_ = false;
   util::SparseBitmap<int32_t> implEdges_;
   util::SparseBitmap<int32_t> ptsto_;
+  //}}}
+};
+
+template <typename id_type>
+class HCDNodeBase : public PredNode<id_type> {
+  //{{{
+ public:
+  typedef typename PredNode<id_type>::Id Id;
+
+  HCDNodeBase() = default;
+
+  bool ref() const {
+    return baseId_ == Id::invalid();
+  }
+
+  void setRef(Id id) {
+    refs_.insert(id);
+  }
+
+  const std::set<Id> refs() const {
+    return refs_;
+  }
+
+  void setBase(Id id) {
+    baseId_ = id;
+  }
+
+  Id baseId() const {
+    return baseId_;
+  }
+
+  Id getRep() {
+    return baseId_;
+  }
+
+  void unite(HCDNodeBase &rhs) {
+    refs_.insert(std::begin(rhs.refs_), std::end(rhs.refs_));
+
+    if (rhs.baseId_ != Id::invalid()) {
+      baseId_ = rhs.baseId_;
+    }
+
+    rhs.refs_.clear();
+
+    PredNode<id_type>::unite(rhs);
+  }
+
+ private:
+  Id baseId_ = Id::invalid();
+  std::set<Id> refs_;
   //}}}
 };
 
@@ -211,5 +261,9 @@ class Graph : public CRTP_Graph {
 typedef OptNode<CRTP_Graph::Id> HVNNode;
 typedef Graph<HVNNode> OptGraph;
 typedef OptGraph::Id GraphId;
+
+typedef HCDNodeBase<CRTP_Graph::Id> HCDNode;
+typedef Graph<HCDNode> HCDGraph;
+typedef HCDGraph::Id HCDGraphId;
 
 #endif  // INCLUDE_CGOPT_H_

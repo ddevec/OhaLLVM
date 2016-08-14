@@ -309,7 +309,13 @@ bool CallContextLoader::runOnModule(llvm::Module &) {
           for (auto elm2 : vec) {
             llvm::dbgs() << "ELM :" << elm2 << "\n";
             for (auto scc_inst : cfg.getSCC(elm2)) {
-              llvm::dbgs() << "  " << *scc_inst << "\n";
+              if (scc_inst != nullptr) {
+                llvm::dbgs() << "  " <<
+                  scc_inst->getParent()->getParent()->getName() << " " <<
+                  scc_inst->getParent()->getName() << ": " << *scc_inst << "\n";
+              } else {
+                llvm::dbgs() << "  (null)\n";
+              }
             }
             llvm::dbgs() << "\n";
           }

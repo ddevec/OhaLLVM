@@ -148,6 +148,7 @@ set(SPECSFS_SOURCES
   src/InstPrinter.cpp
 
   # Instrumentation passes
+
   lib/Instrument/IndirFcnTarget.cpp
   lib/Instrument/DynPtsto.cpp
   lib/Instrument/DynAlias.cpp
@@ -155,6 +156,7 @@ set(SPECSFS_SOURCES
   lib/Instrument/CallContextPass.cpp
   # lib/Instrument/DynPtstoCheck.cpp
  
+  lib/ProfDisabler.cpp
   lib/PtsNumberPass.cpp
   lib/StoreNumber.cpp
   lib/BBNumber.cpp
@@ -170,6 +172,7 @@ set(SPECSFS_SOURCES
   lib/StaticSlice.cpp
   lib/StaticSliceCounter.cpp
   lib/AliasTest.cpp
+  lib/CountObservations.cpp
 
   #uhh, testing stuff
   lib/TestAA.cpp
@@ -217,6 +220,8 @@ add_llvm_loadable_module(SpecSFS
   )
 
 target_link_libraries(SpecSFS
+  ssl
+  crypto
   bdd
   profiler
   tcmalloc

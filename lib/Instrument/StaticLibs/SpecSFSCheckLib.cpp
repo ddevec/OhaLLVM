@@ -15,26 +15,29 @@
 #include <unordered_map>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
-static int64_t malloc_cnt = 0;
-static int64_t free_cnt = 0;
-static int64_t alloca_cnt = 0;
-static int64_t visit_cnt = 0;
+#define IN_INS
+
+#include "include/BloomHash.h"
+
+static int64_t filter_check = 0;
+static int64_t filter_miss = 0;
+
 
 /*
 [[ gnu::constructor ]]
 void init(void) {
 }
+*/
 
 [[ gnu::destructor ]]
 void fini(void) {
-  std::cout << "malloc count: " << malloc_cnt << std::endl;
-  std::cout << "free count: " << free_cnt << std::endl;
-  std::cout << "alloca count: " << alloca_cnt << std::endl;
-  std::cout << "visit count: " << visit_cnt << std::endl;
+  std::cerr << "filter good: " << filter_check << std::endl;
+  std::cerr << "filter miss: " << filter_miss << std::endl;
 }
-*/
+
 [[ gnu::unused ]]
 static void print_trace(void) {
   void *array[10];
@@ -105,7 +108,11 @@ std::map<AddrRange, std::vector<int32_t>> addr_to_objid;
 std::vector<std::vector<void *>> stack_allocs;
 
 // Initialize to 0, to represent the "main" call node
-thread_local std::vector<int32_t> stack = { 0 };
+thread_local std::vector<std::pair<int32_t, uint64_t>> stack = {
+  std::pair<int32_t, uint64_t>(0, 0x5F5F5F5F5F5F5F5FULL) };
+
+thread_local std::unordered_map<void *, std::pair<size_t,
+             std::pair<int32_t, uint64_t>>> addr_to_frame;
 
 extern "C" {
 
@@ -138,20 +145,35 @@ void __specsfs_do_call() {
   stack_allocs.emplace_back();
 }
 
-void __specsfs_callstack_push(int32_t id) {
-  if (stack.empty() || stack.back() != id) {
-    stack.push_back(id);
+void __specsfs_callstack_push(int32_t id, uint32_t hash) {
+  auto &pr = stack.back();
+  if (stack.empty() || pr.first != id) {
+    auto &cur_hash = pr.second;
+
+    auto new_hash = BloomHasher::mix_hash(cur_hash, hash);
+    stack.push_back(std::make_pair(id, new_hash));
   }
 }
 
 void __specsfs_callstack_pop(int32_t id) {
   // if (!stack.empty() && stack.back() == id)
-  if (stack.back() == id) {
+  auto &pr = stack.back();
+  if (pr.first == id) {
     stack.pop_back();
   }
 }
 
-void __specsfs_callstack_check(int32_t check_id, int32_t size, int32_t **ids) {
+void __specsfs_callstack_check(int32_t check_id, int32_t size, int32_t **ids,
+    uint64_t filter_hash[]) {
+  // First, check the bloom filter for this set
+  auto &stack_hash = stack.back().second;
+  filter_check++;
+
+  if (!BloomHasher::bloom_check(filter_hash, stack_hash)) {
+    return;
+  }
+  filter_miss++;
+
   // Check if stack matches any in ids
   for (int i = 0; i < size; ++i) {
     int32_t *id = ids[i];
@@ -164,7 +186,7 @@ void __specsfs_callstack_check(int32_t check_id, int32_t size, int32_t **ids) {
 
     bool clear = false;
     for (int j = size-1; j >= 0; --j) {
-      if (stack[j] != id[j]) {
+      if (stack[j].first != id[j]) {
         clear = true;
         break;
       }
@@ -173,16 +195,58 @@ void __specsfs_callstack_check(int32_t check_id, int32_t size, int32_t **ids) {
     if (!clear) {
       std::cerr << "stack check failed!" << std::endl;
       std::cerr << "check id: " << check_id << std::endl;
+      std::cerr << "stack is: {";
+      for (int j = 0; j < size; ++j) {
+        std::cerr << " " << stack[j].first;
+      }
+      std::cerr << " }" << std::endl;
+
+      std::cerr << "ids[" << i << "] is: {";
+      for (int j = 0; j < size; ++j) {
+        std::cerr << " " << id[j];
+      }
+      std::cerr << " }" << std::endl;
+
       print_trace();
       abort();
     }
   }
 }
 
+// longjmp support... meh
+void __specsfs_do_longjmp_call(int32_t, void *jmpstruct, int64_t) {
+  // Save the stack (if it needs saving), pop it back to jmpstruct
+  auto it = addr_to_frame.find(jmpstruct);
+  assert(it != std::end(addr_to_frame));
+
+  // IF we returned to an element w/in an scc, stack.size() will be one less
+  // than the recorded size, in which case, we push the frame back on...
+  if (stack.size() < it->second.first) {
+    assert(stack.size() + 1 == it->second.first);
+    stack.push_back(it->second.second);
+  // In the expected case, we just dump the top of our stack
+  } else {
+    stack.resize(it->second.first);
+  }
+}
+
+void __specsfs_do_setjmp_call(int32_t, void *jmpstruct) {
+  // Save the stack, denote we just setjmp'd
+  /*
+  std::cout << "Dumping stack size: " << stack.size() << std::endl;
+  std::cout << "  stack:";
+  for (auto &elm : stack) {
+    std::cout << " " << elm;
+  }
+  std::cout << std::endl;
+  */
+
+  addr_to_frame[jmpstruct] = std::make_pair(stack.size(), stack.back());
+}
 
 void __specsfs_alloca_fcn(int32_t obj_id, void *addr,
     int64_t size) {
-  alloca_cnt++;
+  // alloca_cnt++;
   // Size is in bits...
   // Handle alloca
   // Add addresses to stack frame
@@ -214,7 +278,7 @@ void __specsfs_ret_fcn() {
 
 void __specsfs_alloc_fcn(int32_t obj_id, void *addr,
     int64_t size) {
-  malloc_cnt++;
+  // malloc_cnt++;
   // Size is in bits...
   // Add ptsto to map
   /*
@@ -279,7 +343,7 @@ void __specsfs_alloc_fcn(int32_t obj_id, void *addr,
 }
 
 void __specsfs_free_fcn(void *addr) {
-  free_cnt++;
+  // free_cnt++;
   // Remove ptsto from map
   // std::cout << "freeing: " << addr << std::endl;
   addr_to_objid.erase(AddrRange(addr));
@@ -309,7 +373,7 @@ void __specsfs_visit_fcn(int32_t id) {
 
 void __specsfs_set_check_fcn(int32_t id,
     void *addr, int32_t set[], int32_t set_size) {
-  visit_cnt++;
+  // visit_cnt++;
   // Don't check nulls, they are fine
   if (addr == nullptr) {
     return;

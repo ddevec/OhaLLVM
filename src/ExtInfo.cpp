@@ -51,7 +51,8 @@ typedef ValueMap::Id Id;
 // called from malloc-like allocations, to find the largest strcuture size the
 // untyped allocation is cast to.
 static const llvm::Type *findLargestType(ModInfo &info,
-    const llvm::Value &ins) {
+    const llvm::Value &ins,
+    bool conservative = true) {
   auto biggest_type = ins.getType()->getContainedType(0);
 
   bool found = false;
@@ -98,7 +99,7 @@ static const llvm::Type *findLargestType(ModInfo &info,
     }
   });
 
-  if (!found && max_size == 0) {
+  if (!found && max_size == 0 && conservative) {
     return info.getMaxStructInfo().type();
   }
 
@@ -287,7 +288,8 @@ struct MemcpyCons {
     auto first_arg = args[0];
     auto second_arg = args[1];
 
-    auto type = findLargestType(cg.modInfo(), *dest);
+    // Not conservative, string copys are a thing
+    auto type = findLargestType(cg.modInfo(), *dest, false);
 
     if (auto st = dyn_cast<llvm::StructType>(type)) {
       // Okay, for each field of the structure...

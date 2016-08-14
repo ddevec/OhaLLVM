@@ -76,9 +76,8 @@ static llvm::cl::opt<bool>
         "would have been identified by a speculative sfs run (for reporting "
         "improvment numbers)"));
 
-static llvm::cl::opt<std::string>
-  fcn_name("anders-debug-fcn", llvm::cl::init(""),
-      llvm::cl::value_desc("string"),
+static llvm::cl::list<std::string>
+  fcn_names("anders-debug-fcn",
       llvm::cl::desc("if set anders will print the ptsto set for this function"
         " at the end of execution"));
 
@@ -155,9 +154,6 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
   // -- This is required for the llvm AliasAnalysis interface
   InitializeAliasAnalysis(this);
 
-  if (fcn_name != "") {
-    llvm::dbgs() << "Got debug function: " << fcn_name << "\n";
-  }
   if (glbl_name != "") {
     llvm::dbgs() << "Got debug gv: " << glbl_name << "\n";
   }
@@ -185,14 +181,16 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
   cgCache_ = std14::make_unique<CgCache>(cons_pass.cgCache());
   callCgCache_ = std14::make_unique<CgCache>(cons_pass.callCgCache());
 
+  mainCg_->constraintStats();
+
   mainCg_->lowerAllocs();
   BddPtstoSet::PtstoSetInit(*mainCg_);
 
   // ProfilerStart("anders_opt.prof");
   if (!anders_no_opt) {
     util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "HVN");
-    llvm::dbgs() << "FIXME: Opt broken?\n";
-    // mainCg_->optimize();
+    // llvm::dbgs() << "FIXME: Opt broken?\n";
+     mainCg_->optimize();
   }
   // ProfilerStop();
   llvm::dbgs() << "SparseBitmap =='s: " << Bitmap::numEq() << "\n";
@@ -309,7 +307,7 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
   }
 #endif
 
-  if (fcn_name != "") {
+  for (auto &fcn_name : fcn_names) {
     // DEBUG {{{
     auto fcn = m.getFunction(fcn_name);
 

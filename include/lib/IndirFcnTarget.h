@@ -27,12 +27,35 @@ class IndirFunctionInfo : public llvm::ModulePass {
     void getAnalysisUsage(llvm::AnalysisUsage &) const override;
 
     bool hasInfo() const {
-      return hasInfo_;
+      return hasInfo_ && enabled_;
     }
 
     const std::vector<const llvm::Value *> &
     getTargets(const llvm::Value *val) const {
-      return callToTarget_.at(val);
+      auto it = callToTarget_.find(val);
+      if (it == std::end(callToTarget_)) {
+        static std::vector<const llvm::Value *> empty_vec;
+        return empty_vec;
+      }
+      return it->second;
+    }
+
+    size_t numInvariants() const {
+      size_t ret = 0;
+
+      for (auto &pr : callToTarget_) {
+        ret += pr.second.size();
+      }
+
+      return ret;
+    }
+
+    void disable() {
+      enabled_ = false;
+    }
+
+    void enable() {
+      enabled_ = true;
     }
 
  private:
@@ -40,6 +63,7 @@ class IndirFunctionInfo : public llvm::ModulePass {
       callToTarget_;
 
     bool hasInfo_;
+    bool enabled_ = true;
 };
 
 #endif  // INCLUDE_LIB_INDIRFCNTARGET_H__

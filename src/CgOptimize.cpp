@@ -28,11 +28,42 @@
 #include "include/lib/IndirFcnTarget.h"
 #include "include/lib/UnusedFunctions.h"
 
-class HVNData {
+template <typename Graph>
+class OptData {
+  //{{{
+ public:
+  typedef typename Graph::Id Id;
+  explicit OptData(Graph &graph) : graph_(graph) { }
+
+  GraphId getRef(Id id) {
+    auto ref_it = nodeToRef_.find(id);
+
+    if (ref_it == std::end(nodeToRef_)) {
+      auto new_node_id = graph_.addNode();
+      auto &hvn_node = graph_.getNode(new_node_id);
+      hvn_node.setRef(new_node_id);
+
+      auto rc = nodeToRef_.emplace(id, new_node_id);
+      assert(rc.second);
+      ref_it = rc.first;
+    }
+
+    if_debug_enabled(auto &ret = graph_.getNode(ref_it->second);)
+    assert(ret.ref());
+    return ref_it->second;
+  }
+
+ protected:
+  Graph &graph_;
+  std::map<Id, Id> nodeToRef_;
+  //}}}
+};
+
+class HVNData : public OptData<OptGraph> {
   //{{{
  public:
   typedef OptGraph::Id Id;
-  explicit HVNData(OptGraph &hvn_graph) : hvnGraph_(hvn_graph) { }
+  explicit HVNData(OptGraph &hvn_graph) : OptData<OptGraph>(hvn_graph) { }
 
   int32_t getNextPE() {
     return nextPE_++;
@@ -74,24 +105,6 @@ class HVNData {
     return it->second;
   }
 
-  GraphId getRef(Id id) {
-    auto ref_it = nodeToRef_.find(id);
-
-    if (ref_it == std::end(nodeToRef_)) {
-      auto new_node_id = hvnGraph_.addNode();
-      auto &hvn_node = hvnGraph_.getNode(new_node_id);
-      hvn_node.setRef();
-
-      auto rc = nodeToRef_.emplace(id, new_node_id);
-      assert(rc.second);
-      ref_it = rc.first;
-    }
-
-    if_debug_enabled(auto &ret = hvnGraph_.getNode(ref_it->second);)
-    assert(ret.ref());
-    return ref_it->second;
-  }
-
  private:
   // 0 is non-ptr
   int32_t nextPE_ = 1;
@@ -101,9 +114,13 @@ class HVNData {
   std::unordered_map<util::SparseBitmap<int32_t>, int32_t> hashValueMap_;
 
   std::unordered_map<Id, int32_t> idToPE_;
+  //}}}
+};
 
-  OptGraph &hvnGraph_;
-  std::map<Id, Id> nodeToRef_;
+class HCDData : public OptData<HCDGraph> {
+  //{{{
+ public:
+  explicit HCDData(HCDGraph &graph) : OptData<HCDGraph>(graph) { }
   //}}}
 };
 
@@ -136,21 +153,10 @@ size_t Cg::updateConstraints(OptGraph &graph) {
         if (!rc.second) {
           vals_.merge(util::convert_id<Id>(node_id),
               util::convert_id<Id>(rc.first->second));
-
-          if (static_cast<size_t>(node_id) == check_val ||
-              static_cast<size_t>(rc.first->second) == check_val) {
-            llvm::dbgs() << "  val merge: " << node_id << " and " <<
-              rc.first->second << "\n";
-          }
         }
       } else {
         vals_.merge(util::convert_id<Id>(node_id),
             util::convert_id<Id>(rep_id));
-        if (static_cast<size_t>(node_id) == check_val ||
-            static_cast<size_t>(rep_id) == check_val) {
-          llvm::dbgs() << "  val merge2: " << node_id << " and " <<
-            rep_id << "\n";
-        }
       }
     }
   }
@@ -170,8 +176,6 @@ size_t Cg::updateConstraints(OptGraph &graph) {
       new_cons.push_back(cons);
       continue;
     }
-
-    auto init_cons = cons;
 
     auto rep_obj_id = cons.rep();
     auto src_obj_id = cons.src();
@@ -193,15 +197,6 @@ size_t Cg::updateConstraints(OptGraph &graph) {
 
     // Remove any non-ptrs
     if (src_rep_node.isNonPtr() || dest_rep_node.isNonPtr()) {
-      if (init_cons.src() == Id(1000127)) {
-        llvm::dbgs() << "NP?DELETE Cons?: " << init_cons << "\n";
-        llvm::dbgs() << " src_rep_id: " << src_rep_id << "\n";
-        llvm::dbgs() << "  src non-ptr: " << src_rep_node.isNonPtr() << "\n";
-        llvm::dbgs() << " dest_rep_id: " << dest_rep_id << "\n";
-        llvm::dbgs() << "  dest_obj_id: " << dest_obj_id << "\n";
-        llvm::dbgs() << "  dest_rep_pts: " << dest_rep_node.ptsto() << "\n";
-        llvm::dbgs() << "  dest non-ptr: " << dest_rep_node.isNonPtr() << "\n";
-      }
       num_removed++;
       continue;
     }
@@ -210,21 +205,119 @@ size_t Cg::updateConstraints(OptGraph &graph) {
     if (cons.type() == ConstraintType::Copy &&
         cons.src() == cons.dest() && cons.offs() == 0) {
       num_removed++;
-      // llvm::dbgs() << " ?DELETE Cons?: " << init_cons << "\n";
       continue;
     }
 
     auto rc = dedup.emplace(cons);
     if (!rc.second) {
       num_removed++;
-      // llvm::dbgs() << " DELETE Cons: " << init_cons << "\n";
       continue;
     }
 
-    /*
-    llvm::dbgs() << " remap cons: " << init_cons <<
-        " to " <<  cons << "\n";
-    */
+    new_cons.push_back(cons);
+  }
+
+  assert(constraints_.size() - new_cons.size() == num_removed);
+  constraints_.swap(new_cons);
+
+  // Also update indirect call info:
+  for (auto &tup : indirCalls_) {
+    auto &id = std::get<0>(tup);
+    id = vals_.getRep(id);
+
+    auto &ci = std::get<1>(tup);
+    ci.updateReps(vals_);
+  }
+
+  for (auto &pr : callInfo_) {
+    auto &ci = pr.second.first;
+    ci.updateReps(vals_);
+  }
+
+  localCFG_.updateNodes(vals_);
+
+  return num_removed;
+}
+
+size_t Cg::updateHCDConstraints(HCDGraph &graph) {
+  std::unordered_map<HCDGraphId, HCDGraphId> rep_remapping;
+
+  auto max_id = getMaxId();
+  for (int32_t i = 0; i < static_cast<int32_t>(max_id); i++) {
+    HCDGraphId node_id(i);
+
+    auto rep_id = graph.getRep(node_id);
+
+    if (util::convert_id<Id>(node_id) == ValueMap::IntValue ||
+        util::convert_id<Id>(rep_id) == ValueMap::IntValue ||
+        util::convert_id<Id>(node_id) == ValueMap::NullValue ||
+        util::convert_id<Id>(rep_id) == ValueMap::NullValue) {
+      continue;
+    }
+
+    // This is to lower any reps above vals_.size() to reps below vals_.size()
+    // NOTE: These were introduced by the "ref" nodes in HU
+    if (rep_id != node_id) {
+      if (rep_id > util::convert_id<HCDGraphId>(max_id)) {
+        // NOTE: we don't have to merge if the rep is outside of our mapping and
+        //   we don't have another rep
+        auto rc = rep_remapping.emplace(rep_id, node_id);
+        if (!rc.second) {
+          vals_.merge(util::convert_id<Id>(node_id),
+              util::convert_id<Id>(rc.first->second));
+        }
+      } else {
+        vals_.merge(util::convert_id<Id>(node_id),
+            util::convert_id<Id>(rep_id));
+      }
+    }
+  }
+
+  size_t num_removed = 0;
+  std::set<Constraint> dedup;
+
+  std::vector<Constraint> new_cons;
+  for (size_t i = 0; i < constraints_.size(); i++) {
+    auto &cons = constraints_[i];
+
+    // Don't optimize int/null value cons
+    if (cons.src() == ValueMap::IntValue ||
+        cons.dest() == ValueMap::IntValue ||
+        cons.src() == ValueMap::NullValue ||
+        cons.dest() == ValueMap::NullValue) {
+      new_cons.push_back(cons);
+      continue;
+    }
+
+    auto rep_obj_id = cons.rep();
+    auto src_obj_id = cons.src();
+    auto dest_obj_id = cons.dest();
+
+    auto src_rep_id = vals_.getRep(src_obj_id);
+    auto dest_rep_id = vals_.getRep(dest_obj_id);
+    auto rep_rep_id = vals_.getRep(rep_obj_id);
+
+    cons.updateRep(rep_rep_id);
+
+    if (cons.type() == ConstraintType::AddressOf) {
+      cons.retarget(src_obj_id, dest_rep_id);
+    } else {
+      cons.retarget(src_rep_id, dest_rep_id);
+    }
+
+    // Remove any copys to self
+    if (cons.type() == ConstraintType::Copy &&
+        cons.src() == cons.dest() && cons.offs() == 0) {
+      num_removed++;
+      continue;
+    }
+
+    auto rc = dedup.emplace(cons);
+    if (!rc.second) {
+      num_removed++;
+      continue;
+    }
+
     new_cons.push_back(cons);
   }
 
@@ -708,12 +801,108 @@ size_t Cg::HU() {
 //      Incremental Tarjan's
 //      Better Indir cycle detection
 
-// TODO(ddevec) HCD...
-/*
 void Cg::HCD() {
-  return updateConstraints(hvn_graph);
+  llvm::dbgs() << "HCD Start!\n";
+  HCDGraph hcd_graph;
+  HCDData data(hcd_graph);
+
+  // Get the maximum possible Id from our CG
+  auto max_src_dest_id = getMaxId();
+
+  // Now create a node for each destination
+  for (int32_t i = 0; i < static_cast<int32_t>(max_src_dest_id)+1; i++) {
+    auto node_id = hcd_graph.addNode();
+    auto &node = hcd_graph.getNode(node_id);
+    node.setBase(node_id);
+  }
+
+  // Now, fill in the graph edges:
+  std::vector<bool> touched(hcd_graph.size());
+  for (auto &cons : constraints_) {
+    // Don't optimize null/int values, they are special
+    if (cons.src() == ValueMap::IntValue ||
+        cons.dest() == ValueMap::IntValue ||
+        cons.src() == ValueMap::NullValue ||
+        cons.dest() == ValueMap::NullValue) {
+      continue;
+    }
+
+    auto dest_val_id = cons.dest();
+    auto dest_node_id = util::convert_id<GraphId>(dest_val_id);
+    auto &dest_node = hcd_graph.getNode(dest_node_id);
+    auto src_val_id = cons.src();
+    auto src_node_id = util::convert_id<GraphId>(src_val_id);
+
+    touched[static_cast<size_t>(dest_node_id)] = true;
+    touched[static_cast<size_t>(src_node_id)] = true;
+
+    // Handle the edge addition appropriately
+    switch (cons.type()) {
+      case ConstraintType::Load:
+        {
+          // Load cons cause the dest to be indirect, but add no edges
+          auto src_ref_id = data.getRef(src_node_id);
+          // XXX: Need to re-get te node as getRef could cause a vector copy...
+          auto &new_dest_node = hcd_graph.getNode(dest_node_id);
+          new_dest_node.addPred(src_ref_id);
+        }
+        break;
+      case ConstraintType::Store:
+        {
+          // Store cons are ignored
+          // However, we need to ensure that the constraint is not optimized
+          //   out, so we set the node to be indirect
+          auto dest_ref_id = data.getRef(dest_node_id);
+          auto &dest_ref = hcd_graph.getNode(dest_ref_id);
+          dest_ref.addPred(src_node_id);
+        }
+        break;
+      case ConstraintType::AddressOf:
+        break;
+      case ConstraintType::Copy:
+        // Copy cons:
+        // Without offsets are edges
+        if (cons.offs() == 0) {
+          dest_node.addPred(src_node_id);
+        // With offsets create a new PE, labeled by the src, offs combo
+        }
+        break;
+    }
+  }
+
+  // hcd_graph.printDotFile("HVNStart.dot", *g_omap);
+  // Finally run Tarjan's:
+  run_tarjans(hcd_graph);
+
+  std::unordered_map<util::SparseBitmap<int32_t>, GraphId> pts_to_pe;
+
+  for (GraphId id(0); id < GraphId(hcd_graph.size()); id++) {
+    auto &node = hcd_graph.getNode(id);
+    // We're done w/ preds now, clear them
+    node.clearPreds();
+
+    // Ignore non-reps and non-ref nodes
+    if (node.ref() || hcd_graph.getRep(id) != id) {
+      continue;
+    }
+
+    auto base_id = node.baseId();
+    assert(base_id != HCDGraphId::invalid());
+
+    auto &ref_nodes = node.refs();
+    for (auto &refd_id : ref_nodes) {
+      // llvm::dbgs() << "  HCD pair: " << refd_id << " -> " << base_id << "\n";
+      hcdPairs_.emplace(util::convert_id<Id>(refd_id),
+          util::convert_id<Id>(base_id));
+    }
+  }
+
+  llvm::dbgs() << "pairs.size: " << hcdPairs_.size() << "\n";
+
+  // Now, update constraints based on the hcd_graph, return how many constraitns
+  //    we removed
+  updateHCDConstraints(hcd_graph);
 }
-*/
 
 void Cg::HRU(size_t min_removed) {
   int32_t itr = 0;
@@ -738,7 +927,6 @@ void Cg::HR(size_t min_removed) {
   } while (num_removed > min_removed);
 }
 
-
 void Cg::optimize() {
   // Run HVN then HRU over the CG's constraints
   llvm::dbgs() << "before HVN constraint_size: " << constraints_.size() <<
@@ -751,6 +939,10 @@ void Cg::optimize() {
   // HVN();
   HRU(100);
   llvm::dbgs() << "after HRU constraint_size: " << constraints_.size() <<
+    "\n";
+
+  HCD();
+  llvm::dbgs() << "After HCD contarint size: " << constraints_.size() <<
     "\n";
   // Reset the bdd constraint size...
   BddPtstoSet::updateConstraints(*this);

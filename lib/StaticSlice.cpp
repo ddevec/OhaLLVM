@@ -491,6 +491,7 @@ class StaticSlice : public llvm::ModulePass {
                   }
                 } else {
                   // llvm::dbgs() << "store is: " << inst << "\n";
+                  // llvm::dbgs() << "ld is: " << *pinst << "\n";
                   if (alias_->alias(llvm::AliasAnalysis::Location(st_dest),
                           llvm::AliasAnalysis::Location(ld_src)) !=
                         llvm::AliasAnalysis::NoAlias) {

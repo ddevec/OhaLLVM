@@ -354,11 +354,11 @@ class SetCheckInst : public InstrumentationSite {  //{{{
  public:
     SetCheckInst(const llvm::Value *assign_inst,
         const std::vector<ValueMap::Id> &check_set,
-        SetCache &set_cache) :
+        SetCache &set_cache, llvm::Instruction *site) :
       InstrumentationSite(InstrumentationSite::Kind::SetCheckInst),
       assignInst_(const_cast<llvm::Value *>(assign_inst)),
       checkSet_(std::begin(check_set), std::end(check_set)),
-      setCache_(set_cache) { }
+      setCache_(set_cache), site_(site) { }
 
     bool operator<(const InstrumentationSite &is) const override {
       if (getKind() != is.getKind()) {
@@ -369,6 +369,10 @@ class SetCheckInst : public InstrumentationSite {  //{{{
 
       if (assignInst_ != ai.assignInst_) {
         return assignInst_ < ai.assignInst_;
+      }
+
+      if (site_ != ai.site_) {
+        return site_ < ai.site_;
       }
 
       return checkSet_ < ai.checkSet_;
@@ -407,6 +411,7 @@ class SetCheckInst : public InstrumentationSite {  //{{{
     std::set<ValueMap::Id> checkSet_;
 
     SetCache &setCache_;
+    llvm::Instruction *site_;
 
  protected:
     virtual void printInst(llvm::raw_ostream &o) const {
@@ -522,10 +527,10 @@ class Assumption {  //{{{
 
 class PtstoAssumption : public Assumption {  //{{{
  public:
-    PtstoAssumption(const llvm::Value *inst,
+    PtstoAssumption(llvm::Instruction *site, const llvm::Value *inst,
         const std::vector<const llvm::Value *> &ptstos) :
           Assumption(Assumption::Kind::DynPtsto),
-          instOrArg_(inst), ptstos_(ptstos) { }
+          site_(site), instOrArg_(inst), ptstos_(ptstos) { }
 
     static bool classof(const Assumption *a) {
       return a->getKind() == Assumption::Kind::DynPtsto;
@@ -553,6 +558,7 @@ class PtstoAssumption : public Assumption {  //{{{
 
  private:
     // ValueMap::Id objID_;
+    const llvm::Instruction *site_;
     const llvm::Value *instOrArg_;
     std::vector<const llvm::Value *> ptstos_;
 };

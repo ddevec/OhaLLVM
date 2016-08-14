@@ -66,6 +66,15 @@ constexpr T div_round_up(T x, T y) {
   return (x + (y-1)) / y;
 }
 
+template <typename T>
+constexpr size_t bit_sizeof() {
+  return sizeof(T) * 8;
+}
+
+constexpr size_t bits_to_bytes(size_t size) {
+  return size / 8;
+}
+
 template<typename T>
 class IterPrintClass {
  public:
@@ -823,11 +832,13 @@ class UnionFindNoRank {
     auto cycle_it = cycle_detect.find(idx);
     if (cycle_it != std::end(cycle_detect)) {
       // Print cycle and crash
+      /*
       std::cerr << "Union Find cycle:" << std::endl;
       for (auto prev_idx : cycle_order) {
         std::cerr << "  " << prev_idx << std::endl;
       }
       std::cerr << "  -> " << idx << std::endl;
+      */
       abort();
     } else {
       cycle_detect.emplace(idx);

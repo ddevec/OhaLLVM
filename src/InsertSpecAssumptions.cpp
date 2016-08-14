@@ -2,10 +2,15 @@
  * Copyright (C) 2015 David Devecsery
  */
 
+// We use a good hash...
+#include <openssl/sha.h>
+
 #include <algorithm>
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
+
 
 #include "llvm/Pass.h"
 #include "llvm/PassSupport.h"
@@ -16,6 +21,7 @@
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/ProfileInfo.h"
 
+#include "include/BloomHash.h"
 #include "include/ConstraintPass.h"
 #include "include/ExtInfo.h"
 #include "include/LLVMHelper.h"
@@ -31,6 +37,32 @@ static const std::string MainInit3Name = "__specsfs_main_init3";
 static const std::string PushName = "__specsfs_callstack_push";
 static const std::string PopName = "__specsfs_callstack_pop";
 static const std::string CheckName = "__specsfs_callstack_check";
+
+static const std::string SetJmpName = "__specsfs_do_setjmp_call";
+static const std::string LongJmpName = "__specsfs_do_longjmp_call";
+
+static size_t bloom_hash(size_t ukey) {
+  union {
+    unsigned char raw[SHA_DIGEST_LENGTH];
+    size_t ret[2];
+  } result;
+  /*
+  int64_t key = static_cast<int64_t>(ukey);
+  key = (~key) + (key << 21);  // key = (key << 21) - key - 1;
+  key = key ^ (key >> 24);
+  key = (key + (key << 3)) + (key << 8);  // key * 265
+  key = key ^ (key >> 14);
+  key = (key + (key << 2)) + (key << 4);  // key * 21
+  key = key ^ (key >> 28);
+  key = key + (key << 31);
+  return static_cast<size_t>(key);
+  */
+
+  SHA1(reinterpret_cast<unsigned char *>(&ukey), sizeof(ukey), result.raw);
+
+  return result.ret[1];
+}
+
 
 using llvm::AliasAnalysis;
 typedef AliasAnalysis::Location Location;
@@ -119,16 +151,23 @@ class SpecSFSInstrumenter : public llvm::ModulePass {
  private:
   void setupTypes(llvm::Module &m);
 
+  llvm::Function *getSetJmpFcn(llvm::Module &m);
+  llvm::Function *getLongJmpFcn(llvm::Module &m);
   llvm::Function *getPushFcn(llvm::Module &m);
   llvm::Function *getPopFcn(llvm::Module &m);
   llvm::Function *getCheckFcn(llvm::Module &m);
 
+  llvm::Constant *BloomFilterToPointer(
+      llvm::Module &,
+      const BloomHasher::BloomFilter &);
+
   std::pair<llvm::Constant *, llvm::Constant *>
   getCheckData(llvm::Module &m,
-      const std::vector<const std::vector<CsCFG::Id> *> &data);
+      const std::vector<const std::vector<CsCFG::Id> *> &data,
+      BloomHasher::BloomFilter *hash_combine);
 
   void addCallInst(llvm::Module &m,
-      int32_t val,
+      CsCFG::Id val,
       llvm::Instruction *cs,
       const std::vector<const std::vector<CsCFG::Id> *> &stacks);
 
@@ -136,6 +175,8 @@ class SpecSFSInstrumenter : public llvm::ModulePass {
       SpecAndersCS &aa);
 
   llvm::Type *int32Type_ = nullptr;
+  llvm::Type *int64Type_ = nullptr;
+  llvm::Type *int64PtrType_ = nullptr;
   llvm::Type *int32PtrType_ = nullptr;
   llvm::Type *int32PtrPtrType_ = nullptr;
   llvm::Type *int8Type_ = nullptr;
@@ -146,6 +187,8 @@ class SpecSFSInstrumenter : public llvm::ModulePass {
   llvm::Function *callCheckFcn_ = nullptr;
   llvm::Function *callPopFcn_ = nullptr;
   llvm::Function *callPushFcn_ = nullptr;
+  llvm::Function *callSetJmpFcn_ = nullptr;
+  llvm::Function *callLongJmpFcn_ = nullptr;
 };
 
 void SpecSFSInstrumenter::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
@@ -208,10 +251,8 @@ static free_location_multimap findFreeLocs(llvm::Module &m, UnusedFunctions &uf,
             std::vector<const llvm::Function *> targets;
             if (dir_fcn == nullptr) {
               // get from indir info
-              /*
               llvm::dbgs() << "Getting target for: " << ValPrinter(ci) <<
                 "\n";
-              */
               for (auto &target : indir_info.getTargets(ci)) {
                 targets.push_back(cast<llvm::Function>(target));
               }
@@ -296,8 +337,10 @@ static free_location_multimap findFreeLocs(llvm::Module &m, UnusedFunctions &uf,
 
 void SpecSFSInstrumenter::setupTypes(llvm::Module &m) {
   int32Type_ = llvm::IntegerType::get(m.getContext(), 32);
+  int64Type_ = llvm::IntegerType::get(m.getContext(), 64);
   int8Type_ = llvm::IntegerType::get(m.getContext(), 32);
 
+  int64PtrType_ = llvm::PointerType::get(int64Type_, 0);
   int32PtrType_ = llvm::PointerType::get(int32Type_, 0);
   int32PtrPtrType_ = llvm::PointerType::get(int32PtrType_, 0);
   int8PtrType_ = llvm::PointerType::get(int8Type_, 0);
@@ -305,10 +348,40 @@ void SpecSFSInstrumenter::setupTypes(llvm::Module &m) {
   voidType_ = llvm::Type::getVoidTy(m.getContext());
 }
 
+llvm::Function *SpecSFSInstrumenter::getSetJmpFcn(llvm::Module &m) {
+  if (callSetJmpFcn_ == nullptr) {
+    std::vector<llvm::Type *> jmp_args =
+        { int32Type_, int8PtrType_ };
+    auto fcn_type = llvm::FunctionType::get(
+        voidType_,
+        jmp_args,
+        false);
+    callSetJmpFcn_ = llvm::Function::Create(fcn_type,
+        llvm::GlobalValue::ExternalLinkage,
+        SetJmpName, &m);
+  }
+  return callSetJmpFcn_;
+}
+
+llvm::Function *SpecSFSInstrumenter::getLongJmpFcn(llvm::Module &m) {
+  if (callLongJmpFcn_ == nullptr) {
+    std::vector<llvm::Type *> jmp_args =
+        { int32Type_, int8PtrType_, int64Type_ };
+    auto fcn_type = llvm::FunctionType::get(
+        voidType_,
+        jmp_args,
+        false);
+    callLongJmpFcn_ = llvm::Function::Create(fcn_type,
+        llvm::GlobalValue::ExternalLinkage,
+        LongJmpName, &m);
+  }
+  return callLongJmpFcn_;
+}
+
 llvm::Function *SpecSFSInstrumenter::getPushFcn(llvm::Module &m) {
   if (callPushFcn_ == nullptr) {
     std::vector<llvm::Type *> push_args =
-        { int32Type_ };
+        { int32Type_, int64Type_ };
     auto fcn_type = llvm::FunctionType::get(
         voidType_,
         push_args,
@@ -338,7 +411,7 @@ llvm::Function *SpecSFSInstrumenter::getPopFcn(llvm::Module &m) {
 llvm::Function *SpecSFSInstrumenter::getCheckFcn(llvm::Module &m) {
   if (callCheckFcn_ == nullptr) {
     std::vector<llvm::Type *> check_args =
-        { int32Type_, int32Type_, int32PtrPtrType_ };
+        { int32Type_, int32Type_, int32PtrPtrType_, int64PtrType_ };
     auto fcn_type = llvm::FunctionType::get(
         voidType_,
         check_args,
@@ -352,7 +425,8 @@ llvm::Function *SpecSFSInstrumenter::getCheckFcn(llvm::Module &m) {
 
 std::pair<llvm::Constant *, llvm::Constant *>
 SpecSFSInstrumenter::getCheckData(llvm::Module &m,
-    const std::vector<const std::vector<CsCFG::Id> *> &data) {
+    const std::vector<const std::vector<CsCFG::Id> *> &data,
+    BloomHasher::BloomFilter *hash_combine) {
   // Okay, create a type for this data
   // We will return a pair, a size followed by an array of size, data arrays
   // We are ultimately returning an array of i32PtrTypes_
@@ -367,10 +441,19 @@ SpecSFSInstrumenter::getCheckData(llvm::Module &m,
     // elm 0 is constant of size:
     std::vector<llvm::Constant *> array_data =
         { llvm::ConstantInt::get(int32Type_, pstack->size()) };
+    int64_t array_hash = 0x5F5F5F5F5F5F5F5FULL;
     for (auto &id : *pstack) {
       array_data.push_back(llvm::ConstantInt::get(int32Type_,
             static_cast<int32_t>(id)));
+
+      // size_t id_hash = std::hash<CsCFG::Id>()(id);
+      size_t id_hash = bloom_hash(static_cast<size_t>(id));
+      llvm::dbgs() << "id hash is: " << id_hash << "\n";
+
+      array_hash = BloomHasher::mix_hash(array_hash,
+          id_hash);
     }
+    BloomHasher::bloom_add(*hash_combine, array_hash);
 
     // Now, create a constant array
     auto const_array = llvm::ConstantArray::get(array_type, array_data);
@@ -410,8 +493,39 @@ SpecSFSInstrumenter::getCheckData(llvm::Module &m,
   return std::make_pair(llvm::ConstantInt::get(int32Type_, data.size()), gep);
 }
 
+llvm::Constant *SpecSFSInstrumenter::BloomFilterToPointer(
+    llvm::Module &m,
+    const BloomHasher::BloomFilter &filter) {
+  // Convert the data into int 64 types
+  auto array_type = llvm::ArrayType::get(int64Type_, filter.size());
+
+  std::vector<llvm::Constant *> array_data;
+
+  for (auto &elm : filter) {
+    array_data.push_back(llvm::ConstantInt::get(int64Type_, elm));
+  }
+
+  auto array = llvm::ConstantArray::get(array_type, array_data);
+
+  // Now, create the array:
+  llvm::GlobalVariable *glbl_array = new llvm::GlobalVariable(m,
+      array_type, true,
+      llvm::GlobalValue::InternalLinkage, array,
+      "CallStackCheckData_bloomfilter");
+
+  std::vector<llvm::Constant *> indicies =
+      { llvm::ConstantInt::get(int64Type_, 0),
+        llvm::ConstantInt::get(int64Type_, 0) };
+
+  // And bitcast that to an int64PtrType_
+  auto array_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(glbl_array,
+      indicies);
+
+  return array_ptr;
+}
+
 void SpecSFSInstrumenter::addCallInst(llvm::Module &m,
-    int32_t val,
+    CsCFG::Id val,
     llvm::Instruction *cs,
     const std::vector<const std::vector<CsCFG::Id> *> &stacks) {
   // First add a call to the push function
@@ -419,19 +533,29 @@ void SpecSFSInstrumenter::addCallInst(llvm::Module &m,
     auto push_fcn = getPushFcn(m);
 
     // we add the push jsut before the call
+    // size_t val_hash = std::hash<CsCFG::Id>()(val);
+    size_t val_hash = bloom_hash(static_cast<size_t>(val));
     std::vector<llvm::Value *> push_args =
-        { llvm::ConstantInt::get(int32Type_, val) };
+        { llvm::ConstantInt::get(int32Type_, static_cast<int32_t>(val)),
+          llvm::ConstantInt::get(int64Type_, val_hash) };
     llvm::CallInst::Create(push_fcn, push_args, "", cs);
   }
 
   // Then, (if needed), do a call to the check function
   if (stacks.size() > 0) {
     auto check_fcn = getCheckFcn(m);
-    auto data_pr = getCheckData(m, stacks);
 
+    // Initialize array to 0
+    BloomHasher::BloomFilter stack_hash;
+    BloomHasher::bloom_clear(stack_hash);
+    auto data_pr = getCheckData(m, stacks, &stack_hash);
+
+    auto array_data = BloomFilterToPointer(m, stack_hash);
+    llvm::dbgs() << "array_data is: " << *array_data << "\n";
     std::vector<llvm::Value *> check_args =
-        { llvm::ConstantInt::get(int32Type_, val),
-          data_pr.first, data_pr.second };
+        { llvm::ConstantInt::get(int32Type_, static_cast<int32_t>(val)),
+          data_pr.first, data_pr.second,
+          array_data };
     llvm::CallInst::Create(check_fcn, check_args, "", cs);
   }
 
@@ -440,7 +564,7 @@ void SpecSFSInstrumenter::addCallInst(llvm::Module &m,
     auto pop_fcn = getPopFcn(m);
 
     std::vector<llvm::Value *> pop_args =
-        { llvm::ConstantInt::get(int32Type_, val) };
+        { llvm::ConstantInt::get(int32Type_, static_cast<int32_t>(val)) };
     auto pop_call = llvm::CallInst::Create(pop_fcn, pop_args);
     pop_call->insertAfter(cs);
   }
@@ -492,6 +616,32 @@ bool SpecSFSInstrumenter::addCallstackChecks(llvm::Module &m,
     invalid_stack_insts.emplace(stack.back(), &stack);
   }
 
+  // UGH: Scan for setjmp/longjmp calls
+  std::vector<llvm::CallInst *> setjmps;
+  std::vector<llvm::CallInst *> longjmps;
+  for (auto &fcn : m) {
+    for (auto &bb : fcn) {
+      for (auto &inst : bb) {
+        if (auto ci = dyn_cast<llvm::CallInst>(&inst)) {
+          llvm::CallSite cs(ci);
+          auto called_fcn = LLVMHelper::getFcnFromCall(ci);
+
+          if (called_fcn != nullptr &&
+              (called_fcn->getName() == "__sigsetjmp" ||
+              called_fcn->getName() == "__setjmp" ||
+              called_fcn->getName() == "_setjmp")) {
+            setjmps.push_back(ci);
+          } else if (called_fcn != nullptr &&
+              (called_fcn->getName() == "longjmp" ||
+              called_fcn->getName() == "siglongjmp")) {
+            longjmps.push_back(ci);
+          }
+        }
+      }
+    }
+  }
+
+
   // inst_ids now contains all call sites I need to instrument w/ call/ret info
   for (auto id : inst_ids) {
     // Now instrument all ids
@@ -516,9 +666,44 @@ bool SpecSFSInstrumenter::addCallstackChecks(llvm::Module &m,
       for (auto it = pr.first, en = pr.second; it != en; ++it) {
         check_vec.emplace_back(it->second);
       }
-      addCallInst(m, static_cast<int32_t>(id),
+      addCallInst(m, id,
           const_cast<llvm::Instruction *>(cs), check_vec);
     }
+  }
+
+  for (auto ci : setjmps) {
+    llvm::CallSite cs(ci);
+
+    auto arg = cs.getArgument(0);
+    auto i8_ptr_val = arg;
+    // Cast the argument to an i8ptr...
+    if (arg->getType() != int8PtrType_) {
+      i8_ptr_val = new llvm::BitCastInst(arg, int8PtrType_, "", ci);
+    }
+
+    std::vector<llvm::Value *> args =
+        { llvm::ConstantInt::get(int32Type_, 0), i8_ptr_val };
+
+    // Handle setjump operations here
+    // Call the setjmp inst function with our arg
+    llvm::CallInst::Create(getSetJmpFcn(m), args, "", ci);
+  }
+
+  for (auto ci : longjmps) {
+    llvm::CallSite cs(ci);
+
+    auto arg = cs.getArgument(0);
+    auto i8_ptr_val = arg;
+    if (arg->getType() != int8PtrType_) {
+      i8_ptr_val = new llvm::BitCastInst(arg, int8PtrType_, "", ci);
+    }
+
+    std::vector<llvm::Value *> args =
+        { llvm::ConstantInt::get(int32Type_, 0), i8_ptr_val,
+          llvm::ConstantInt::get(int64Type_, 0) };
+
+    // Handle long jump operations here
+    llvm::CallInst::Create(getLongJmpFcn(m), args, "", ci);
   }
 
   return ret;
@@ -643,10 +828,6 @@ bool SpecSFSInstrumenter::runOnModule(llvm::Module &m) {
     ret |= pinst->doInstrument(m, ext_info);
   }
 
-  // ALSO: Need to add in instrumentation for function calls...
-  // UGH: This is harder than I thought... work on this... later
-  // For each function in module
-  //   Add malloc for function address to beginning of main
 
   {
     auto i8_ptr_type = llvm::PointerType::get(

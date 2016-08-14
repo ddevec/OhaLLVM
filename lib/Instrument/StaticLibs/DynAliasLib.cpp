@@ -197,7 +197,7 @@ class AddressMap {
   //}}}
 };
 
-std::mutex inst_lock;
+// std::mutex inst_lock;
 
 static AddressMap<int32_t> map;
 
@@ -320,7 +320,7 @@ void __DynAlias_do_alloca(int32_t, int64_t size,
   // std::cout << "stacking: (" << obj_id << ") " << addr << std::endl;
   stack_allocs.back().push_back(addr);
 
-  std::unique_lock<std::mutex> lk(inst_lock);
+  // std::unique_lock<std::mutex> lk(inst_lock);
   /*
   std::cerr << "alloca addr: " << addr << ", " <<
     reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(addr) + size)
@@ -376,7 +376,7 @@ static bool do_free_addr(void *addr) {
 void __DynAlias_do_ret() {
   // Remove all ptstos on stack from map
   const std::vector<void *> &cur_frame = stack_allocs.back();
-  std::unique_lock<std::mutex> lk(inst_lock);
+  // std::unique_lock<std::mutex> lk(inst_lock);
   for (auto addr : cur_frame) {
     bool rc = do_free_addr(addr);
     if (rc) {
@@ -415,7 +415,7 @@ void __DynAlias_do_longjmp(int32_t id, void *addr) {
   // Look up our jump in the map...
   auto jump_pr = longjmps.at(addr);
 
-  std::unique_lock<std::mutex> lk(inst_lock);
+  // std::unique_lock<std::mutex> lk(inst_lock);
   // Now, free the later frames from the vector
   // while (std::next(jump_pr.first) != std::end(stack_allocs))
   for (size_t i = stack_allocs.size()-1; i > jump_pr.first; --i) {
@@ -534,7 +534,7 @@ void __DynAlias_do_malloc(int32_t, int64_t size,
   */
   // base_locs.emplace(addr, ret.first->first.addr());
 
-  std::unique_lock<std::mutex> lk(inst_lock);
+  // std::unique_lock<std::mutex> lk(inst_lock);
   /*
   std::cerr << "malloc addr: " << addr << ", " <<
     reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(addr) + size)
@@ -548,7 +548,7 @@ void __DynAlias_do_malloc(int32_t, int64_t size,
 }
 
 void __DynAlias_do_load(int32_t load_id, void *addr, size_t) {
-  std::unique_lock<std::mutex> lk(inst_lock);
+  // std::unique_lock<std::mutex> lk(inst_lock);
 
   auto id = map.get(addr);
   /*
@@ -564,7 +564,7 @@ void __DynAlias_do_load(int32_t load_id, void *addr, size_t) {
 
 void __DynAlias_do_store(int32_t store_id, void *addr, size_t size) {
   // Convert from bits to bytes
-  std::unique_lock<std::mutex> lk(inst_lock);
+  // std::unique_lock<std::mutex> lk(inst_lock);
 
   /*
   if (store_id == 10923) {
@@ -583,7 +583,7 @@ void __DynAlias_do_free(void *addr) {
   // std::cout << "freeing: " << addr << std::endl;
   // We shouldn't have double allocated anything except globals, which are never
   //   freed
-  std::unique_lock<std::mutex> lk(inst_lock);
+  // std::unique_lock<std::mutex> lk(inst_lock);
   do_free_addr(addr);
 }
 

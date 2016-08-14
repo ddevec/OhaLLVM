@@ -222,10 +222,10 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
   if (!anders_no_opt) {
     util::PerfTimerPrinter hvn_timer(llvm::dbgs(), "optimize");
     // Runs HVN HRU and HCD
-    ProfilerStart("csa_opt.prof");
+    // ProfilerStart("csa_opt.prof");
     // llvm::dbgs() << "FIXME: Opt broken?\n";
     mainCg_->optimize();
-    ProfilerStop();
+    // ProfilerStop();
   }
   llvm::dbgs() << "SparseBitmap =='s: " << Bitmap::numEq() << "\n";
   llvm::dbgs() << "SparseBitmap hash's: " << Bitmap::numHash() << "\n";
@@ -242,17 +242,14 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
     graph_.fill();
   }
 
-  extern void printStackStats();
-  printStackStats();
-
   // Solve!
   {
-    ProfilerStart("csa_solve.prof");
+    // ProfilerStart("csa_solve.prof");
     util::PerfTimerPrinter solve_timer(llvm::dbgs(), "AndersSolve");
     if (solve()) {
       error("Solve failure!");
     }
-    ProfilerStop();
+    // ProfilerStop();
   }
 
   // debug stuffs

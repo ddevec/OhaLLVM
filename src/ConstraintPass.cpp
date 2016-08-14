@@ -98,7 +98,13 @@ bool ConstraintPass::runOnModule(llvm::Module &m) {
   auto main = m.getFunction("main");
   mainCg_ = &cgCache_->getCg(main);
 
+  llvm::dbgs() << "Pre global constraints\n";
+  mainCg_->constraintStats();
+
   mainCg_->addGlobalConstraints(m);
+
+  llvm::dbgs() << "Post global constraints\n";
+  mainCg_->constraintStats();
   // Now merge the constraints for each function together...
   std::set<Cg *> visited;
   for (auto &fcn : m) {
@@ -114,16 +120,24 @@ bool ConstraintPass::runOnModule(llvm::Module &m) {
       continue;
     }
     auto &cur_cg = cgCache_->getCg(&fcn);
+    llvm::dbgs() << "Visiting: " << fcn.getName() << "\n";
     auto rc = visited.emplace(&cur_cg);
     if (rc.second) {
+      llvm::dbgs() << "merging: " << fcn.getName() << "\n";
       mainCg_->mergeCg(cur_cg);
     }
   }
+
+  llvm::dbgs() << "Pre resolveCalls constraints\n";
+  mainCg_->constraintStats();
 
   // Resolve any additional calls -- note that since our mainCg_ now defines all
   // functions, they will all be resolved w/ internal edges (without context
   //   sensitivity)
   mainCg_->resolveCalls(*cgCache_, *callCgCache_);
+
+  llvm::dbgs() << "Post resolveCalls constraints\n";
+  mainCg_->constraintStats();
 
   // We don't change code.  Ever.
   return false;

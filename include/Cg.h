@@ -369,6 +369,12 @@ class Cg {
   Id getMaxAlloc() const {
     return vals_.getMaxAlloc();
   }
+
+  void constraintStats() const;
+
+  const std::unordered_map<Id, Id> hcdPairs() const {
+    return hcdPairs_;
+  }
   //}}}
 
   // Maps in (used for context sensitive calls)
@@ -466,11 +472,13 @@ class Cg {
   Id getMaxId() const {
     return vals_.maxId();
   }
-  size_t HVN();
   void HRU(size_t min_removed);
   void HR(size_t min_removed);
+  size_t HVN();
   size_t HU();
+  void HCD();
   size_t updateConstraints(OptGraph &);
+  size_t updateHCDConstraints(HCDGraph &);
   //}}}
 
   // Private variables {{{
@@ -506,6 +514,9 @@ class Cg {
 
   // Handles mapping constraints for external functions
   ExtLibInfo &extInfo_;
+
+  std::unordered_map<Id, Id> hcdPairs_;
+
   //}}}
   //}}}
 };

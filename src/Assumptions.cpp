@@ -452,25 +452,12 @@ bool SetCheckInst::doInstrument(llvm::Module &m, const ExtLibInfo &) {
 
   // Okay, we have two options here, an argument or an instruction
   auto assign_inst = assignInst_;
-  llvm::dbgs() << " Have asignInst_: " << *assignInst_ << "\n";
+  // llvm::dbgs() << " Have asignInst_: " << *assignInst_ << "\n";
   if (assignInst_->getType() != i8_ptr_type) {
-    llvm::dbgs() << "assignInst_ is: " << ValPrinter(assignInst_) << "\n";
-    assign_inst = new llvm::BitCastInst(assignInst_, i8_ptr_type);
+    // llvm::dbgs() << "assignInst_ is: " << ValPrinter(assignInst_) << "\n";
+    assign_inst = new llvm::BitCastInst(assignInst_, i8_ptr_type, "", site_);
   }
 
-  /*
-  if (llvm::isa<llvm::SelectInst>(assignInst_)) {
-    llvm::dbgs() << "Inserting check for inst: " << *assignInst_ << "\n";
-    auto val = g_omap->getValue(assignInst_);
-    llvm::dbgs() << "  inst val is: " << val << "\n";
-    llvm::dbgs() << "  val inst: " << *g_omap->valueAtID(val) << "\n";
-    llvm::dbgs() << "  Have pts_set:";
-    for (auto elm : checkSet_) {
-      llvm::dbgs() << " " << elm;
-    }
-    llvm::dbgs() << "\n";
-  }
-  */
   // FIXME: Debug stuff
   args.push_back(llvm::ConstantInt::get(i32_type, id++));
 
@@ -480,7 +467,7 @@ bool SetCheckInst::doInstrument(llvm::Module &m, const ExtLibInfo &) {
 
   llvm::Instruction *first_inst;
   if (auto arg = dyn_cast<llvm::Argument>(assignInst_)) {
-    first_inst = &(*std::begin(arg->getParent()->getEntryBlock()));
+    first_inst = arg->getParent()->getEntryBlock().getFirstNonPHIOrDbg();
   } else {
     auto inst = cast<llvm::Instruction>(assignInst_);
     first_inst = inst;
@@ -502,39 +489,20 @@ bool SetCheckInst::doInstrument(llvm::Module &m, const ExtLibInfo &) {
   args.push_back(llvm::ConstantInt::get(i32_type, checkSet_.size()));
 
   // Get first instruction:
-
   auto insert_after = first_inst;
-  // Deal with phi nodes...
-  if (llvm::isa<llvm::PHINode>(insert_after)) {
-    // If this inst is a phi node, we insert after the phis of this bb:
-    auto &bb = *insert_after->getParent();
-    llvm::Instruction *prev_inst = first_inst;
-    for (auto &inst : bb) {
-      if (!llvm::isa<llvm::PHINode>(inst)) {
-        assert(prev_inst != nullptr);
-        insert_after = prev_inst;
-        break;
-      }
-      prev_inst = &inst;
-    }
-  }
-  // llvm::dbgs() << " Have insert_after: " << *insert_after << "\n";
 
   assert(insert_after != nullptr);
 
 
   // Do call
-  if (assign_inst != assignInst_) {
-    // llvm::dbgs() << " inserting assign_inst\n";
-    auto assign_inst_inst = cast<llvm::Instruction>(assign_inst);
-    assign_inst_inst->insertAfter(insert_after);
-    insert_after = assign_inst_inst;
+  if (site_ != nullptr) {
+    llvm::CallInst::Create(fcn, args, "", site_);
+  } else {
+    auto ci = llvm::CallInst::Create(fcn, args);
+    assert(ci != nullptr);
+    // llvm::dbgs() << " inserting ci at: " << *insert_after << "\n";
+    ci->insertAfter(insert_after);
   }
-
-  auto ci = llvm::CallInst::Create(fcn, args);
-  assert(ci != nullptr);
-  // llvm::dbgs() << " inserting ci at: " << *insert_after << "\n";
-  ci->insertAfter(insert_after);
 
   return true;
 }
@@ -591,8 +559,12 @@ PtstoAssumption::calcDependencies(
       pts_ids.push_back(id);
     }
   }
+  /*
   llvm::dbgs() << "making new setcheck for: " << ValPrinter(ptr_inst) << "\n";
-  ret.emplace_back(new SetCheckInst(ptr_inst, pts_ids, set_cache));
+  llvm::dbgs() << "   at site: " << ValPrinter(site_) << "\n";
+  */
+  ret.emplace_back(new SetCheckInst(ptr_inst, pts_ids, set_cache,
+        const_cast<llvm::Instruction *>(site_)));
 
   // Now, create an allocation site for each ptsto in this instruction
   for (auto &val : ptstos_) {
@@ -663,7 +635,7 @@ PtstoAssumption::approxDependencies(
       pts_ids.push_back(id);
     }
   }
-  ret.emplace_back(new SetCheckInst(instOrArg_, pts_ids, bleh));
+  ret.emplace_back(new SetCheckInst(instOrArg_, pts_ids, bleh, nullptr));
 
   // Now, create a double allocation site for each ptsto in this instruction
   // NOTE: The double is to approximate the free cost

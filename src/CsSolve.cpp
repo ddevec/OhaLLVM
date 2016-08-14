@@ -2,7 +2,7 @@
  * Copyright (C) 2016 David Devecsery
  */
 
-#define SPECANDERS_DEBUG
+// #define SPECANDERS_DEBUG
 
 #ifdef SPECANDERS_DEBUG
 #  define adout(...) llvm::dbgs() << __VA_ARGS__
@@ -189,6 +189,10 @@ bool SpecAndersCS::solve() {
   std::vector<uint32_t> priority;
   Worklist<AndersGraph::Id> work;
 
+  // If this node is part of HCD:
+  auto &hcd_pairs = graph_.cg().hcdPairs();
+  llvm::dbgs() << "graph hcdpairs size is: " << hcd_pairs.size() << "\n";
+
   logout("SOLVE\n");
 
   // Populate the worklist with any node with a non-empty ptsto set
@@ -264,9 +268,8 @@ bool SpecAndersCS::solve() {
     }
     */
 
-    // If this node is part of HCD:
-    auto hcd_itr = hcdPairs_.find(pnd->id());
-    if (hcd_itr != std::end(hcdPairs_)) {
+    auto hcd_itr = hcd_pairs.find(pnd->id());
+    if (hcd_itr != std::end(hcd_pairs)) {
       // For each ptsto in this node:
       bool did_merge = false;
       for (auto dest_id : pnd->ptsto()) {
@@ -280,6 +283,7 @@ bool SpecAndersCS::solve() {
             dest_node.id() != ValueMap::IntValue &&
             rep_node.id() != ValueMap::NullValue &&
             dest_node.id() != ValueMap::NullValue) {
+          llvm::dbgs() << "hcd merge!\n";
           graph_.merge(rep_node, dest_node);
           did_merge = true;
 
@@ -436,13 +440,6 @@ bool SpecAndersCS::solve() {
 
         adout("  ch: " << ch << "\n");
         adout("  O: " << succ_node.id() << ": " << succ_pts << "\n");
-        /*
-        if (pnd->id() == ValueMap::Id(1124417) ||
-            pnd->id() == ValueMap::Id(1100347)) {
-          llvm::dbgs() << "  ch: " << ch << "\n";
-          llvm::dbgs() << "  O: " << succ_node.id() << ": " << succ_pts << "\n";
-        }
-        */
 
         auto edge = std::make_pair(pnd->id(), succ_node.id());
         // If we haven't run LCD on this edge before, the points-to sets are not
@@ -539,11 +536,9 @@ bool SpecAndersCS::solve() {
     }
     pnd->setCopySuccs(std::move(new_copy_edges));
 
-
     // llvm::dbgs() << "lcd_nodes.size(): " << lcd_nodes.size() << "\n";
     if (lcd_nodes.size() > LCD_SIZE ||
         (vtime - lcd_last_time) > LCD_PERIOD) {
-      llvm::dbgs() << " !! Running lcd\n";
       // Do lcd
       CSRunNuutila(graph_, lcd_nodes, work, priority);
       // Clear lcd_nodes

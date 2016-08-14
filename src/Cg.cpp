@@ -599,6 +599,8 @@ void Cg::idStoreInst(const llvm::Instruction &inst) {
   dout("arg(1) is: " << *st.getOperand(1) << "\n");
 
   auto dest_type = dyn_cast<llvm::PointerType>(st.getOperand(1)->getType());
+  // We must have a def for operand 1 EOM!
+  getDef(st.getOperand(1));
 
   if (llvm::isa<llvm::PointerType>(st.getOperand(0)->getType())) {
     // Store from ptr
@@ -849,24 +851,15 @@ void Cg::scanBB(const llvm::BasicBlock *bb,
     AssumptionSet &as, std::set<const llvm::BasicBlock *> &seen) {
   auto &unused_fcns = dynInfo_.used_info;
 
-  if (bb->getParent()->getName() == "buf_write") {
-    llvm::dbgs() << "Scanning:" << bb->getName() << "\n";
-  }
   if (!unused_fcns.isUsed(bb)) {
     as.add(std::unique_ptr<Assumption>(
           new DeadCodeAssumption(const_cast<llvm::BasicBlock *>(bb))));
-    if (bb->getParent()->getName() == "buf_write") {
-      llvm::dbgs() << "  DEAD\n";
-    }
     return;
   }
 
   // If we've analyzed this block before, skip it
   auto rc = seen.emplace(bb);
   if (!rc.second) {
-    if (bb->getParent()->getName() == "buf_write") {
-      llvm::dbgs() << "  REPEAT\n";
-    }
     return;
   }
 
@@ -1154,14 +1147,6 @@ void Cg::resolveDirCyclicCall(llvm::ImmutableCallSite &cs,
   callee_cfg_node.addPred(cfgId_);
 }
 
-std::set<std::vector<CsCFG::Id>> g_valid_stacks;
-std::set<std::vector<CsCFG::Id>> g_invalid_stacks;
-
-void printStackStats() {
-  llvm::dbgs() << "num valid stacks: " << g_valid_stacks.size() << "\n";
-  llvm::dbgs() << "num invalid stacks: " << g_invalid_stacks.size() << "\n";
-}
-
 void Cg::resolveDirAcyclicCall(CgCache &base_cgs, CgCache &full_cgs,
     llvm::ImmutableCallSite &cs,
     const llvm::Function *called_fcn, CallInfo &caller_info,
@@ -1177,26 +1162,17 @@ void Cg::resolveDirAcyclicCall(CgCache &base_cgs, CgCache &full_cgs,
   //     new_stacks.push_back(new_stack)
   // if new_stacks.empty()
   //   Don't do call, invalid dyn call path
-  /*
-  if (cs.getInstruction()->getParent()->getParent()->getName() ==
-      "ngx_http_ssi_preconfiguration")
-  */
-  // if (called_fcn->getName() == "ngx_http_ssi_preconfiguration")
-  if (called_fcn->getName() == "ngx_http_block") {
-    llvm::dbgs() << "!!cs is: " << ValPrinter(cs.getInstruction()) << "\n";
-    /*
-    llvm::dbgs() << "  Checking stack: " << util::print_iter(new_stack) <<
-      "\n";
-      */
-  }
 
   // If we don't have a valid stack
   if (call_info.hasDynData() && new_stacks.empty()) {
-    llvm::dbgs() << "Skipping call due to no valid dyn stack\n";
+    // llvm::dbgs() << "Instruction: " << ValPrinter(cs.getInstruction())
+    //     << "\n";
+    llvm::dbgs() << "  Skipping call due to no valid dyn stack\n";
+    // llvm::dbgs() << "  cs id: " << csCFG_.getId(cs.getInstruction()) << "\n";
     // Add invalid stacks which made me skip this call to my list of invalid
     //   stacks!
     for (auto &stack : invalid_stacks) {
-      // llvm::dbgs() << "  stack: " << util::print_iter(stack) << "\n";
+       // llvm::dbgs() << "  stack: " << util::print_iter(stack) << "\n";
       invalidStacks_.emplace(std::move(stack));
     }
     return;
@@ -1249,6 +1225,10 @@ Cg::getCalleeStacks(llvm::ImmutableCallSite &cs,
     std::vector<std::vector<CsCFG::Id>> *pinvalid_stacks) {
   auto &call_info = dynInfo_.call_info;
   std::vector<std::vector<CsCFG::Id>> new_stacks;
+  if (!call_info.hasDynData()) {
+    return std::move(new_stacks);
+  }
+
   for (auto &stack : curStacks_) {
     auto new_id = csCFG_.getId(cs.getInstruction());
     if (stack.back() != new_id) {
@@ -1286,7 +1266,7 @@ void Cg::resolveDirCalls(CgCache &base_cgs, CgCache &full_cgs,
     // If it is to a function within our scc (recursion), then connect those
     //   nodes
     } else {
-      // llvm::dbgs() << "  called_fcn is: " << called_fcn->getName() << "\n";
+      llvm::dbgs() << "  called_fcn is: " << called_fcn->getName() << "\n";
 
       auto it = callInfo_.find(called_fcn);
       if (it != std::end(callInfo_)) {
@@ -1378,7 +1358,9 @@ void Cg::resolveCalls(CgCache &base_cgs, CgCache &full_cgs) {
         llvm::dbgs() << "   arg: " << ValPrinter(cs.getCalledValue()) << "\n";
         */
         as_.add(
-            std14::make_unique<PtstoAssumption>(cs.getCalledValue(),
+            std14::make_unique<PtstoAssumption>(
+              const_cast<llvm::Instruction *>(cs.getInstruction()),
+              cs.getCalledValue(),
               fcn_asmps));
       } else {
         // llvm::dbgs() << "  Indir call?\n";
@@ -1729,5 +1711,48 @@ Cg::Id Cg::getDef(const llvm::Value *val) {
   return ret;
 }
 
+// Print constraint stats
+void Cg::constraintStats() const {
+  // AddrOf
+  // Load
+  // Store
+  // Copy (nogep)
+  // Copy (GEP)
+  size_t num_addr = 0;
+  size_t num_load = 0;
+  size_t num_store = 0;
+  size_t num_copy = 0;
+  size_t num_gep = 0;
+  for (auto &cons : constraints_) {
+    switch (cons.type()) {
+      case ConstraintType::AddressOf:
+        num_addr++;
+        break;
+      case ConstraintType::Load:
+        num_load++;
+        break;
+      case ConstraintType::Store:
+        num_store++;
+        break;
+      case ConstraintType::Copy:
+        {
+          if (cons.offs() == 0) {
+            num_copy++;
+          } else {
+            num_gep++;
+          }
+        }
+        break;
+      default:
+        llvm_unreachable("bad constraint?");
+    }
+  }
 
+  llvm::dbgs() << "Constraint stats for cg:\n";
+  llvm::dbgs() << "  AddressOf: " << num_addr << "\n";
+  llvm::dbgs() << "  Load: " << num_load << "\n";
+  llvm::dbgs() << "  Store: " << num_store << "\n";
+  llvm::dbgs() << "  Copy: " << num_copy << "\n";
+  llvm::dbgs() << "  GEP: " << num_gep << "\n";
+}
 

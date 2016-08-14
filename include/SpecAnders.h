@@ -75,7 +75,7 @@ class SpecAnders : public llvm::ModulePass,
   */
 
   const AssumptionSet &getSpecAssumptions() const {
-    return specAssumptions_;
+    return cp_->getSpecAssumptions();
   }
 
   ValueMap::Id getRep(ValueMap::Id id) {
@@ -135,7 +135,6 @@ class SpecAnders : public llvm::ModulePass,
 
   // Private data {{{
   AndersGraph graph_;
-  AssumptionSet specAssumptions_;
 
   std::unique_ptr<DynamicInfo> dynInfo_;
 

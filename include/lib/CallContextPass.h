@@ -36,7 +36,7 @@ class CallContextLoader : public llvm::ModulePass {
   }
 
   bool hasDynData() const {
-    return loaded_;
+    return loaded_ && enabled_;
   }
 
   bool isValid(const std::vector<CsCFG::Id> &check) const {
@@ -98,8 +98,21 @@ class CallContextLoader : public llvm::ModulePass {
     return std::move(ret);
   }
 
+  size_t numInvariants() const {
+    return callsites_.size();
+  }
+
+  void disable() {
+    enabled_ = false;
+  }
+
+  void enable() {
+    enabled_ = true;
+  }
+
  private:
   bool loaded_ = false;
+  bool enabled_ = true;
   // Get all callsites containing a (non-strict) partial stack
   // Keep sorted, to do prefix lookup
   std::vector<std::vector<CsCFG::Id>> callsites_;

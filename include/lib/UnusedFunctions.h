@@ -36,7 +36,7 @@ class UnusedFunctions : public llvm::ModulePass {
     }
 
     bool isUsed(const llvm::Function *fcn) const {
-      if (ignoreUnused_) {
+      if (ignoreUnused_ || !enabled_) {
         return true;
       }
 
@@ -77,7 +77,7 @@ class UnusedFunctions : public llvm::ModulePass {
     }
 
     bool isUsed(const llvm::BasicBlock *bb) const {
-      if (ignoreUnused_) {
+      if (ignoreUnused_ || !enabled_) {
         return true;
       }
 
@@ -106,10 +106,23 @@ class UnusedFunctions : public llvm::ModulePass {
       return ret;
     }
 
+    size_t numInvariants() const {
+      return visitedBB_.size();
+    }
+
+    void disable() {
+      enabled_ = false;
+    }
+
+    void enable() {
+      enabled_ = true;
+    }
+
  private:
     std::unordered_set<const llvm::Function *> visited_;
     std::unordered_set<const llvm::BasicBlock *>visitedBB_;
 
+    bool enabled_ = true;
     bool allUsed_ = false;
     const bool ignoreUnused_;
 };
