@@ -25,6 +25,12 @@
 #include "include/lib/IndirFcnTarget.h"
 #include "include/lib/UnusedFunctions.h"
 
+llvm::cl::opt<bool>
+  no_spec("anders-no-spec", llvm::cl::init(false),
+      llvm::cl::value_desc("bool"),
+      llvm::cl::desc("if set anders will not make any "
+        "speculative assumptions"));
+
 // Helpers for contraint IDs {{{
 static bool traceInt(const llvm::Value *val, std::set<const llvm::Value *> &src,
     std::map<const llvm::Value *, bool> &seen) {
@@ -822,7 +828,8 @@ Cg::Cg(const llvm::Function *fcn,
   extInfo_.init(*fcn->getParent(), vals());
   // Assume we're part of main for now...
   curStacks_.emplace_back(1);
-  curStacks_.back().back() = dynInfo_.call_info.getMainContext();
+  curStacks_.back().back() =
+    util::convert_id<CsCFG::Id>(dynInfo_.call_info.getMainContext());
 
   // Populate constraint set for this function (and only this function)
   // Create CallInfo for fcn_
@@ -841,7 +848,7 @@ void Cg::populateConstraints(AssumptionSet &as) {
   assert(callInfo_.size() == 1);
   assert(std::begin(callInfo_)->first != nullptr);
   auto entry_block = &std::begin(callInfo_)->first->getEntryBlock();
-  assert(dynInfo_.used_info.isUsed(entry_block));
+  assert(dynInfo_.used_info.isUsed(entry_block) || no_spec);
   std::set<const llvm::BasicBlock *> seen;
   // Assert this function has a body?
   scanBB(entry_block, as, seen);
@@ -851,7 +858,7 @@ void Cg::scanBB(const llvm::BasicBlock *bb,
     AssumptionSet &as, std::set<const llvm::BasicBlock *> &seen) {
   auto &unused_fcns = dynInfo_.used_info;
 
-  if (!unused_fcns.isUsed(bb)) {
+  if (!unused_fcns.isUsed(bb) && !no_spec) {
     as.add(std::unique_ptr<Assumption>(
           new DeadCodeAssumption(const_cast<llvm::BasicBlock *>(bb))));
     return;
@@ -1164,7 +1171,7 @@ void Cg::resolveDirAcyclicCall(CgCache &base_cgs, CgCache &full_cgs,
   //   Don't do call, invalid dyn call path
 
   // If we don't have a valid stack
-  if (call_info.hasDynData() && new_stacks.empty()) {
+  if (call_info.hasDynData() && !no_spec && new_stacks.empty()) {
     // llvm::dbgs() << "Instruction: " << ValPrinter(cs.getInstruction())
     //     << "\n";
     llvm::dbgs() << "  Skipping call due to no valid dyn stack\n";
@@ -1182,14 +1189,14 @@ void Cg::resolveDirAcyclicCall(CgCache &base_cgs, CgCache &full_cgs,
   auto tmp_cg = std::move(base_cgs.getCg(called_fcn).clone(
         std::move(new_stacks)));
   const Cg *pcg = nullptr;
-  if (!call_info.hasDynData()) {
+  if (!call_info.hasDynData() || no_spec) {
     pcg = full_cgs.tryGetCg(called_fcn);
   }
 
   if (pcg == nullptr) {
     tmp_cg.resolveCalls(base_cgs, full_cgs);
 
-    if (!call_info.hasDynData()) {
+    if (!call_info.hasDynData() || no_spec) {
       full_cgs.addCg(called_fcn, std::move(tmp_cg));
       pcg = full_cgs.tryGetCg(called_fcn);
     } else {
@@ -1225,7 +1232,7 @@ Cg::getCalleeStacks(llvm::ImmutableCallSite &cs,
     std::vector<std::vector<CsCFG::Id>> *pinvalid_stacks) {
   auto &call_info = dynInfo_.call_info;
   std::vector<std::vector<CsCFG::Id>> new_stacks;
-  if (!call_info.hasDynData()) {
+  if (!call_info.hasDynData() || no_spec) {
     return std::move(new_stacks);
   }
 
@@ -1233,11 +1240,18 @@ Cg::getCalleeStacks(llvm::ImmutableCallSite &cs,
     auto new_id = csCFG_.getId(cs.getInstruction());
     if (stack.back() != new_id) {
       std::vector<CsCFG::Id> new_stack(stack.size() + 1);
-      std::copy(std::begin(stack), std::end(stack), std::begin(new_stack));
+      std::vector<CsCFG::Id> cs_new_stack(stack.size() + 1);
+      // std::copy(std::begin(stack), std::end(stack), std::begin(new_stack));
+      size_t i = 0;
+      for (auto &id : stack) {
+        cs_new_stack[i] = util::convert_id<CsCFG::Id>(id);
+        new_stack[i] = id;
+        ++i;
+      }
+      cs_new_stack.back() = util::convert_id<CsCFG::Id>(new_id);
       new_stack.back() = new_id;
 
-
-      if (call_info.hasDynData() && !call_info.isValid(new_stack)) {
+      if (call_info.hasDynData() && !call_info.isValid(cs_new_stack)) {
         if (pinvalid_stacks != nullptr) {
           pinvalid_stacks->emplace_back(std::move(new_stack));
         }
@@ -1323,7 +1337,7 @@ void Cg::resolveCalls(CgCache &base_cgs, CgCache &full_cgs) {
     // Else add an external call constraint
     } else {
       // Check for indir info:
-      if (indir_info.hasInfo()) {
+      if (indir_info.hasInfo() && !no_spec) {
         // llvm::dbgs() << "have indir info!\n";
         // llvm::dbgs() << "ci is: " << *ci << "\n";
         auto &targets = indir_info.getTargets(ci);
@@ -1515,7 +1529,7 @@ CgCache::CgCache(const llvm::Module &m,
   // For each fcn
   llvm::dbgs() << "VISIT START\n";
   for (auto &fcn : m) {
-    if (!used_info.isUsed(fcn)) {
+    if (!used_info.isUsed(fcn) && !no_spec) {
       continue;
     }
 

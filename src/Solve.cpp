@@ -22,6 +22,8 @@
 #include "include/Debug.h"
 #include "include/SpecAnders.h"
 
+extern llvm::cl::opt<bool> no_spec;
+
 static llvm::cl::opt<int32_t> //  NOLINT
   solve_debug_id("anders-solve-id", llvm::cl::init(-1),
       llvm::cl::value_desc("int"),
@@ -680,7 +682,7 @@ void SpecAnders::addIndirCall(const PtstoSet &fcn_pts,
         }
         handleGraphChange(old_size, wl, priority);
       } else {
-        if (!used_info.isUsed(callee_fcn)) {
+        if (!used_info.isUsed(callee_fcn) && !no_spec) {
           continue;
         }
 

@@ -22,6 +22,8 @@
 #include "include/Debug.h"
 #include "include/SpecAndersCS.h"
 
+extern llvm::cl::opt<bool> no_spec;
+
 // Number of edges/number of processed nodes before we allow LCD to run
 #define LCD_SIZE 600
 #define LCD_PERIOD std::numeric_limits<int32_t>::max()
@@ -592,7 +594,7 @@ void SpecAndersCS::addIndirCall(const PtstoSet &fcn_pts,
     auto callee_fcn = dyn_cast_or_null<llvm::Function>(map.getValue(id));
 
     if (callee_fcn != nullptr) {
-      if (!used_info.isUsed(callee_fcn)) {
+      if (!used_info.isUsed(callee_fcn) && !no_spec) {
         continue;
       }
       if (!callee_fcn->isDeclaration()) {
@@ -621,7 +623,7 @@ void SpecAndersCS::addIndirCall(const PtstoSet &fcn_pts,
         }
         handleGraphChange(old_size, wl, priority);
       } else {
-        if (!used_info.isUsed(callee_fcn)) {
+        if (!used_info.isUsed(callee_fcn) && !no_spec) {
           continue;
         }
         // Get the nodes in our static Scc

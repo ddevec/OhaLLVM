@@ -25,7 +25,7 @@ void ProfileDisabler::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   usage.addRequired<UnusedFunctions>();
   usage.addRequired<CallContextLoader>();
   usage.addRequired<IndirFunctionInfo>();
-  usage.setPreservesAll();
+  // usage.setPreservesAll();
 }
 
 bool ProfileDisabler::runOnModule(llvm::Module &) {
@@ -60,7 +60,7 @@ void ProfileEnabler::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   usage.addRequired<UnusedFunctions>();
   usage.addRequired<CallContextLoader>();
   usage.addRequired<IndirFunctionInfo>();
-  usage.setPreservesAll();
+  // usage.setPreservesAll();
 }
 
 bool ProfileEnabler::runOnModule(llvm::Module &) {

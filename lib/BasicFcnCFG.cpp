@@ -13,13 +13,16 @@
 // Get callsite info...
 // Etc...
 
+// From cg.cpp... ugh hacky
+extern llvm::cl::opt<bool> no_spec;
+
 BasicFcnCFG::BasicFcnCFG(llvm::Module &m, DynamicInfo &di) {
   auto &dyn_info = di.used_info;
   auto &indir_info = di.indir_info;
   // Populate our SEG to contain all of the functions as nodes
   // Step one, add a node for each function
   for (auto &fcn : m) {
-    if (!dyn_info.isUsed(fcn)) {
+    if (!dyn_info.isUsed(fcn) && !no_spec) {
       continue;
     }
     auto node_id = fcnGraph_.addNode<FcnNode>(&fcn);
@@ -34,7 +37,7 @@ BasicFcnCFG::BasicFcnCFG(llvm::Module &m, DynamicInfo &di) {
 
     auto fcn_id = fcnMap_.at(&fcn);
     for (auto &bb : fcn) {
-      if (!dyn_info.isUsed(bb)) {
+      if (!dyn_info.isUsed(bb) && !no_spec) {
         continue;
       }
 
@@ -48,7 +51,7 @@ BasicFcnCFG::BasicFcnCFG(llvm::Module &m, DynamicInfo &di) {
 
           // Only consider direct calls...
           if (pdest_fcn != nullptr) {
-            assert(dyn_info.isUsed(pdest_fcn));
+            // assert(dyn_info.isUsed(pdest_fcn));
             /*
             llvm::dbgs() << "ci is: " << ValPrinter(ci) << "\n";
             llvm::dbgs() << "fcn is: " << ValPrinter(pdest_fcn) << "\n";

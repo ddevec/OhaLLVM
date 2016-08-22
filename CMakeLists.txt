@@ -165,6 +165,7 @@ set(SPECSFS_SOURCES
   lib/BasicFcnCFG.cpp
   lib/FcnCFG.cpp
   lib/CsCFG.cpp
+  lib/SpecCsCFG.cpp
   lib/CallDests.cpp
 
   lib/ExitInst.cpp

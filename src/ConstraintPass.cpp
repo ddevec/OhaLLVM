@@ -10,11 +10,7 @@
 
 using std::swap;
 
-llvm::cl::opt<bool>
-  do_spec("specsfs-do-spec", llvm::cl::init(false),
-      llvm::cl::value_desc("bool"),
-      llvm::cl::desc("Determines if specsfs should include speculative dynamic "
-        "runtime information"));
+extern llvm::cl::opt<bool> no_spec;
 
 // Error handling functions {{{
 // Don't warn about this (if it is an) unused function... I'm being sloppy
@@ -109,7 +105,7 @@ bool ConstraintPass::runOnModule(llvm::Module &m) {
   std::set<Cg *> visited;
   for (auto &fcn : m) {
     // Only evaluate used functions
-    if (!dyn_info.used_info.isUsed(fcn)) {
+    if (!dyn_info.used_info.isUsed(fcn) && !no_spec) {
       continue;
     }
     // Only consider functions with bodies..
