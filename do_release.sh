@@ -1,0 +1,8 @@
+#!/bin/bash
+
+homedir="$(dirname $(which $0))"
+
+cmake -G"Unix Makefiles" -DBUILD_SHARED_LIBS:BOOL=TRUE \
+	-DLLVM_PARALLEL_COMPILE_JOBS:STRING=8 -DLLVM_PARALLEL_LINK_JOBS:STRING=1 \
+	-DCMAKE_BUILD_TYPE:STRING=Release -DLLVM_TARGETS_TO_BUILD:STRING="X86" \
+	-DCMAKE_INSTALL_PREFIX:PATH=$homedir/prefix  $homedir
