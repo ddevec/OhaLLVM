@@ -19,7 +19,7 @@ function(add_bc_target TARGET_NAME)
   set(target_bc "${TARGET_NAME}.bc")
   
   add_custom_target(${target_bc} ALL
-    COMMAND "/home/ddevec/llvm-3.1/prefix/bin/clang++" -std=c++11 -stdlib=libstdc++ -I /usr/include/x86_64-linux-gnu/c++/4.8 -I /usr/include/c++/4.8 -O3 -g -c -emit-llvm -o ${target_bc} "${CMAKE_CURRENT_SOURCE_DIR}/${ARGN}"
+    COMMAND "$ENV{LLVM_DIR}/bin/clang++" -std=c++11 -stdlib=libstdc++ -I /usr/include/x86_64-linux-gnu/c++/4.8 -I /usr/include/c++/4.8 -O3 -g -c -emit-llvm -o ${target_bc} "${CMAKE_CURRENT_SOURCE_DIR}/${ARGN}"
     DEPENDS ${ARGN})
 
   #-L /usr/lib/gcc/x86_64-linux-gnu/4.8 
@@ -42,7 +42,7 @@ function(add_lint_command TARGET_NAME)
 
   add_custom_command(TARGET ${TARGET_NAME} 
     PRE_LINK
-    COMMAND "/home/ddevec/prefix/bin/cpplint.py" 
+    COMMAND "$ENV{SFS_TOOLS_DIR}/cpplint.py" 
     ARGS    "--counting=detailed"
             "--extensions=cpp,h"
             "--linelength=80"
