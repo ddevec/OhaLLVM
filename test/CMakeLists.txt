@@ -9,7 +9,7 @@
 function(create_dis TARGET_NAME)
   # message("Creating DIS: ${TARGET_NAME} : ${ARGN}")
   add_custom_command(OUTPUT ${TARGET_NAME} POST_BUILD
-    COMMAND "clang-3.1" -S -Wno-format-security -O0 -g -emit-llvm ${ARGN} -o ${TARGET_NAME}
+    COMMAND "$ENV{LLVM_DIR}/bin/clang-3.1" -S -Wno-format-security -O0 -g -emit-llvm ${ARGN} -o ${TARGET_NAME}
     DEPENDS ${ARGN}
     COMMENT  "Disassembling ${TARGET_NAME}"
     VERBATIM)
@@ -18,7 +18,7 @@ endfunction(create_dis)
 function(create_bc TARGET_NAME)
   # message("Creating bc: ${TARGET_NAME} : ${ARGN}")
   add_custom_command(OUTPUT ${TARGET_NAME} POST_BUILD
-    COMMAND "llvm-as" -o=${TARGET_NAME} ${ARGN}
+    COMMAND "$ENV{LLVM_DIR}/bin/llvm-as" -o=${TARGET_NAME} ${ARGN}
     DEPENDS ${ARGN}
     VERBATIM)
 endfunction(create_bc)
@@ -34,8 +34,8 @@ function(create_opt_with_dis OPT_FLAG OPT_SUFFIX opt_output)
 
 
     add_custom_command(OUTPUT ${output_var} POST_BUILD
-      COMMAND "opt" -${OPT_FLAG} ${f} > ${output_var}
-      COMMAND "llvm-dis" ${output_var}
+      COMMAND "$ENV{LLVM_DIR}/bin/opt" -${OPT_FLAG} ${f} > ${output_var}
+      COMMAND "$ENV{LLVM_DIR}/bin/llvm-dis" ${output_var}
       DEPENDS ${f}
       VERBATIM)
 
@@ -59,7 +59,7 @@ function(create_opt OPT_FLAG OPT_SUFFIX opt_output)
 
 
     add_custom_command(OUTPUT ${output_var} POST_BUILD
-      COMMAND "opt" -${OPT_FLAG} ${f} > ${output_var}
+      COMMAND "$ENV{LLVM_DIR}/bin/opt" -${OPT_FLAG} ${f} > ${output_var}
       DEPENDS ${f}
       VERBATIM)
 
@@ -73,7 +73,7 @@ endfunction(create_opt)
 function(llvm_compile TARGET_NAME OPTS)
 
   add_custom_target(${TARGET_NAME} ALL
-    COMMAND "clang-3.1" ${OPTS} -g -O0 -o ${TARGET_NAME} ${ARGN}
+    COMMAND "$ENV{LLVM_DIR}/bin/clang-3.1" ${OPTS} -g -O0 -o ${TARGET_NAME} ${ARGN}
     DEPENDS ${ARGN})
 
 endfunction(llvm_compile)
