@@ -89,13 +89,16 @@ bool FcnCFG::runOnModule(llvm::Module &m) {
           auto dests = call_info.getDests(cs);
 
           for (auto pdest_fcn : dests) {
-            assert(dyn_info.isUsed(pdest_fcn));
-            /*
-            llvm::dbgs() << "ci is: " << ValPrinter(ci) << "\n";
-            llvm::dbgs() << "fcn is: " << ValPrinter(pdest_fcn) << "\n";
-            */
-            auto dest_id = fcnMap_.at(pdest_fcn);
-            fcnGraph_.addPred(dest_id, fcn_id);
+            // This used to be an assert -- but due to the insanity of signals
+            //   messing with things in redis, this isn't necessarily true
+            if (dyn_info.isUsed(pdest_fcn)) {
+              /*
+              llvm::dbgs() << "ci is: " << ValPrinter(ci) << "\n";
+              llvm::dbgs() << "fcn is: " << ValPrinter(pdest_fcn) << "\n";
+              */
+              auto dest_id = fcnMap_.at(pdest_fcn);
+              fcnGraph_.addPred(dest_id, fcn_id);
+            }
           }
         } else if (auto ii = dyn_cast<llvm::InvokeInst>(pinst)) {
           llvm::dbgs() << "Unexpected invoke inst: " << *ii << "\n";

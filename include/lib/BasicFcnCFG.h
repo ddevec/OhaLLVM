@@ -107,7 +107,7 @@ class BasicFcnCFG {
 
   SEG fcnGraph_;
 
-  std::unordered_map<const llvm::Function *, SEG::NodeID> fcnMap_;
+  std::map<const llvm::Function *, SEG::NodeID> fcnMap_;
   std::vector<const llvm::Function *> idToFcn_;
 };
 

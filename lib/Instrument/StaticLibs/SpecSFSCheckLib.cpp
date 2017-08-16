@@ -4,6 +4,10 @@
 
 #include <execinfo.h>
 
+#include <signal.h>
+#include <sys/types.h>
+#include <unistd.h>
+
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -54,6 +58,22 @@ static void print_trace(void) {
   }
 
   free(strings);
+}
+
+int parent_pid = 1;
+[[ gnu::constructor ]]
+static void premain(void) {
+  parent_pid = getpid();
+}
+
+[[ gnu::unused ]]
+static void do_exit(void) {
+  std::cerr << "MisSpecFinish" << std::endl;
+  std::cerr.flush();
+  if (getpid() != parent_pid) {
+    kill(parent_pid, SIGQUIT);
+  }
+  kill(getpid(), SIGQUIT);
 }
 
 
@@ -207,8 +227,8 @@ void __specsfs_callstack_check(int32_t check_id, int32_t size, int32_t **ids,
       }
       std::cerr << " }" << std::endl;
 
-      print_trace();
-      abort();
+      // print_trace();
+      do_exit();
     }
   }
 }
@@ -368,7 +388,8 @@ void __DynPtsto_do_visit(int32_t val_id, void *addr) {
 void __specsfs_visit_fcn(int32_t id) {
   std::cerr << "Visit failed!\n";
   std::cerr << "Visit id: " << id << "\n";
-  abort();
+  // print_trace();
+  do_exit();
 }
 
 void __specsfs_set_check_fcn(int32_t id,
@@ -417,8 +438,8 @@ void __specsfs_set_check_fcn(int32_t id,
     }
     std::cerr << std::endl;
     std::cerr << "id is: " << id << std::endl;
-    print_trace();
-    abort();
+    // print_trace();
+    do_exit();
   }
 }
 

@@ -805,6 +805,25 @@ llvm::AliasAnalysis::AliasResult SpecAnders::alias(const Location &L1,
   auto v1 = L1.Ptr;
   auto v2 = L2.Ptr;
 
+  // If either of the pointers are a constant pointer-to-int return false
+  auto check_const = [](const llvm::Value *v) {
+    if (auto ce = dyn_cast<llvm::ConstantExpr>(v)) {
+      // if c is a constexpr
+      if (ce->getOpcode() == llvm::Instruction::IntToPtr) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  if (check_const(v1)) {
+    return NoAlias;
+  }
+
+  if (check_const(v2)) {
+    return NoAlias;
+  }
+
   auto pv1_pts = ptsCacheGet(v1);
   auto pv2_pts = ptsCacheGet(v2);
 

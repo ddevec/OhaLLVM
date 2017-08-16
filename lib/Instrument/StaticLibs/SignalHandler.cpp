@@ -60,6 +60,53 @@ static void term_handler(int signo) {
   _exit(signo);
 }
 
+// typedef void (*sigcall_t )(int, siginfo_t *, void *);
+typedef void (*sigcall_t )(int);
+static sigcall_t reset_shims[] = {
+  NULL,  // 0  - ?
+  NULL,   // SIGHUP - 1
+  NULL,   // SIGINT
+  NULL,   // SIGQUIT
+  NULL,   // SIGILL
+  NULL,  // SIGTRAP - 5
+  NULL,   // SIGABRT
+  NULL,   // SIGBUS - 7
+  NULL,   // SIGFPE
+  NULL,   // SIGKILL
+  NULL,   // SIGUSR1
+  NULL,   // SIGSEGV
+  NULL,   // SIGUSR2
+  NULL,   // SIGPIPE - 13
+  NULL,   // SIGALRM
+  NULL,   // SIGTERM
+  NULL,   // SIGSTKFLT
+  NULL,  // SIGCHLD - 17
+  NULL,  // SIGCONT
+  NULL,  // SIGSTOP
+  NULL,  // SIGTSTP
+  NULL,  // SIGTTIN
+  NULL,  // SIGTTOU
+  NULL,  // SIGURG
+  NULL,   // SIGXCPU
+  NULL,   // SIGXFSZ
+  NULL,   // SIGVTALRM
+  NULL,   // SIGPROF
+  NULL,  // SIGWINCH
+  NULL,   // SIGIO
+  NULL,   // SIGPWR
+  NULL,   // SIGSYS
+};
+
+static void reset_handler(int signo) {
+  struct sigaction act;
+  sigemptyset(&act.sa_mask);
+  act.sa_flags = 0;
+  act.sa_handler = term_handler;
+  sigaction(signo, &act, nullptr);
+
+  reset_shims[signo](signo);
+}
+
 /*
 static void term_action(int signo, siginfo_t *, void *) {
   term_handler(signo);
@@ -89,7 +136,7 @@ int __SignalHandlers_sigaction_shim(int signo,
     const struct sigaction *act,
     struct sigaction *oldact) {
   // I dont handle SA_RESETHAND -- unless I have to
-  assert((act->sa_flags & SA_RESETHAND) == 0);
+  // assert((act->sa_flags & SA_RESETHAND) && signal_is_term[signo] == false);
   int ret = 0;
 
   /*
@@ -99,9 +146,22 @@ int __SignalHandlers_sigaction_shim(int signo,
 
   // If they are setting the handler, do that
   if (act->sa_flags & SA_SIGINFO) {
+    // If its not a term operation
     if (act->sa_handler != SIG_DFL || !signal_is_term[signo]) {
       // ofil << "wrap non-dfl" << std::endl;;
-      ret = sigaction(signo, act, oldact);
+      if ((act->sa_flags & SA_RESETHAND) && signal_is_term[signo] == false) {
+        struct sigaction newact;
+        memcpy(static_cast<void *>(&newact),
+            static_cast<const void *>(act), sizeof(newact));
+        newact.sa_flags &= ~SA_RESETHAND;
+        reset_shims[signo] = act->sa_handler;
+        newact.sa_handler = reset_handler;
+        ret = sigaction(signo, &newact, oldact);
+      } else {
+        ret = sigaction(signo, act, oldact);
+      }
+
+    // If its a term operation
     } else {
       struct sigaction new_act;
       memcpy(&new_act, act, sizeof(new_act));
@@ -111,7 +171,17 @@ int __SignalHandlers_sigaction_shim(int signo,
     }
   } else {
     // ofil << "wrap sigaction" << std::endl;;
-    ret = sigaction(signo, act, oldact);
+    if ((act->sa_flags & SA_RESETHAND) && signal_is_term[signo] == false) {
+      struct sigaction newact;
+      memcpy(static_cast<void *>(&newact),
+          static_cast<const void *>(act), sizeof(newact));
+      newact.sa_flags &= ~SA_RESETHAND;
+      reset_shims[signo] = act->sa_handler;
+      newact.sa_handler = reset_handler;
+      ret = sigaction(signo, &newact, oldact);
+    } else {
+      ret = sigaction(signo, act, oldact);
+    }
     /*
     if (act->sa_sigaction != SIG_DFL || !signal_is_term(signo)) {
     } else {

@@ -4,10 +4,11 @@
 
 #include "include/lib/BasicFcnCFG.h"
 
+#include <string>
+
 #include "include/lib/CallDests.h"
 #include "include/Tarjans.h"
 #include "include/LLVMHelper.h"
-
 
 // Add Function CFG stuff here
 // Get callsite info...
@@ -26,15 +27,17 @@ BasicFcnCFG::BasicFcnCFG(llvm::Module &m, DynamicInfo &di) {
       continue;
     }
     auto node_id = fcnGraph_.addNode<FcnNode>(&fcn);
+    // llvm::dbgs() << "Adding fcn: " << fcn.getName() << ": " << &fcn << "\n";
     fcnMap_.emplace(&fcn, node_id);
   }
 
   // Add edges for all of the callsites
   for (auto &fcn : m) {
-    if (!dyn_info.isUsed(fcn)) {
+    if (!dyn_info.isUsed(fcn) && !no_spec) {
       continue;
     }
 
+    // llvm::dbgs() << "Getting fcn: " << fcn.getName() << ": " << &fcn << "\n";
     auto fcn_id = fcnMap_.at(&fcn);
     for (auto &bb : fcn) {
       if (!dyn_info.isUsed(bb) && !no_spec) {
@@ -52,13 +55,16 @@ BasicFcnCFG::BasicFcnCFG(llvm::Module &m, DynamicInfo &di) {
           // Only consider direct calls...
           if (pdest_fcn != nullptr) {
             // assert(dyn_info.isUsed(pdest_fcn));
-            /*
-            llvm::dbgs() << "ci is: " << ValPrinter(ci) << "\n";
-            llvm::dbgs() << "fcn is: " << ValPrinter(pdest_fcn) << "\n";
-            */
-            auto dest_id = fcnMap_.at(pdest_fcn);
-            fcnGraph_.addPred(dest_id, fcn_id);
-
+            // llvm::dbgs() << "    ci is: " << ValPrinter(ci) << "\n";
+            // llvm::dbgs() << "    fcn is: " << ValPrinter(pdest_fcn) << "\n";
+            // Its possible we didn't reach this point -- although we reached
+            // points before it, because of interruptions in control flow --
+            // e.g. signals.
+            auto it = fcnMap_.find(pdest_fcn);
+            if (it != std::end(fcnMap_)) {
+              auto dest_id = it->second;
+              fcnGraph_.addPred(dest_id, fcn_id);
+            }
           // Unless we have indir info
           } else {
             if (indir_info.hasInfo()) {

@@ -33,7 +33,7 @@ class ValueMap {
   struct id_tag { };
 
  public:
-  static const int32_t AllocReserveCount = 1000000;
+  static const int32_t AllocReserveCount = 10000000;
   typedef util::ID<id_tag, int32_t, -1> Id;
 
   // Constants {{{
@@ -146,7 +146,8 @@ class ValueMap {
       auto it = constMap_.find(c);
       if (it == std::end(constMap_)) {
         llvm::dbgs() << "No entry for constant: " << *c << "\n";
-        assert(0);
+        // assert(0);
+        llvm_unreachable("unknown contant");
       }
       ret.emplace(it->second);
     } else {

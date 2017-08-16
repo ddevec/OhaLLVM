@@ -362,7 +362,7 @@ struct PthreadCreateCons {
 
 
     // FIXME(ddevec) -- handle the indir fcn call
-    llvm_unreachable("pthread_create call unhandled?");
+    // llvm_unreachable("pthread_create call unhandled?");
 
     // Now, copy arg into the function's argument:
     auto fcn_arg = cg.vals().getDef(&(*fcn->arg_begin()));
