@@ -81,7 +81,7 @@ endfunction(add_cpplint_target)
 
 include_directories( . ${PROJECT_SOURCE_DIR}/include )
 
-find_package(LLVM REQUIRED CONFIG)
+find_package(LLVM REQUIRED CONFIG PATHS $ENV{LLVM_DIR})
 
 include(AddLLVM)
 
