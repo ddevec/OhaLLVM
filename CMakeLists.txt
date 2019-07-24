@@ -42,7 +42,7 @@ function(add_lint_command TARGET_NAME)
 
   add_custom_command(TARGET ${TARGET_NAME} 
     PRE_LINK
-    COMMAND "$ENV{SFS_TOOLS_DIR}/cpplint.py" 
+    COMMAND "${PROJECT_SOURCE_DIR}/scripts/cpplint.py" 
     ARGS    "--counting=detailed"
             "--extensions=cpp,h"
             "--linelength=80"
