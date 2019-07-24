@@ -12,21 +12,21 @@
 #include <sstream>
 #include <vector>
 
-#include "llvm/BasicBlock.h"
-#include "llvm/Constants.h"
-#include "llvm/DerivedTypes.h"
-#include "llvm/Function.h"
-#include "llvm/GlobalVariable.h"
-#include "llvm/Instructions.h"
-#include "llvm/InlineAsm.h"
-#include "llvm/Module.h"
 #include "llvm/Pass.h"
-#include "llvm/PassManager.h"
-#include "llvm/Support/CallSite.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/CallSite.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/PassManager.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FormattedStream.h"
-#include "llvm/Support/InstIterator.h"
 #include "llvm/Support/MathExtras.h"
 
 #include "include/LLVMHelper.h"
@@ -210,7 +210,9 @@ bool InstrIndirCalls::runOnModule(llvm::Module &m) {
       std::vector<llvm::Constant *> gep_indicies;
       gep_indicies.push_back(llvm::ConstantInt::get(i32_type, 0, false));
       gep_indicies.push_back(llvm::ConstantInt::get(i64_type, i, false));
-      auto store_pos = llvm::ConstantExpr::getGetElementPtr(fcn_lookup_array,
+      auto store_pos = llvm::ConstantExpr::getGetElementPtr(
+          fcn_lookup_array->getType(),
+          fcn_lookup_array,
           gep_indicies);
       new llvm::StoreInst(fcn_void_ptr, store_pos, false, init_entry);
     }

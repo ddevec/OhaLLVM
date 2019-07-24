@@ -10,17 +10,16 @@
 
 #include "llvm/Pass.h"
 #include "llvm/PassSupport.h"
-#include "llvm/Function.h"
+#include "llvm/IR/Function.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Analysis/ProfileInfo.h"
-#include "llvm/Constants.h"
-#include "llvm/IntrinsicInst.h"
-#include "llvm/Module.h"
-#include "llvm/Support/CFG.h"
-#include "llvm/Support/GetElementPtrTypeIterator.h"
-#include "llvm/Support/InstIterator.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/CFG.h"
+#include "llvm/IR/GetElementPtrTypeIterator.h"
+#include "llvm/IR/InstIterator.h"
 
 
 class TestAA : public llvm::ModulePass {
@@ -30,7 +29,7 @@ class TestAA : public llvm::ModulePass {
 
   void getAnalysisUsage(llvm::AnalysisUsage &usage) const {
     usage.setPreservesAll();
-    usage.addRequired<llvm::AliasAnalysis>();
+    usage.addRequired<llvm::AAResultsWrapperPass>();
     usage.addRequired<UnusedFunctions>();
   }
 
@@ -51,13 +50,13 @@ class TestAA : public llvm::ModulePass {
       }
     }
 
-    auto &aa = getAnalysis<llvm::AliasAnalysis>();
+    auto &aa = getAnalysis<llvm::AAResultsWrapperPass>().getAAResults();
 
-    aa.deleteValue(first_ptr);
+    // aa.deleteValue(first_ptr);
 
-    if (aa.alias(llvm::AliasAnalysis::Location(first_ptr, 1),
-         llvm::AliasAnalysis::Location(second_ptr, 1)) ==
-        llvm::AliasAnalysis::MayAlias) {
+    if (aa.alias(llvm::MemoryLocation(first_ptr, 1),
+         llvm::MemoryLocation(second_ptr, 1)) ==
+        llvm::AliasResult::MayAlias) {
       llvm::dbgs() << "may alias!!\n";
     }
 

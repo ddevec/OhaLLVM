@@ -13,10 +13,10 @@
 #include <utility>
 #include <vector>
 
-#include "llvm/Constants.h"
-#include "llvm/DerivedTypes.h"
-#include "llvm/Instructions.h"
-#include "llvm/Module.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Module.h"
 
 #include "include/CallInfo.h"
 #include "include/Cg.h"
@@ -69,9 +69,7 @@ static const llvm::Type *findLargestType(ModInfo &info,
   }
 
   // now, see how each use is cast...
-  std::for_each(ins.use_begin(), ins.use_end(),
-      [&max_size, &found, &biggest_type, &info]
-      (const llvm::User *use) {
+  for (auto &use : ins.uses()) {
     auto cast_inst = dyn_cast<llvm::CastInst>(use);
 
     if (cast_inst && llvm::isa<llvm::PointerType>(cast_inst->getType())) {
@@ -97,7 +95,7 @@ static const llvm::Type *findLargestType(ModInfo &info,
         biggest_type = cast_type;
       }
     }
-  });
+  }
 
   if (!found && max_size == 0 && conservative) {
     return info.getMaxStructInfo().type();
@@ -547,7 +545,7 @@ static llvm::Instruction *add_checked_strlen(
   llvm::BranchInst::Create(bb_succ, bb_strlen);
 
   // Now, add a phi to bb_succ
-  auto phi = llvm::PHINode::Create(i64_type, 2, "", std::begin(*bb_succ));
+  auto phi = llvm::PHINode::Create(i64_type, 2, "", &(*std::begin(*bb_succ)));
   phi->addIncoming(inc, bb_strlen);
   phi->addIncoming(llvm::ConstantInt::get(i64_type, 0), bb_prev);
 
@@ -616,7 +614,8 @@ struct CTypeAlloc {
     std::vector<llvm::Value *> indicies;
     indicies.push_back(llvm::ConstantInt::get(i32_type, -128));
 
-    auto gep = llvm::GetElementPtrInst::Create(ci, indicies);
+    auto pointee_type = llvm::GetElementPtrInst::getGEPReturnType(ci, indicies);
+    auto gep = llvm::GetElementPtrInst::Create(pointee_type, ci, indicies);
 
     // Insert the gep after "insert_after"
     gep->insertAfter(*insert_after);
@@ -708,7 +707,7 @@ struct ReturnArgOrMallocStrAlloc {
     llvm::BranchInst::Create(bb_succ, bb_strlen);
 
     // Now, add a phi to bb_succ
-    auto phi = llvm::PHINode::Create(i64_type, 2, "", std::begin(*bb_succ));
+    auto phi = llvm::PHINode::Create(i64_type, 2, "", &(*std::begin(*bb_succ)));
     phi->addIncoming(inc, bb_strlen);
     phi->addIncoming(arg, bb_prev);
 
@@ -797,7 +796,7 @@ struct ReturnArgOrStaticAlloc {
     llvm::BranchInst::Create(bb_succ, bb_strlen);
 
     // Now, add a phi to bb_succ
-    auto phi = llvm::PHINode::Create(i64_type, 2, "", std::begin(*bb_succ));
+    auto phi = llvm::PHINode::Create(i64_type, 2, "", &(*std::begin(*bb_succ)));
     phi->addIncoming(inc, bb_strlen);
     phi->addIncoming(llvm::ConstantInt::get(i64_type, 0), bb_prev);
 

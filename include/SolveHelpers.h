@@ -584,8 +584,13 @@ class BddPtstoSet {
           uglyBddVec_.emplace_back(x);
           uglyBddVec_.emplace_back(x | dont_care[0]);
         }
+        uglyBddVec_.emplace_back(base | dont_care[0]);
+        uglyBddVec_.emplace_back(base);
+        break;
       case 1:
         uglyBddVec_.emplace_back(base | dont_care[0]);
+        uglyBddVec_.emplace_back(base);
+        break;
       case 0:
         uglyBddVec_.emplace_back(base);
         break;

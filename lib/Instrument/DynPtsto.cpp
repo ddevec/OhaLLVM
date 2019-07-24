@@ -14,21 +14,21 @@
 #include <tuple>
 #include <vector>
 
-#include "llvm/BasicBlock.h"
-#include "llvm/Constants.h"
-#include "llvm/DerivedTypes.h"
-#include "llvm/Function.h"
-#include "llvm/GlobalVariable.h"
-#include "llvm/InstrTypes.h"
-#include "llvm/Instructions.h"
-#include "llvm/Module.h"
 #include "llvm/Pass.h"
-#include "llvm/PassManager.h"
-#include "llvm/Support/CallSite.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/CallSite.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/PassManager.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FormattedStream.h"
-#include "llvm/Support/InstIterator.h"
 #include "llvm/Support/MathExtras.h"
 
 #include "include/AllocInfo.h"
@@ -449,7 +449,8 @@ bool InstrDynPtsto::runOnModule(llvm::Module &m) {
             indicies.pop_back();
             indicies.push_back(llvm::ConstantInt::get(i32_type, 0));
             base_ptr =
-              llvm::GetElementPtrInst::Create(base_ptr, indicies, "", pgep);
+              llvm::GetElementPtrInst::Create(base_ptr->getType(), base_ptr,
+                  indicies, "", pgep);
 
             if (base_ptr->getType() != i8_ptr_type) {
               base_ptr = new llvm::BitCastInst(base_ptr, i8_ptr_type);
@@ -1119,22 +1120,22 @@ char DynPtstoLoader::ID = 0;
 char DynPtstoAA::ID = 0;
 
 void DynPtstoAA::getAnalysisUsage(llvm::AnalysisUsage &au) const {
-  au.addRequired<llvm::AliasAnalysis>();
+  au.addRequired<llvm::AAResultsWrapperPass>();
   au.addRequired<DynPtstoLoader>();
   au.setPreservesAll();
 }
 
 bool DynPtstoAA::runOnModule(llvm::Module &) {
-  InitializeAliasAnalysis(this);
+  // InitializeAliasAnalysis(this);
 
   // Setup map:
   dynPts_ = &getAnalysis<DynPtstoLoader>();
   return false;
 }
 
-llvm::AliasAnalysis::AliasResult DynPtstoAA::alias(
-    const AliasAnalysis::Location &L1,
-    const AliasAnalysis::Location &L2) {
+llvm::AliasResult DynPtstoAA::alias(
+    const llvm::MemoryLocation &L1,
+    const llvm::MemoryLocation &L2) {
   // Get the object of the location...
   // Now, go from here...
   // Get the objects:
@@ -1143,11 +1144,11 @@ llvm::AliasAnalysis::AliasResult DynPtstoAA::alias(
   auto &pts2 = dynPts_->getPtsto(L2.Ptr);
 
   if (pts1.empty() || pts2.empty()) {
-    return NoAlias;
+    return llvm::AliasResult::NoAlias;
   }
 
   if (!pts1.intersectsIgnoring(pts2, ValueMap::NullValue)) {
-    return NoAlias;
+    return llvm::AliasResult::NoAlias;
   }
 
   /*
@@ -1156,7 +1157,7 @@ llvm::AliasAnalysis::AliasResult DynPtstoAA::alias(
   llvm::dbgs() << "  " << pts2 << "\n";
   */
 
-  return AliasAnalysis::alias(L1, L2);
+  return llvm::AAResultBase<DynPtstoAA>::alias(L1, L2);
 }
 
 namespace llvm {
@@ -1166,7 +1167,7 @@ static RegisterPass<DynPtstoLoader> DynPtsLoadReg("dyn-loader",
 static RegisterPass<DynPtstoAA> DynPtsAAReg("dyn-aa",
     " dynamic ptsto aa set info, for use with SpecSFS",
     false, true);
-RegisterAnalysisGroup<AliasAnalysis> DynPtsAAAnalysisReg(DynPtsAAReg);
+// RegisterAnalysisGroup<AliasAnalysis> DynPtsAAAnalysisReg(DynPtsAAReg);
 }
 // }}}
 

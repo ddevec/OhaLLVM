@@ -14,12 +14,12 @@
 
 #include "llvm/Pass.h"
 #include "llvm/PassSupport.h"
-#include "llvm/Function.h"
+#include "llvm/IR/Function.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Analysis/ProfileInfo.h"
+// #include "llvm/Analysis/ProfileInfo.h"
 
 #include "include/BloomHash.h"
 #include "include/ConstraintPass.h"
@@ -65,7 +65,8 @@ static size_t bloom_hash(size_t ukey) {
 
 
 using llvm::AliasAnalysis;
-typedef AliasAnalysis::Location Location;
+using llvm::AliasResult;
+typedef llvm::MemoryLocation Location;
 
 static bool isGiriCall(const llvm::Function *dir_fcn) {
   if (dir_fcn->getName() == "recordLock") {
@@ -200,7 +201,7 @@ void SpecSFSInstrumenter::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   usage.addRequired<IndirFunctionInfo>();
 
   // We require SpecSFS, to provide assumptions and ObjID->llvm::Value mappings
-  usage.addRequired<llvm::AliasAnalysis>();
+  // usage.addRequired<llvm::AliasAnalysis>();
 }
 
 SpecSFSInstrumenter::SpecSFSInstrumenter() : llvm::ModulePass(ID) { }
@@ -319,7 +320,7 @@ static free_location_multimap findFreeLocs(llvm::Module &m, UnusedFunctions &uf,
               for (auto &alloc : allocs) {
                 for (auto free_arg : free_info) {
                   if (aa.alias(Location(free_arg), Location(alloc)) !=
-                      AliasAnalysis::NoAlias) {
+                      AliasResult::NoAlias) {
                     free_locs.emplace(map.getDef(alloc),
                         free_arg);
                   }
@@ -469,7 +470,9 @@ SpecSFSInstrumenter::getCheckData(llvm::Module &m,
         { llvm::ConstantInt::get(int32Type_, 0),
           llvm::ConstantInt::get(int32Type_, 0) };
     // And bitcast that to an int32PtrType_
-    auto gep = llvm::ConstantExpr::getInBoundsGetElementPtr(sub_array,
+    auto gep = llvm::ConstantExpr::getInBoundsGetElementPtr(
+        sub_array->getType(),
+        sub_array,
         indicies);
     llvm::dbgs() << "have gep: " << ValPrinter(gep) << "\n";
     glbl_array_data.push_back(gep);
@@ -488,7 +491,8 @@ SpecSFSInstrumenter::getCheckData(llvm::Module &m,
       { llvm::ConstantInt::get(int32Type_, 0),
         llvm::ConstantInt::get(int32Type_, 0) };
   // And bitcast that to an int32PtrType_
-  auto gep = llvm::ConstantExpr::getInBoundsGetElementPtr(gv, indicies);
+  auto gep = llvm::ConstantExpr::getInBoundsGetElementPtr(gv->getType(),
+      gv, indicies);
 
   return std::make_pair(llvm::ConstantInt::get(int32Type_, data.size()), gep);
 }
@@ -518,7 +522,9 @@ llvm::Constant *SpecSFSInstrumenter::BloomFilterToPointer(
         llvm::ConstantInt::get(int64Type_, 0) };
 
   // And bitcast that to an int64PtrType_
-  auto array_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(glbl_array,
+  auto array_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+      glbl_array->getType(),
+      glbl_array,
       indicies);
 
   return array_ptr;
@@ -712,7 +718,7 @@ bool SpecSFSInstrumenter::addCallstackChecks(llvm::Module &m,
 bool SpecSFSInstrumenter::runOnModule(llvm::Module &m) {
   setupTypes(m);
 
-  auto &aa = getAnalysis<AliasAnalysis>();
+  auto &aa = getAnalysis<llvm::AAResultsWrapperPass>().getAAResults();
   auto &uf = getAnalysis<UnusedFunctions>();
   auto &indir = getAnalysis<IndirFunctionInfo>();
 

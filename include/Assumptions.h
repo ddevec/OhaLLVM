@@ -17,9 +17,9 @@
 #include "include/ExtInfo.h"
 #include "include/SolveHelpers.h"
 
-#include "llvm/Constants.h"
-#include "llvm/Function.h"
-#include "llvm/Module.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/Module.h"
 
 // Okay how to handle this...
 // Assumptions have dependencies...

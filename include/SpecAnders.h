@@ -16,7 +16,7 @@
 #include "include/ConstraintPass.h"
 
 #include "llvm/Pass.h"
-#include "llvm/Function.h"
+#include "llvm/IR/Function.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/CommandLine.h"
@@ -26,8 +26,9 @@
 // Graph (DUG), these methods mostly operate on them.
 
 class SpecAnders : public llvm::ModulePass,
-                public llvm::AliasAnalysis {
+                public llvm::AAResultBase<SpecAnders> {
  public:
+  friend AAResultBase<SpecAnders>;
   static char ID;
   SpecAnders();
   explicit SpecAnders(char &id);
@@ -36,15 +37,17 @@ class SpecAnders : public llvm::ModulePass,
 
   void getAnalysisUsage(llvm::AnalysisUsage &usage) const;
 
-  virtual void *getAdjustedAnalysisPointer(llvm::AnalysisID PI) {
-    if (PI == &AliasAnalysis::ID) {
-      // return (llvm::AliasAnalysis *)this;
+  /* FIXME: Wire this into the actual AA infrastructure... later */
+  /*
+  void *getAdjustedAnalysisPointer(llvm::AnalysisID PI) override {
+    if (PI == &llvm::AliasAnalysis::ID) {
       return static_cast<llvm::AliasAnalysis *>(this);
     }
     return this;
   }
+  */
 
-  const char *getPassName() const override {
+  llvm::StringRef getPassName() const override {
     return "SpecAnders";
   }
 
@@ -53,19 +56,19 @@ class SpecAnders : public llvm::ModulePass,
       const llvm::Value *v2, unsigned v2size) override;
       */
 
-  virtual AliasAnalysis::AliasResult alias(const AliasAnalysis::Location &L1,
-      const AliasAnalysis::Location &L2);
+  virtual llvm::AliasResult alias(const llvm::MemoryLocation &L1,
+      const llvm::MemoryLocation &L2);
 
-  virtual AliasAnalysis::ModRefResult getModRefInfo(llvm::ImmutableCallSite CS,
-                             const llvm::AliasAnalysis::Location &Loc);
-  virtual AliasAnalysis::ModRefResult getModRefInfo(llvm::ImmutableCallSite CS1,
+  virtual llvm::ModRefInfo getModRefInfo(llvm::ImmutableCallSite CS,
+                             const llvm::MemoryLocation &Loc);
+  virtual llvm::ModRefInfo getModRefInfo(llvm::ImmutableCallSite CS1,
                                      llvm::ImmutableCallSite CS2);
   /*
   void getMustAliases(llvm::Value *P,
       std::vector<llvm::Value*> &RetVals);
   */
   // Do not use it.
-  bool pointsToConstantMemory(const AliasAnalysis::Location &Loc,
+  bool pointsToConstantMemory(const llvm::MemoryLocation &Loc,
       bool OrLocal = false);
 
   /*

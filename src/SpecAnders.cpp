@@ -24,13 +24,13 @@
 
 #include "llvm/Pass.h"
 #include "llvm/PassSupport.h"
-#include "llvm/Function.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/InstIterator.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Analysis/ProfileInfo.h"
+// #include "llvm/Analysis/ProfileSummaryInfo.h"
 
 #include "include/Cg.h"
 #include "include/ConstraintPass.h"
@@ -118,18 +118,24 @@ static llvm::cl::opt<bool>
         "points-to to"));
 
 // Constructor
-SpecAnders::SpecAnders() : llvm::ModulePass(ID) { }
+SpecAnders::SpecAnders() : llvm::ModulePass(ID),
+  llvm::AAResultBase<SpecAnders>() { }
 char SpecAnders::ID = 0;
 namespace llvm {
   static RegisterPass<SpecAnders>
       SpecAndersRP("SpecAnders", "Speculative Andersens Analysis", false, true);
+  /*
   RegisterAnalysisGroup<AliasAnalysis> SpecAndersRAG(SpecAndersRP);
+  INITIALIZE_PASS_BEGIN(SpecAnders, "SpecAnders", "Speculative Andersens Analysis", false, true);
+  INITIALIZE_PASS_END(SpecAnders, "SpecAnders", "Speculative Andersens Analysis", false, true);
+  */
+
 }  // namespace llvm
 
 void SpecAnders::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   // Because we're an AliasAnalysis
   // AliasAnalysis::getAnalysisUsage(usage);
-  usage.addRequired<llvm::AliasAnalysis>();
+  usage.addRequired<llvm::AAResultsWrapperPass>();
   usage.setPreservesAll();
 
   // Calculates the constraints for this module for both sfs and andersens
@@ -146,13 +152,14 @@ void SpecAnders::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   usage.addRequired<CallContextLoader>();
   // For dynamic ptsto removal
   // usage.addRequired<DynPtstoLoader>();
-  usage.addRequired<llvm::ProfileInfo>();
+  // usage.addRequired<llvm::ProfileSummaryInfo>();
 }
 
 bool SpecAnders::runOnModule(llvm::Module &m) {
   // Set up our alias analysis
   // -- This is required for the llvm AliasAnalysis interface
-  InitializeAliasAnalysis(this);
+  // FIXME(ddevec): fix for new alias analysis interface
+  // InitializeAliasAnalysis(this);
 
   if (glbl_name != "") {
     llvm::dbgs() << "Got debug gv: " << glbl_name << "\n";
@@ -800,8 +807,8 @@ PtstoSet *SpecAnders::ptsCacheGet(const llvm::Value *val) {
   return &rc.first->second;
 }
 
-llvm::AliasAnalysis::AliasResult SpecAnders::alias(const Location &L1,
-                                            const Location &L2) {
+llvm::AliasResult SpecAnders::alias(const llvm::MemoryLocation &L1,
+                                            const llvm::MemoryLocation &L2) {
   auto v1 = L1.Ptr;
   auto v2 = L2.Ptr;
 
@@ -817,11 +824,11 @@ llvm::AliasAnalysis::AliasResult SpecAnders::alias(const Location &L1,
   };
 
   if (check_const(v1)) {
-    return NoAlias;
+    return llvm::AliasResult::NoAlias;
   }
 
   if (check_const(v2)) {
-    return NoAlias;
+    return llvm::AliasResult::NoAlias;
   }
 
   auto pv1_pts = ptsCacheGet(v1);
@@ -832,7 +839,7 @@ llvm::AliasAnalysis::AliasResult SpecAnders::alias(const Location &L1,
     llvm::dbgs() << "Anders couldn't find node: " << obj_id1 <<
       << " " << FullValPrint(obj_id1, omap_) << "\n";
     */
-    return AliasAnalysis::alias(L1, L2);
+    return llvm::AAResultBase<SpecAnders>::alias(L1, L2);
   }
 
   if (pv2_pts == nullptr) {
@@ -840,7 +847,7 @@ llvm::AliasAnalysis::AliasResult SpecAnders::alias(const Location &L1,
     llvm::dbgs() << "Anders couldn't find node: " << obj_id2 <<
       << " " << FullValPrint(obj_id2, omap_) << "\n";
     */
-    return AliasAnalysis::alias(L1, L2);
+    return llvm::AAResultBase<SpecAnders>::alias(L1, L2);
   }
 
   auto &pts1 = *pv1_pts;
@@ -850,31 +857,31 @@ llvm::AliasAnalysis::AliasResult SpecAnders::alias(const Location &L1,
 
   // If either of the sets point to nothing, no alias
   if (pts1.empty() || pts2.empty()) {
-    return NoAlias;
+    return llvm::AliasResult::NoAlias;
   }
 
   // Check to see if the two pointers are known to not alias.  They don't alias
   // if their points-to sets do not intersect.
   if (!pts1.intersectsIgnoring(pts2,
         ValueMap::NullValue)) {
-    return NoAlias;
+    return llvm::AliasResult::NoAlias;
   }
 
-  return AliasAnalysis::alias(L1, L2);
+  return llvm::AAResultBase<SpecAnders>::alias(L1, L2);
 }
 
-llvm::AliasAnalysis::ModRefResult SpecAnders::getModRefInfo(
-    llvm::ImmutableCallSite CS, const llvm::AliasAnalysis::Location &Loc) {
-  return AliasAnalysis::getModRefInfo(CS, Loc);
+llvm::ModRefInfo SpecAnders::getModRefInfo(
+    llvm::ImmutableCallSite CS, const llvm::MemoryLocation &Loc) {
+  return llvm::AAResultBase<SpecAnders>::getModRefInfo(CS, Loc);
 }
 
-llvm::AliasAnalysis::ModRefResult SpecAnders::getModRefInfo(
+llvm::ModRefInfo SpecAnders::getModRefInfo(
     llvm::ImmutableCallSite CS1, llvm::ImmutableCallSite CS2) {
-  return AliasAnalysis::getModRefInfo(CS1, CS2);
+  return llvm::AAResultBase<SpecAnders>::getModRefInfo(CS1, CS2);
 }
 
-bool SpecAnders::pointsToConstantMemory(const AliasAnalysis::Location &loc,
+bool SpecAnders::pointsToConstantMemory(const llvm::MemoryLocation &loc,
     bool or_local) {
-  return AliasAnalysis::pointsToConstantMemory(loc, or_local);
+  return llvm::AAResultBase<SpecAnders>::pointsToConstantMemory(loc, or_local);
 }
 

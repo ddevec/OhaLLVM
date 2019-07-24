@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.3.4)
 
 #set(CMAKE_CXX_COMPILER clang++-libc++)
 #set(CMAKE_CXX_COMPILER g++)
@@ -81,9 +81,8 @@ endfunction(add_cpplint_target)
 
 include_directories( . ${PROJECT_SOURCE_DIR}/include )
 
-find_package(LLVM REQUIRED CONFIG PATHS $ENV{LLVM_DIR})
-
-include(AddLLVM)
+#find_package(LLVM REQUIRED CONFIG PATHS $ENV{LLVM_DIR})
+find_package(LLVM REQUIRED CONFIG)
 
 add_definitions(${LLVM_DEFINITOINS})
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
@@ -91,6 +90,8 @@ include_directories(/home/ddevec/prefix/include)
 link_directories(${LLVM_LIBRARY_DIRS} /home/ddevec/prefix/lib)
 
 list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
+include(AddLLVM)
+
 
 #FIXME... Shouldn't do this with full release
 #set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-ggdb3 -O1")
@@ -102,8 +103,8 @@ set(CMAKE_CXX_FLAGS_DEBUG "-Og -g")
 
 #set(CMAKE_CXX_COMPILER "g++-5")
 #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -flto -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -std=c++14 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -std=c++17 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
 #set(CMAKE_CXX_LINKER_FLAGS "${CMAKE_CXX_LINKER_FLAGS} -flto")
 #set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -flto")
 
@@ -218,6 +219,9 @@ set(SPECSFS_HEADERS
 
 add_llvm_loadable_module(SpecSFS
     ${SPECSFS_SOURCES}
+
+    PLUGIN_TOOL
+    opt
   )
 
 target_link_libraries(SpecSFS
@@ -313,6 +317,6 @@ add_executable(merge_callstacks
   )
 add_cpplint_target(merge_callstacks tools/merge_callstacks.cpp)
 
-add_subdirectory(test)
+#add_subdirectory(test)
 #add_subdirectory(unit_test)
 

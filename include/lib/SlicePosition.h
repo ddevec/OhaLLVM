@@ -5,12 +5,12 @@
 #ifndef INCLUDE_LIB_SLICEPOSITION_H_
 #define INCLUDE_LIB_SLICEPOSITION_H_
 
-#include "llvm/Constants.h"
-#include "llvm/Function.h"
-#include "llvm/Module.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/InstIterator.h"
 
 class SlicePosition {
  public:
@@ -39,7 +39,7 @@ class SlicePosition {
   const llvm::Instruction *inst(const llvm::Module &m) const {
     auto fcn_it = std::begin(m);
     std::advance(fcn_it, fcnNum_);
-    auto inst_it = inst_begin(fcn_it);
+    auto inst_it = inst_begin(&(*fcn_it));
     std::advance(inst_it, instNum_);
 
     return &(*inst_it);

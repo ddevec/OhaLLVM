@@ -15,7 +15,7 @@ char CallDests::ID = 0;
 CallDests::CallDests() : llvm::ModulePass(ID) { }
 
 using llvm::AliasAnalysis;
-typedef AliasAnalysis::Location Location;
+typedef llvm::MemoryLocation Location;
 
 namespace llvm {
   static RegisterPass<CallDests>
@@ -32,14 +32,14 @@ void CallDests::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   usage.addRequired<IndirFunctionInfo>();
 
   // For function numbering?
-  usage.addRequired<AliasAnalysis>();
+  usage.addRequired<llvm::AAResultsWrapperPass>();
 
   usage.addRequired<UnusedFunctions>();
 }
 
 bool CallDests::runOnModule(llvm::Module &m) {
   // Load all of our used analysis
-  alias_ = &getAnalysis<AliasAnalysis>();
+  alias_ = &getAnalysis<llvm::AAResultsWrapperPass>().getAAResults();
   indirInfo_ = &getAnalysis<IndirFunctionInfo>();
   auto &dyn_info = getAnalysis<UnusedFunctions>();
 
@@ -123,7 +123,7 @@ CallDests::populateCs(llvm::ImmutableCallSite &cs) const {
 
       for (auto &fcn : fcns_) {
         if (alias_->alias(Location(called_value),
-              Location(fcn)) != AliasAnalysis::NoAlias) {
+              Location(fcn)) != llvm::AliasResult::NoAlias) {
           ret.push_back(fcn);
         }
       }

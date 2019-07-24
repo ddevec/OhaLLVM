@@ -26,7 +26,7 @@
 #include "include/lib/UnusedFunctions.h"
 
 #include "llvm/Pass.h"
-#include "llvm/Function.h"
+#include "llvm/IR/Function.h"
 
 // Pass determining call/return context info for each function
 class ContextInfo : public llvm::ModulePass {
@@ -199,7 +199,7 @@ class ContextInfo : public llvm::ModulePass {
 
   void getAnalysisUsage(llvm::AnalysisUsage &usage) const;
 
-  const char *getPassName() const override {
+  llvm::StringRef getPassName() const override {
     return "ContextInfo";
   }
 

@@ -13,7 +13,7 @@
 #include <string>
 
 #ifndef SPECSFS_IS_TEST
-#include "llvm/Module.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/raw_os_ostream.h"
 #include "llvm/Support/Debug.h"
 #endif
@@ -78,9 +78,14 @@ const target_type *dyn_cast(const base_type *b) {
 #  define dbg_ostream llvm::raw_os_ostream
 #  define unreachable(X) llvm_unreachable(X)
 
+/*
 #define cast llvm::cast
 #define dyn_cast llvm::dyn_cast
 #define dyn_cast_or_null llvm::dyn_cast_or_null
+*/
+using llvm::dyn_cast;
+using llvm::cast;
+using llvm::dyn_cast_or_null;
 #endif
 
 [[ gnu::unused ]]

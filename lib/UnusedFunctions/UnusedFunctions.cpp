@@ -6,7 +6,7 @@
 
 #include "lib/EdgeCountPass.h"
 
-#include "llvm/Function.h"
+#include "llvm/IR/Function.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 

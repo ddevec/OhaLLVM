@@ -16,19 +16,19 @@
 #include "include/lib/IndirFcnTarget.h"
 #include "include/lib/EdgeCountPass.h"
 
-#include "llvm/Constants.h"
 #include "llvm/Pass.h"
 #include "llvm/PassSupport.h"
-#include "llvm/Function.h"
-#include "llvm/IntrinsicInst.h"
-#include "llvm/Module.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/CFG.h"
+#include "llvm/IR/Dominators.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GetElementPtrTypeIterator.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Analysis/Dominators.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/CFG.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/GetElementPtrTypeIterator.h"
-#include "llvm/Support/InstIterator.h"
 
 static llvm::cl::opt<std::string>
   infilename("static-slice-file", llvm::cl::init("slices.out"),
@@ -86,11 +86,11 @@ class StaticSliceCounter : public llvm::ModulePass {
     // std::set<const llvm::GlobalValue *> globals;
     std::unique_ptr<llvm::raw_fd_ostream> poutfile = nullptr;
     if (outfilename != "") {
-      std::string error;
+      std::error_code ec;
       poutfile =
-        std14::make_unique<llvm::raw_fd_ostream>(outfilename.c_str(), error);
-      if (!error.empty()) {
-        llvm::dbgs() << "Error opening file: " << error << "\n";
+        std14::make_unique<llvm::raw_fd_ostream>(outfilename.c_str(), ec);
+      if (ec) {
+        llvm::dbgs() << "Error opening file: " << ec.message() << "\n";
       }
     }
 

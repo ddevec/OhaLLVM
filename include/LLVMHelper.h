@@ -11,20 +11,21 @@
 #include "include/ModInfo.h"
 #include "include/lib/UnusedFunctions.h"
 
-#include "llvm/BasicBlock.h"
-#include "llvm/Constants.h"
-#include "llvm/DerivedTypes.h"
-#include "llvm/Function.h"
-#include "llvm/GlobalVariable.h"
-#include "llvm/Instructions.h"
-#include "llvm/IntrinsicInst.h"
-#include "llvm/Module.h"
 #include "llvm/Pass.h"
-#include "llvm/PassManager.h"
-#include "llvm/Support/CallSite.h"
-#include "llvm/Support/CFG.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/CFG.h"
+#include "llvm/IR/CallSite.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GetElementPtrTypeIterator.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/PassManager.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/InstIterator.h"
 
 class LLVMHelper {
  public:
@@ -159,7 +160,7 @@ class LLVMHelper {
     auto ce_null = llvm::ConstantPointerNull::get(type_ptr_type);
     std::vector<llvm::Constant *> gep_ce_indicies =
         { llvm::ConstantInt::get(i64_type, 1) };
-    auto gep_ce = llvm::ConstantExpr::getGetElementPtr(ce_null,
+    auto gep_ce = llvm::ConstantExpr::getGetElementPtr(type_ptr_type, ce_null,
         gep_ce_indicies);
         
     auto ce_int_offs = llvm::ConstantExpr::getCast(llvm::Instruction::PtrToInt,
@@ -173,14 +174,14 @@ class LLVMHelper {
     return ce_int_offs;
   }
 
-  static int32_t gepIsArrayAccess(const llvm::User &gep) {
+  static bool gepIsArrayAccess(const llvm::User &gep) {
     // This loop is essentially to handle the nested nature of
     //   GEP instructions
     // It basically says, For the outer-layer of the struct
     for (auto gi = llvm::gep_type_begin(gep),
           en = llvm::gep_type_end(gep);
         gi != en; ++gi) {
-      auto type = *gi;
+      auto type = gi.getIndexedType();
       auto struct_type = dyn_cast<llvm::StructType>(type);
       if (struct_type == nullptr) {
         continue;
@@ -200,7 +201,7 @@ class LLVMHelper {
     for (auto gi = llvm::gep_type_begin(gep),
           en = llvm::gep_type_end(gep);
         gi != en; ++gi) {
-      auto type = *gi;
+      auto type = gi.getIndexedType();
       auto struct_type = dyn_cast<llvm::StructType>(type);
       // If it isn't a struct field, don't add subfield offsets
       if (struct_type == nullptr) {

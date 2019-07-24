@@ -21,7 +21,7 @@
 #include "include/lib/IndirFcnTarget.h"
 
 #include "llvm/Pass.h"
-#include "llvm/Function.h"
+#include "llvm/IR/Function.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/CommandLine.h"
@@ -46,7 +46,7 @@ class DynEdgeInst : public llvm::ModulePass {
 
   void getAnalysisUsage(llvm::AnalysisUsage &usage) const;
 
-  const char *getPassName() const override {
+  llvm::StringRef getPassName() const override {
     return "DynEdgeInst";
   }
 

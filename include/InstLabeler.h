@@ -15,12 +15,12 @@
 
 #include "include/lib/UnusedFunctions.h"
 
-#include "llvm/Constants.h"
-#include "llvm/Function.h"
-#include "llvm/Module.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/InstIterator.h"
 
 class InstLabeler {
  //{{{

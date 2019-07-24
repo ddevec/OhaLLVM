@@ -16,10 +16,10 @@
 
 #include "include/Cg.h"
 
-#include "llvm/Constants.h"
-#include "llvm/Function.h"
-#include "llvm/IntrinsicInst.h"
-#include "llvm/Module.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Module.h"
 
 #include "include/util.h"
 #include "include/RunTarjans.h"

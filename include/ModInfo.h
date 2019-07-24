@@ -5,7 +5,7 @@
 #ifndef INCLUDE_MODINFO_H_
 #define INCLUDE_MODINFO_H_
 
-#include "llvm/Function.h"
+#include "llvm/IR/Function.h"
 
 #include "include/util.h"
 #include "include/ValueMap.h"
@@ -182,8 +182,8 @@ class ModInfo {
   };
 
   ModInfo(llvm::Module &m) {
-    std::vector<llvm::StructType *> types;
-    m.findUsedStructTypes(types);
+    std::vector<llvm::StructType *> types =
+      m.getIdentifiedStructTypes();
     for (auto type : types) {
       addStructInfo(type);
     }

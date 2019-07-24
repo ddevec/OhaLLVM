@@ -416,9 +416,15 @@ class BddSet {
           // std::cerr << "vec add: " << (x | dont_care[0]) << std::endl;
           uglyBddVec_.emplace_back(x | dont_care[0]);
         }
+        // std::cerr << "vec add: " << (base | dont_care[0]) << std::endl;
+        uglyBddVec_.emplace_back(base | dont_care[0]);
+        uglyBddVec_.emplace_back(base);
+        break;
       case 1:
         // std::cerr << "vec add: " << (base | dont_care[0]) << std::endl;
         uglyBddVec_.emplace_back(base | dont_care[0]);
+        uglyBddVec_.emplace_back(base);
+        break;
       case 0:
         // std::cerr << "vec add: " << base << std::endl;
         uglyBddVec_.emplace_back(base);

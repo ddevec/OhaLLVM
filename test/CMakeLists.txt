@@ -9,7 +9,7 @@
 function(create_dis TARGET_NAME)
   # message("Creating DIS: ${TARGET_NAME} : ${ARGN}")
   add_custom_command(OUTPUT ${TARGET_NAME} POST_BUILD
-    COMMAND "$ENV{LLVM_DIR}/bin/clang-3.1" -S -Wno-format-security -O0 -g -emit-llvm ${ARGN} -o ${TARGET_NAME}
+    COMMAND "$ENV{LLVM_DIR}/bin/clang" -S -Wno-format-security -O0 -g -emit-llvm ${ARGN} -o ${TARGET_NAME}
     DEPENDS ${ARGN}
     COMMENT  "Disassembling ${TARGET_NAME}"
     VERBATIM)
@@ -73,7 +73,7 @@ endfunction(create_opt)
 function(llvm_compile TARGET_NAME OPTS)
 
   add_custom_target(${TARGET_NAME} ALL
-    COMMAND "$ENV{LLVM_DIR}/bin/clang-3.1" ${OPTS} -g -O0 -o ${TARGET_NAME} ${ARGN}
+    COMMAND "$ENV{LLVM_DIR}/bin/clang" ${OPTS} -g -O0 -o ${TARGET_NAME} ${ARGN}
     DEPENDS ${ARGN})
 
 endfunction(llvm_compile)
@@ -177,29 +177,6 @@ function(create_edge_profile TARGET_NAME)
   llvm_compile(${prof_name} "-lprofile_rt" ${edge_prof_list})
 
 endfunction(create_edge_profile)
-
-function(create_path_profile TARGET_NAME)
-  set(bc_list "")
-  foreach(arg ${ARGN})
-    set(base_name "")
-    set(bc_name "")
-
-    strip_suffix(base_name ".c" ${arg})
-    append_suffix(bc_name ".bc" ${base_name})
-
-    list(APPEND bc_list ${bc_name})
-  endforeach(arg)
-
-  set(path_prof_list "")
-
-  create_opt("insert-path-profiling" "path" path_prof_list ${bc_list})
-
-  set(prof_name "")
-  append_suffix(prof_name ".path" ${TARGET_NAME})
-
-  llvm_compile(${prof_name} "-lprofile_rt" ${path_prof_list})
-
-endfunction(create_path_profile)
 
 create_test(simple_fcn
     simple_fcn.c

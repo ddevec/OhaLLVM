@@ -8,17 +8,17 @@
 #include <map>
 #include <set>
 
-#include "llvm/BasicBlock.h"
-#include "llvm/Constants.h"
-#include "llvm/DerivedTypes.h"
-#include "llvm/Function.h"
-#include "llvm/GlobalVariable.h"
-#include "llvm/Instructions.h"
-#include "llvm/Module.h"
 #include "llvm/Pass.h"
-#include "llvm/PassManager.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/CallSite.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/PassManager.h"
 #include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Support/CallSite.h"
 #include "llvm/Support/Debug.h"
 
 #include "include/SolveHelpers.h"
@@ -36,7 +36,7 @@ class DynAliasLoader : public llvm::ModulePass {
 
   void getAnalysisUsage(llvm::AnalysisUsage &au) const override;
 
-  const char *getPassName() const override {
+  llvm::StringRef getPassName() const override {
     return "DynAliasLoader";
   }
 
@@ -110,10 +110,10 @@ class DynAliasLoader : public llvm::ModulePass {
     // If we have some unknown dynamic info, Fallback to a static alias analysis
     if (load_ptsto.find(ValueMap::Id::invalid()) !=
         std::end(load_ptsto)) {
-      auto &aa = getAnalysis<llvm::AliasAnalysis>();
-      return aa.alias(llvm::AliasAnalysis::Location(li->getOperand(0)),
-          llvm::AliasAnalysis::Location(si->getOperand(1))) !=
-        llvm::AliasAnalysis::NoAlias;
+      auto &aa = getAnalysis<llvm::AAResultsWrapperPass>().getAAResults();
+      return aa.alias(llvm::MemoryLocation(li->getOperand(0)),
+          llvm::MemoryLocation(si->getOperand(1))) !=
+        llvm::AliasResult::NoAlias;
     }
 
     return load_ptsto.find(sid) != std::end(load_ptsto);

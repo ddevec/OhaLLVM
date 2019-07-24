@@ -13,11 +13,11 @@
 #include "include/SEG.h"
 #include "include/ValueMap.h"
 
-#include "llvm/Constants.h"
-#include "llvm/Function.h"
-#include "llvm/IntrinsicInst.h"
-#include "llvm/Module.h"
-#include "llvm/Support/InstIterator.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Module.h"
 
 typedef ContextInfo::StackId StackId;
 typedef ContextInfo::ContextId ContextId;

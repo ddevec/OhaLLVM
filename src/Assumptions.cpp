@@ -15,15 +15,15 @@
 #include "include/ExtInfo.h"
 #include "include/LLVMHelper.h"
 
-#include "llvm/Constants.h"
-#include "llvm/Function.h"
-#include "llvm/IntrinsicInst.h"
-#include "llvm/Module.h"
+#include "llvm/IR/CFG.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GetElementPtrTypeIterator.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Support/CFG.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/GetElementPtrTypeIterator.h"
-#include "llvm/Support/InstIterator.h"
 #include "llvm/Support/raw_ostream.h"
 
 static const std::string AllocFcnName = "__specsfs_alloc_fcn";
@@ -483,7 +483,7 @@ bool SetCheckInst::doInstrument(llvm::Module &m, const ExtLibInfo &) {
   idx_list.push_back(llvm::ConstantInt::get(i32_type, 0));
   auto array_ce = getGlobalSet(m, checkSet_, setCache_);
   args.push_back(llvm::ConstantExpr::getGetElementPtr(
-        array_ce, idx_list));
+        array_ce->getType(), array_ce, idx_list));
 
   // Set size:
   args.push_back(llvm::ConstantInt::get(i32_type, checkSet_.size()));

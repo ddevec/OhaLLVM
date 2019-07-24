@@ -13,7 +13,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-#include <random>
 
 #include "include/util.h"
 #include "include/ContextInfo.h"
@@ -27,21 +26,20 @@
 #include "include/lib/DynAlias.h"
 #include "include/lib/SlicePosition.h"
 
-#include "llvm/Constants.h"
 #include "llvm/Pass.h"
 #include "llvm/PassSupport.h"
-#include "llvm/Function.h"
-#include "llvm/IntrinsicInst.h"
-#include "llvm/Module.h"
-#include "llvm/Analysis/Dominators.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/CFG.h"
+#include "llvm/IR/Dominators.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GetElementPtrTypeIterator.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Analysis/ProfileInfo.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/CFG.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Support/GetElementPtrTypeIterator.h"
-#include "llvm/Support/InstIterator.h"
 
 
 static llvm::cl::opt<std::string>
@@ -161,12 +159,11 @@ class StaticSlice : public llvm::ModulePass {
   StaticSlice() : llvm::ModulePass(ID) { }
 
   void getAnalysisUsage(llvm::AnalysisUsage &usage) const {
-    usage.addRequired<llvm::AliasAnalysis>();
+    usage.addRequired<llvm::AAResultsWrapperPass>();
     usage.addRequired<ContextInfo>();
     usage.addRequired<ConstraintPass>();
     usage.addRequired<UnusedFunctions>();
     usage.addRequired<DynPtstoLoader>();
-    usage.addRequired<llvm::DominatorTree>();
     usage.addRequired<CallDests>();
     usage.addRequired<BBNumber>();
     if (force_alias) {
@@ -176,7 +173,7 @@ class StaticSlice : public llvm::ModulePass {
   }
 
   bool runOnModule(llvm::Module &m) override {
-    alias_ = &getAnalysis<llvm::AliasAnalysis>();
+    alias_ = &getAnalysis<llvm::AAResultsWrapperPass>().getAAResults();
     if (force_alias) {
       dynAlias_ = &getAnalysis<DynAliasLoader>();
     }
@@ -193,7 +190,7 @@ class StaticSlice : public llvm::ModulePass {
     //      tree
     for (auto &fcn : m) {
       if (!fcn.isDeclaration()) {
-        auto &dom = getAnalysis<llvm::DominatorTree>(fcn);
+        llvm::DominatorTree dom(fcn);
 
         for (auto &bb : fcn) {
           auto pnode = dom.getNode(&bb);
@@ -494,9 +491,9 @@ class StaticSlice : public llvm::ModulePass {
                 } else {
                   // llvm::dbgs() << "store is: " << inst << "\n";
                   // llvm::dbgs() << "ld is: " << *pinst << "\n";
-                  if (alias_->alias(llvm::AliasAnalysis::Location(st_dest),
-                          llvm::AliasAnalysis::Location(ld_src)) !=
-                        llvm::AliasAnalysis::NoAlias) {
+                  if (alias_->alias(llvm::MemoryLocation(st_dest),
+                          llvm::MemoryLocation(ld_src)) !=
+                        llvm::AliasResult::NoAlias) {
                     // llvm::dbgs() << "Adding inst: " << inst << "\n";
                     // llvm::dbgs() << "  with stack: " << stack << "\n";  // NOLINT
                     auto prior_contexts = info.getPriorContexts(&inst,

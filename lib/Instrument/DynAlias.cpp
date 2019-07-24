@@ -14,21 +14,21 @@
 #include <tuple>
 #include <vector>
 
-#include "llvm/BasicBlock.h"
-#include "llvm/Constants.h"
-#include "llvm/DerivedTypes.h"
-#include "llvm/Function.h"
-#include "llvm/GlobalVariable.h"
-#include "llvm/InstrTypes.h"
-#include "llvm/Instructions.h"
-#include "llvm/Module.h"
 #include "llvm/Pass.h"
-#include "llvm/PassManager.h"
-#include "llvm/Support/CallSite.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/CallSite.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/PassManager.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FormattedStream.h"
-#include "llvm/Support/InstIterator.h"
 #include "llvm/Support/MathExtras.h"
 
 #include "include/LLVMHelper.h"
@@ -1039,7 +1039,7 @@ static llvm::RegisterPass<InstrDynAlias> X("insert-alias-profiling",
 // The dynamic ptsto pass loader {{{
 void DynAliasLoader::getAnalysisUsage(llvm::AnalysisUsage &au) const {
   au.addRequired<PtsNumberPass>();
-  au.addRequired<llvm::AliasAnalysis>();
+  au.addRequired<llvm::AAResultsWrapperPass>();
   au.setPreservesAll();
 }
 
@@ -1140,7 +1140,7 @@ char DynAliasLoader::ID = 0;
 char DynAliasTester::ID = 0;
 
 void DynAliasTester::getAnalysisUsage(llvm::AnalysisUsage &au) const {
-  au.addRequired<llvm::AliasAnalysis>();
+  au.addRequired<llvm::AAResultsWrapperPass>();
   au.addRequired<DynAliasLoader>();
   au.addRequired<UnusedFunctions>();
 
@@ -1151,7 +1151,7 @@ bool DynAliasTester::runOnModule(llvm::Module &) {
   // Setup omap:
   dynAA_ = &getAnalysis<DynAliasLoader>();
 
-  auto &aa = getAnalysis<llvm::AliasAnalysis>();
+  auto &aa = getAnalysis<llvm::AAResultsWrapperPass>().getAAResults();
 
   auto &used = getAnalysis<UnusedFunctions>();
 
@@ -1228,9 +1228,9 @@ bool DynAliasTester::runOnModule(llvm::Module &) {
       }
       llvm::dbgs() << "alias check : " << i++ << "\n";
       */
-      if (aa.alias(llvm::AliasAnalysis::Location(load_src),
-               llvm::AliasAnalysis::Location(store_dest)) ==
-          llvm::AliasAnalysis::NoAlias) {
+      if (aa.alias(llvm::MemoryLocation(load_src),
+               llvm::MemoryLocation(store_dest)) ==
+          llvm::AliasResult::NoAlias) {
         llvm::dbgs() << "DynAlias found load-store alias not in AA\n";
 
         llvm::dbgs() << "  Store: " << store_id << ": " <<

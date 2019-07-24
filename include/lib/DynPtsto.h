@@ -8,17 +8,17 @@
 #include <map>
 #include <set>
 
-#include "llvm/BasicBlock.h"
-#include "llvm/Constants.h"
-#include "llvm/DerivedTypes.h"
-#include "llvm/Function.h"
-#include "llvm/GlobalVariable.h"
-#include "llvm/Instructions.h"
-#include "llvm/Module.h"
 #include "llvm/Pass.h"
-#include "llvm/PassManager.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/CallSite.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/PassManager.h"
 #include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Support/CallSite.h"
 #include "llvm/Support/Debug.h"
 
 #include "include/ExtInfo.h"
@@ -34,7 +34,7 @@ class DynPtstoLoader : public llvm::ModulePass {
 
   void getAnalysisUsage(llvm::AnalysisUsage &au) const override;
 
-  const char *getPassName() const override {
+  llvm::StringRef getPassName() const override {
     return "DynPtstoLoader";
   }
 
@@ -115,7 +115,7 @@ class DynPtstoLoader : public llvm::ModulePass {
 };
 
 class DynPtstoAA : public llvm::ModulePass,
-                   public llvm::AliasAnalysis {
+                   public llvm::AAResultBase<DynPtstoAA> {
  public:
   static char ID;
 
@@ -125,6 +125,7 @@ class DynPtstoAA : public llvm::ModulePass,
 
   void getAnalysisUsage(llvm::AnalysisUsage &au) const override;
 
+  /*
   virtual void *getAdjustedAnalysisPointer(llvm::AnalysisID PI) {
     if (PI == &AliasAnalysis::ID) {
       // return (llvm::AliasAnalysis *)this;
@@ -132,9 +133,10 @@ class DynPtstoAA : public llvm::ModulePass,
     }
     return this;
   }
+  */
 
-  virtual AliasAnalysis::AliasResult alias(const AliasAnalysis::Location &L1,
-      const AliasAnalysis::Location &L2);
+  virtual llvm::AliasResult alias(const llvm::MemoryLocation &L1,
+      const llvm::MemoryLocation &L2);
  private:
   DynPtstoLoader *dynPts_;
 };

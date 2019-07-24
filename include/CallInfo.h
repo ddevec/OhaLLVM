@@ -7,8 +7,8 @@
 
 #include <vector>
 
-#include "llvm/Support/CallSite.h"
-#include "llvm/Instruction.h"
+#include "llvm/IR/CallSite.h"
+#include "llvm/IR/Instruction.h"
 
 #include "include/util.h"
 #include "include/ValueMap.h"

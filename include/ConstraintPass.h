@@ -12,8 +12,8 @@
 #include "include/lib/UnusedFunctions.h"
 #include "include/lib/IndirFcnTarget.h"
 
-#include "llvm/Function.h"
 #include "llvm/Pass.h"
+#include "llvm/IR/Function.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/CommandLine.h"
@@ -28,7 +28,7 @@ class ConstraintPass : public llvm::ModulePass {
 
   void getAnalysisUsage(llvm::AnalysisUsage &usage) const;
 
-  const char *getPassName() const override {
+  llvm::StringRef getPassName() const override {
     return "ConstraintPass";
   }
 
