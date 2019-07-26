@@ -25,57 +25,33 @@
 // The actual SFS module, most of the work is done via the ObjectMap and Def-Use
 // Graph (DUG), these methods mostly operate on them.
 
-class SpecAnders : public llvm::ModulePass,
-                public llvm::AAResultBase<SpecAnders> {
+using AliasResult = llvm::AliasResult;
+using MemoryLocation = llvm::MemoryLocation;
+
+/*
+class SpecAnders : public llvm::AnalysisInfoMixin<SpecAnders> {
  public:
-  friend AAResultBase<SpecAnders>;
-  static char ID;
-  SpecAnders();
-  explicit SpecAnders(char &id);
+  typedef SpecAndersAAResult Result;
 
-  virtual bool runOnModule(llvm::Module &M);
+  Result run(Module &m, FunctionAnalysisManager &AM);
 
-  void getAnalysisUsage(llvm::AnalysisUsage &usage) const;
+ private:
+  friend llvm::AnalysisInfoMixin<SpecAnders>;
+  static llvm::AnalysisKey key;
+};
+*/
 
-  /* FIXME: Wire this into the actual AA infrastructure... later */
-  /*
-  void *getAdjustedAnalysisPointer(llvm::AnalysisID PI) override {
-    if (PI == &llvm::AliasAnalysis::ID) {
-      return static_cast<llvm::AliasAnalysis *>(this);
-    }
-    return this;
-  }
-  */
+class SpecAndersAAResult;
 
-  llvm::StringRef getPassName() const override {
-    return "SpecAnders";
-  }
+class SpecAndersAnalysis {
+ public:
+  SpecAndersAnalysis() = default;
 
-  /*
-  AliasAnalysis::AliasResult alias(const llvm::Value *v1, unsigned v1size,
-      const llvm::Value *v2, unsigned v2size) override;
-      */
-
-  virtual llvm::AliasResult alias(const llvm::MemoryLocation &L1,
-      const llvm::MemoryLocation &L2);
-
-  virtual llvm::ModRefInfo getModRefInfo(llvm::ImmutableCallSite CS,
-                             const llvm::MemoryLocation &Loc);
-  virtual llvm::ModRefInfo getModRefInfo(llvm::ImmutableCallSite CS1,
-                                     llvm::ImmutableCallSite CS2);
-  /*
-  void getMustAliases(llvm::Value *P,
-      std::vector<llvm::Value*> &RetVals);
-  */
-  // Do not use it.
-  bool pointsToConstantMemory(const llvm::MemoryLocation &Loc,
-      bool OrLocal = false);
-
-  /*
-  virtual void deleteValue(llvm::Value *V);
-
-  virtual void copyValue(llvm::Value *From, llvm::Value *To);
-  */
+  void run(llvm::Module &m,
+      ConstraintPass &cp,
+      UnusedFunctions &uf,
+      IndirFunctionInfo &indir_info,
+      CallContextLoader &call_info);
 
   const AssumptionSet &getSpecAssumptions() const {
     return cp_->getSpecAssumptions();
@@ -83,18 +59,6 @@ class SpecAnders : public llvm::ModulePass,
 
   ValueMap::Id getRep(ValueMap::Id id) {
     // Convert input objID to rep ObjID:
-    /*
-    auto rep_id = id;
-    auto val = omap_.valueAtID(id);
-    const llvm::Value *old_val = nullptr;
-    while (!ObjectMap::isSpecial(id) && val != old_val) {
-      old_val = val;
-      rep_id = omap_.getValue(val);
-      val = omap_.valueAtID(rep_id);
-    }
-
-    return rep_id;
-    */
     return mainCg_->vals().getRep(id);
   }
 
@@ -108,8 +72,12 @@ class SpecAnders : public llvm::ModulePass,
   ConstraintPass &getConstraintPass() {
     return *cp_;
   }
+  const ConstraintPass &getConstraintPass() const {
+    return *cp_;
+  }
 
  private:
+  friend SpecAndersAAResult;
   // Takes dynamic pointsto information, as well as hot/cold basic block
   //   information, and trims the edges of the DUG appropriately
   /*
@@ -152,6 +120,46 @@ class SpecAnders : public llvm::ModulePass,
 
   // std::map<ObjectMap::ObjID, ObjectMap::ObjID> hcdPairs_;
   //}}}
+};
+
+template <class T>
+using AAResultBase = llvm::AAResultBase<T>;
+
+class SpecAndersAAResult : public AAResultBase<SpecAndersAAResult> {
+ public:
+  explicit SpecAndersAAResult(SpecAndersAnalysis &anders) :
+    AAResultBase<SpecAndersAAResult>(), anders_(anders) { }
+  SpecAndersAAResult(SpecAndersAAResult &&arg) :
+    AAResultBase(std::move(arg)), anders_(arg.anders_) { }
+
+  AliasResult alias(const MemoryLocation &LocA, const MemoryLocation &LocB);
+
+ private:
+  SpecAndersAnalysis &anders_;
+};
+
+class SpecAndersWrapperPass : public llvm::ModulePass {
+ public:
+  static char ID;
+  SpecAndersWrapperPass();
+  explicit SpecAndersWrapperPass(char &id);
+
+  virtual bool runOnModule(llvm::Module &M);
+
+  void getAnalysisUsage(llvm::AnalysisUsage &usage) const;
+
+  llvm::StringRef getPassName() const override {
+    return "SpecAnders";
+  }
+
+  SpecAndersAAResult &getResult() { return *result_; }
+  const SpecAndersAAResult &getResult() const { return *result_; }
+
+  const SpecAndersAnalysis &anders() const { return anders_; }
+
+ private:
+  SpecAndersAnalysis anders_;
+  std::unique_ptr<SpecAndersAAResult> result_;
 };
 
 #endif  // INCLUDE_SPECANDERS_H_

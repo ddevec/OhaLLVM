@@ -129,7 +129,8 @@ namespace llvm {
 void SpecAndersCS::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   // Because we're an AliasAnalysis
   // AliasAnalysis::getAnalysisUsage(usage);
-  // usage.addRequired<llvm::AliasAnalysis>();
+  llvm::dbgs() << "In getAnalysisUsage!\n";
+  // usage.addRequired<llvm::AAResultsWrapperPass>();
   usage.setPreservesAll();
 
   // Staging analysis for sfs
@@ -212,9 +213,9 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
   {
     util::PerfTimerPrinter pre_setup_timer(llvm::dbgs(), "pre-setup timer");
     mainCg_->lowerAllocs();
-    ProfilerStart("pts_init.prof");
+    // ProfilerStart("pts_init.prof");
     BddPtstoSet::PtstoSetInit(*mainCg_);
-    ProfilerStop();
+    // ProfilerStop();
   }
 
   // Now that we have the constraints, lets optimize a bit

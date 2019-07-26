@@ -4,6 +4,7 @@
 
 #include "include/ExtInfo.h"
 
+#include <dirent.h>
 
 #include <cassert>
 
@@ -29,6 +30,7 @@ typedef ExtInfo::StaticAllocInfo StaticAllocInfo;
 
 char ctype_name[] = "ctype";
 char filestruct_name[] = "struct._IO_FILE";
+char dirstruct_name[] = "struct.__dirstream";
 char datetimestruct_name[] = "struct.tm";
 char pwnamstruct_name[] = "struct.passwd";
 char grnamstruct_name[] = "struct.group";
@@ -36,6 +38,7 @@ char grnamstruct_name[] = "struct.group";
 char locale_name[] = "locale";
 char env_name[] = "env";
 char errno_name[] = "errno";
+char dirent_name[] = "dirent_static";
 char clib_name[] = "clib";
 char dir_name[] = "dir";
 char terminfo_name[] = "terminfo";
@@ -405,7 +408,11 @@ struct AllocStruct {
     std::vector<AllocInfo> ret;
 
     auto type = m.getTypeByName(type_name);
-    auto type_size_ce = LLVMHelper::calcTypeOffset(m, type, nullptr);
+    const auto &dl = m.getDataLayout();
+
+    int size = dl.getTypeAllocSize(type);
+    auto i64_type = llvm::IntegerType::get(m.getContext(), 64);
+    auto type_size_ce = llvm::ConstantInt::get(i64_type, size);
 
     ret.emplace_back(cs.getInstruction(), type_size_ce,
         ValueMap::Id::invalid());
@@ -611,11 +618,13 @@ struct CTypeAlloc {
     auto ci = cs.getInstruction();
 
     // subtract 128 from ci (gep for -128)
-    std::vector<llvm::Value *> indicies;
-    indicies.push_back(llvm::ConstantInt::get(i32_type, -128));
+    std::vector<llvm::Value *> indicies = {
+      llvm::ConstantInt::get(i32_type, -128)
+    };
 
-    auto pointee_type = llvm::GetElementPtrInst::getGEPReturnType(ci, indicies);
-    auto gep = llvm::GetElementPtrInst::Create(pointee_type, ci, indicies);
+    auto i16_type = llvm::IntegerType::get(m.getContext(), 16);
+    auto gep = llvm::GetElementPtrInst::Create(i16_type->getPointerTo(),
+        ci, indicies);
 
     // Insert the gep after "insert_after"
     gep->insertAfter(*insert_after);
@@ -1086,9 +1095,8 @@ class FileClose :
 
 // Directories
 class DirOpen :
-  public ExtInfoCRTP<ReturnNamedNSCons<dir_name>,
-          // FIXME(ddevec) -- sizeof(DIR) ? ? ?
-          AllocNamedSize<dir_name, 8>, NoFreeData,
+  public ExtInfoCRTP<AllocTypeCons<dirstruct_name>,
+          AllocNamedSize<dirstruct_name, 8>, NoFreeData,
           AllocInfoWeak, CanAlloc> { };
 
 class DirClose :
@@ -1192,6 +1200,9 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
   // Dir Operations
   info_.emplace(std::piecewise_construct,
       std::make_tuple("opendir"),
+      std::make_tuple(new DirOpen()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("fdopendir"),
       std::make_tuple(new DirOpen()));
   info_.emplace(std::piecewise_construct,
       std::make_tuple("closedir"),
@@ -1346,9 +1357,11 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
       std::make_tuple("gai_strerror"),
       std::make_tuple(new ReturnNamedString<clib_name>()));
 
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("readdir"),
+      std::make_tuple(
+        new ReturnNamedSize<dirent_name, sizeof(struct dirent)>()));
   /*
-  info_.emplace("readdir", new ExtReadDir());
-  info_.emplace("opendir", new ExtOpenDir());
   */
   // Ctype...
   info_.emplace(std::piecewise_construct,
@@ -1414,6 +1427,9 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
       std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
       std::make_tuple("unlink"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("unlinkat"),
       std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
       std::make_tuple("setenv"),
@@ -1555,6 +1571,9 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
       std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
       std::make_tuple("open"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("openat"),
       std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
       std::make_tuple("create"),
@@ -1983,6 +2002,24 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
       std::make_tuple("utime"),
       std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
+      std::make_tuple("utimes"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("getchar"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("clock_gettime"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("utimensat"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("futimesat"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("futimens"),
+      std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
       std::make_tuple("mblen"),
       std::make_tuple(new ExtNoop()));
   info_.emplace(std::piecewise_construct,
@@ -2225,6 +2262,9 @@ ExtLibInfo::ExtLibInfo(ModInfo &info) : modInfo_(info) {
   info_.emplace(std::piecewise_construct,
       std::make_tuple("llvm.dbg.value"),
       std::make_tuple(new ExtNoop()));
+  info_.emplace(std::piecewise_construct,
+      std::make_tuple("getopt_long"),
+      std::make_tuple(new ExtNoop()));
   /*
   info_.emplace("__finitel", ExtNoop);
   info_.emplace("getopt_long", ExtNoop);
@@ -2383,6 +2423,8 @@ void ExtLibInfo::init(const llvm::Module &m, ValueMap &map) {  //  NOLINT
   map.allocNamed(1, "arg");
   map.allocNamed(1, "stdio");
   map.allocNamed(1, "strtok");
+  map.allocNamed(1, "dirent_static");
+  map.allocNamed(1, dirstruct_name);
   auto pw_type = m.getTypeByName("struct.passwd");
   auto pw_size = modInfo_.getSizeOfType(pw_type);
   map.allocNamed(pw_size, "pwnam");

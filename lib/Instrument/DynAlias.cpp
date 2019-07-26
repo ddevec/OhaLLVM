@@ -33,6 +33,7 @@
 
 #include "include/LLVMHelper.h"
 #include "include/ExtInfo.h"
+#include "include/ModuleAAResults.h"
 #include "include/lib/UnusedFunctions.h"
 #include "include/lib/PtsNumberPass.h"
 
@@ -1039,7 +1040,7 @@ static llvm::RegisterPass<InstrDynAlias> X("insert-alias-profiling",
 // The dynamic ptsto pass loader {{{
 void DynAliasLoader::getAnalysisUsage(llvm::AnalysisUsage &au) const {
   au.addRequired<PtsNumberPass>();
-  au.addRequired<llvm::AAResultsWrapperPass>();
+  au.addRequired<ModuleAAResults>();
   au.setPreservesAll();
 }
 
@@ -1140,7 +1141,7 @@ char DynAliasLoader::ID = 0;
 char DynAliasTester::ID = 0;
 
 void DynAliasTester::getAnalysisUsage(llvm::AnalysisUsage &au) const {
-  au.addRequired<llvm::AAResultsWrapperPass>();
+  au.addRequired<ModuleAAResults>();
   au.addRequired<DynAliasLoader>();
   au.addRequired<UnusedFunctions>();
 
@@ -1151,7 +1152,7 @@ bool DynAliasTester::runOnModule(llvm::Module &) {
   // Setup omap:
   dynAA_ = &getAnalysis<DynAliasLoader>();
 
-  auto &aa = getAnalysis<llvm::AAResultsWrapperPass>().getAAResults();
+  auto &aa = getAnalysis<ModuleAAResults>();
 
   auto &used = getAnalysis<UnusedFunctions>();
 

@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include "llvm/PassRegistry.h"
+
 #include "include/lib/UnusedFunctions.h"
 
 #include "include/LLVMHelper.h"
@@ -18,21 +20,36 @@ using llvm::AliasAnalysis;
 typedef llvm::MemoryLocation Location;
 
 namespace llvm {
+  // void initializeCallDestsPass(PassRegistry &reg);
   static RegisterPass<CallDests>
       X("call-dests", "Helper to show which callsites call which functions",
-          false, false);
+          false, true);
 }  // namespace llvm
+
+/*
+// Needed for silly llvm initialize_pass stuff...
+using namespace llvm;  // NOLINT
+
+INITIALIZE_PASS_BEGIN(CallDests, "call-dests",
+    "Helper to show which callsites call which functions",
+        false, true)
+INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
+INITIALIZE_PASS_END(CallDests, "call-dests",
+    "Helper to show which callsites call which functions",
+        false, true)
+*/
 
 void CallDests::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   // Because we're an AliasAnalysis
   // AliasAnalysis::getAnalysisUsage(usage);
   usage.setPreservesAll();
 
+  // For function numbering?
+  llvm::dbgs() << "In get analysis usage?\n";
+  usage.addRequired<llvm::AAResultsWrapperPass>();
+
   // For DCE
   usage.addRequired<IndirFunctionInfo>();
-
-  // For function numbering?
-  usage.addRequired<llvm::AAResultsWrapperPass>();
 
   usage.addRequired<UnusedFunctions>();
 }

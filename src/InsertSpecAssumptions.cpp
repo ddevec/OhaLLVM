@@ -723,12 +723,12 @@ bool SpecSFSInstrumenter::runOnModule(llvm::Module &m) {
   auto &indir = getAnalysis<IndirFunctionInfo>();
 
   const AssumptionSet *passumptions = nullptr;
-  ConstraintPass *pcp;
+  const ConstraintPass *pcp;
 
-  if (auto panders = getAnalysisIfAvailable<SpecAnders>()) {
+  if (auto panders = getAnalysisIfAvailable<SpecAndersWrapperPass>()) {
     llvm::dbgs() << "Have anders ptsto\n";
-    passumptions = &panders->getSpecAssumptions();
-    pcp = &panders->getConstraintPass();
+    passumptions = &panders->anders().getSpecAssumptions();
+    pcp = &panders->anders().getConstraintPass();
   } else if (auto pcsa = getAnalysisIfAvailable<SpecAndersCS>()) {
     llvm::dbgs() << "Have cs anders ptsto\n";
     passumptions = &pcsa->getSpecAssumptions();

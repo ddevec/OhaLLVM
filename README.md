@@ -7,7 +7,7 @@ in "Optimistic Hybrid Analysis: Accelerating Dynamic Analysis through Predicated
 The OhaLLVM repository contains a set of LLVM analysis 
 tools including a context sensitive and context insensitive 
 version of Andersen's Points-to analysis, and a backward 
-static slicer.  These tools were written for LLVM 3.1.
+static slicer.  These tools were written updated for LLVM 7.
 
 The repository can run these analyses in either traditional 
 mode, or including dynamic run-time information to create a 

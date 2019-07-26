@@ -1035,7 +1035,8 @@ bool DynPtstoLoader::runOnModule(llvm::Module &) {
 
 
     for (std::string line; std::getline(logfile, line, ':'); ) {
-      auto call_id = ValueMap::Id(stoi(line));
+      int line_id = stoi(line);
+      auto call_id = ValueMap::Id(line_id);
 
       auto &obj_set = valToObjs_[call_id];
 
@@ -1047,20 +1048,24 @@ bool DynPtstoLoader::runOnModule(llvm::Module &) {
       converter >> obj_int_val;
       bool do_del = false;
       while (!converter.fail()) {
-        auto obj_id = ValueMap::Id(obj_int_val);
+        if (obj_int_val == -1) {
+          llvm::dbgs() << "WARNING: " << line_id <<
+            " has val -1, ignoring!!!\n";
+        } else {
+          auto obj_id = ValueMap::Id(obj_int_val);
 
-        // Don't add a ptsto for null value
-        if (obj_id != ValueMap::NullValue) {
-          obj_set.set(obj_id);
+          // Don't add a ptsto for null value
+          if (obj_id != ValueMap::NullValue) {
+            obj_set.set(obj_id);
+          }
+
+          // If we have a universal value, we don't maintain dyn
+          //   ptsto constraints for this variable
+          if (obj_id == ValueMap::UniversalValue) {
+            do_del = true;
+            break;
+          }
         }
-
-        // If we have a universal value, we don't maintain dyn ptsto constraints
-        //   for this variable
-        if (obj_id == ValueMap::UniversalValue) {
-          do_del = true;
-          break;
-        }
-
         converter >> obj_int_val;
       }
 
@@ -1071,6 +1076,7 @@ bool DynPtstoLoader::runOnModule(llvm::Module &) {
       }
     }
 
+    llvm::dbgs() << "printing!\n";
     if (print_dyn_ptsto) {
       int64_t total_variables = 0;
       int64_t total_ptstos = 0;
@@ -1120,7 +1126,6 @@ char DynPtstoLoader::ID = 0;
 char DynPtstoAA::ID = 0;
 
 void DynPtstoAA::getAnalysisUsage(llvm::AnalysisUsage &au) const {
-  au.addRequired<llvm::AAResultsWrapperPass>();
   au.addRequired<DynPtstoLoader>();
   au.setPreservesAll();
 }
@@ -1157,7 +1162,7 @@ llvm::AliasResult DynPtstoAA::alias(
   llvm::dbgs() << "  " << pts2 << "\n";
   */
 
-  return llvm::AAResultBase<DynPtstoAA>::alias(L1, L2);
+  return llvm::AliasResult::MayAlias;
 }
 
 namespace llvm {

@@ -5,6 +5,7 @@
 #include <map>
 #include <vector>
 
+#include "include/ModuleAAResults.h"
 #include "include/lib/DynAlias.h"
 #include "include/lib/IndirFcnTarget.h"
 #include "include/lib/UnusedFunctions.h"
@@ -34,20 +35,25 @@ static llvm::cl::opt<bool>
       llvm::cl::desc("AliasTest will count the dynamic load-store "
         "alias loader"));
 
-
 class AliasTest : public llvm::ModulePass {
  public:
   static char ID;
+
   AliasTest() : llvm::ModulePass(ID) { }
 
-  void getAnalysisUsage(llvm::AnalysisUsage &usage) const {
+  llvm::StringRef getPassName() const override {
+    return "AliasTest";
+  }
+
+  void getAnalysisUsage(llvm::AnalysisUsage &usage) const override {
     usage.setPreservesAll();
     usage.addRequired<DynAliasLoader>();
-    usage.addRequired<llvm::AAResultsWrapperPass>();
+    usage.addRequired<ModuleAAResults>();
+    getAAResultsAnalysisUsage(usage);
     usage.addRequired<UnusedFunctions>();
   }
 
-  bool runOnModule(llvm::Module &m) override {
+  bool runOnModule(llvm::Module &m) {
     llvm::dbgs() << "AliasTest: Start\n";
     std::vector<const llvm::Value *> value_list;
     // Create a list of values to check aliases for
@@ -117,7 +123,7 @@ class AliasTest : public llvm::ModulePass {
         }
       }
     } else {
-      auto &aa = getAnalysis<llvm::AAResultsWrapperPass>().getAAResults();
+      auto &aa = getAnalysis<ModuleAAResults>();
       if (only_load_store) {
         for (auto li : load_list) {
           auto load_src = li->getOperand(0);
@@ -190,5 +196,5 @@ class AliasTest : public llvm::ModulePass {
 
 char AliasTest::ID = 0;
 static llvm::RegisterPass<AliasTest>
-  X("alias-test", "AliasTest", false, false);
+  X("alias-test", "AliasTest", false, true);
 

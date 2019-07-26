@@ -160,7 +160,7 @@ class LLVMHelper {
     auto ce_null = llvm::ConstantPointerNull::get(type_ptr_type);
     std::vector<llvm::Constant *> gep_ce_indicies =
         { llvm::ConstantInt::get(i64_type, 1) };
-    auto gep_ce = llvm::ConstantExpr::getGetElementPtr(type_ptr_type, ce_null,
+    auto gep_ce = llvm::ConstantExpr::getGetElementPtr(type, ce_null,
         gep_ce_indicies);
         
     auto ce_int_offs = llvm::ConstantExpr::getCast(llvm::Instruction::PtrToInt,
@@ -198,19 +198,26 @@ class LLVMHelper {
     // This loop is essentially to handle the nested nature of
     //   GEP instructions
     // It basically says, For the outer-layer of the struct
+    llvm::dbgs() << "have gep: " << gep << "\n";
     for (auto gi = llvm::gep_type_begin(gep),
           en = llvm::gep_type_end(gep);
         gi != en; ++gi) {
-      auto type = gi.getIndexedType();
-      auto struct_type = dyn_cast<llvm::StructType>(type);
+      auto type = gi.getStructTypeOrNull();
+      if (type) {
+        llvm::dbgs() << "type: " << *type << "\n";
+      } else {
+        llvm::dbgs() << "type: (null)\n";
+      }
+      auto struct_type = type;
       // If it isn't a struct field, don't add subfield offsets
       if (struct_type == nullptr) {
         continue;
       }
 
-      auto &si = info.getStructInfo(cast<llvm::StructType>(type));
+      auto &si = info.getStructInfo(struct_type);
 
       auto operand = gi.getOperand();
+      llvm::dbgs() << "operand: " << *operand << "\n";
 
       // Get the offset from this const value
       auto cons_op = dyn_cast<llvm::ConstantInt>(operand);

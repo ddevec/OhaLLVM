@@ -136,6 +136,7 @@ set(SPECSFS_SOURCES
   src/CallInfo.cpp
   src/AndersGraph.cpp
   src/CsFcnCFG.cpp
+  src/ModuleAAResults.cpp
 
   src/SolveHelpers.cpp
 
@@ -201,6 +202,7 @@ set(SPECSFS_HEADERS
   CsFcnCFG.h
 
   ContextInfo.h
+  ModuleAAResults.h
 
   lib/PtsNumberPass.h
   lib/SlicePosition.h
@@ -228,8 +230,8 @@ target_link_libraries(SpecSFS
   ssl
   crypto
   bdd
-  profiler
-  tcmalloc
+  #profiler
+  #tcmalloc
   )
 
 add_cpplint_target(SpecSFS ${SPECSFS_SOURCES})

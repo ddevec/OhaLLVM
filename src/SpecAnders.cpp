@@ -117,25 +117,110 @@ static llvm::cl::opt<bool>
         "Verifies the calculated points-to set is a superset of the dynamic "
         "points-to to"));
 
-// Constructor
-SpecAnders::SpecAnders() : llvm::ModulePass(ID),
-  llvm::AAResultBase<SpecAnders>() { }
-char SpecAnders::ID = 0;
-namespace llvm {
-  static RegisterPass<SpecAnders>
-      SpecAndersRP("SpecAnders", "Speculative Andersens Analysis", false, true);
-  /*
-  RegisterAnalysisGroup<AliasAnalysis> SpecAndersRAG(SpecAndersRP);
-  INITIALIZE_PASS_BEGIN(SpecAnders, "SpecAnders", "Speculative Andersens Analysis", false, true);
-  INITIALIZE_PASS_END(SpecAnders, "SpecAnders", "Speculative Andersens Analysis", false, true);
-  */
 
+// AA Result
+llvm::AliasResult SpecAndersAAResult::alias(const llvm::MemoryLocation &L1,
+                                            const llvm::MemoryLocation &L2) {
+  auto v1 = L1.Ptr;
+  auto v2 = L2.Ptr;
+
+  // If either of the pointers are a constant pointer-to-int return false
+  auto check_const = [](const llvm::Value *v) {
+    if (auto ce = dyn_cast<llvm::ConstantExpr>(v)) {
+      // if c is a constexpr
+      if (ce->getOpcode() == llvm::Instruction::IntToPtr) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  if (check_const(v1)) {
+    return llvm::AliasResult::NoAlias;
+  }
+
+  if (check_const(v2)) {
+    return llvm::AliasResult::NoAlias;
+  }
+
+  auto pv1_pts = anders_.ptsCacheGet(v1);
+  auto pv2_pts = anders_.ptsCacheGet(v2);
+
+  if (pv1_pts == nullptr) {
+    /*
+    llvm::dbgs() << "Anders couldn't find node: " << obj_id1 <<
+      << " " << FullValPrint(obj_id1, omap_) << "\n";
+    */
+    return llvm::AAResultBase<SpecAndersAAResult>::alias(L1, L2);
+  }
+
+  if (pv2_pts == nullptr) {
+    /*
+    llvm::dbgs() << "Anders couldn't find node: " << obj_id2 <<
+      << " " << FullValPrint(obj_id2, omap_) << "\n";
+    */
+    return llvm::AAResultBase<SpecAndersAAResult>::alias(L1, L2);
+  }
+
+  auto &pts1 = *pv1_pts;
+  auto &pts2 = *pv2_pts;
+
+  // llvm::dbgs() << "Anders Alias Check\n";
+
+  // If either of the sets point to nothing, no alias
+  if (pts1.empty() || pts2.empty()) {
+    return llvm::AliasResult::NoAlias;
+  }
+
+  // Check to see if the two pointers are known to not alias.  They don't alias
+  // if their points-to sets do not intersect.
+  if (!pts1.intersectsIgnoring(pts2,
+        ValueMap::NullValue)) {
+    return llvm::AliasResult::NoAlias;
+  }
+
+  return llvm::AAResultBase<SpecAndersAAResult>::alias(L1, L2);
+}
+// END AA Result
+
+
+// LEGACY WRAPPER
+
+namespace llvm {
+  void initializeSpecAndersWrapperPassPass(PassRegistry &);
+  static RegisterPass<SpecAndersWrapperPass>
+      SpecAndersRP("SpecAnders", "Speculative Andersens Analysis", false, true);
+  // RegisterAnalysisGroup<AliasAnalysis> SpecAndersRAG(SpecAndersRP);
 }  // namespace llvm
 
-void SpecAnders::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
+char SpecAndersWrapperPass::ID = 0;
+SpecAndersWrapperPass::SpecAndersWrapperPass() :
+    llvm::ModulePass(ID) {
+  // initializeSpecAndersWrapperPassPass(
+  //     *llvm::PassRegistry::getPassRegistry());
+}
+
+SpecAndersWrapperPass::SpecAndersWrapperPass(char &id) :
+    llvm::ModulePass(id) {
+  // initializeSpecAndersWrapperPassPass(
+  //     *llvm::PassRegistry::getPassRegistry());
+}
+
+bool SpecAndersWrapperPass::runOnModule(llvm::Module &m) {
+  auto &cp = getAnalysis<ConstraintPass>();
+  auto &uf = getAnalysis<UnusedFunctions>();
+  auto &indir_info = getAnalysis<IndirFunctionInfo>();
+  auto &call_info = getAnalysis<CallContextLoader>();
+  anders_.run(m, cp, uf, indir_info, call_info);
+  result_.reset(new SpecAndersAAResult(anders_));
+  return false;
+}
+
+void SpecAndersWrapperPass::getAnalysisUsage(
+    llvm::AnalysisUsage &usage) const {
   // Because we're an AliasAnalysis
-  // AliasAnalysis::getAnalysisUsage(usage);
-  usage.addRequired<llvm::AAResultsWrapperPass>();
+  llvm::dbgs() << "In getAnalysisUsage!\n";
+  // usage.addRequired<llvm::AAResultsWrapperPass>();
   usage.setPreservesAll();
 
   // Calculates the constraints for this module for both sfs and andersens
@@ -155,7 +240,22 @@ void SpecAnders::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   // usage.addRequired<llvm::ProfileSummaryInfo>();
 }
 
-bool SpecAnders::runOnModule(llvm::Module &m) {
+// Crappy requirement for crappy macros
+using namespace llvm;  // NOLINT
+INITIALIZE_PASS_BEGIN(SpecAndersWrapperPass, "SpecAnders",
+    "Speculative Andersens Analysis", false, false)
+INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
+INITIALIZE_PASS_END(SpecAndersWrapperPass, "SpecAnders",
+    "Speculative Andersens Analysis", false, false)
+// END LEGACY WRAPPER PASS
+
+
+// Constructor
+void SpecAndersAnalysis::run(llvm::Module &m,
+    ConstraintPass &cons_pass,
+    UnusedFunctions &unused_fcns,
+    IndirFunctionInfo &indir_fcns,
+    CallContextLoader &call_info) {
   // Set up our alias analysis
   // -- This is required for the llvm AliasAnalysis interface
   // FIXME(ddevec): fix for new alias analysis interface
@@ -165,19 +265,12 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
     llvm::dbgs() << "Got debug gv: " << glbl_name << "\n";
   }
 
-  const UnusedFunctions &unused_fcns =
-      getAnalysis<UnusedFunctions>();
-  auto &indir_fcns = getAnalysis<IndirFunctionInfo>();
-
-  auto &call_info = getAnalysis<CallContextLoader>();
-
   // Setup dynamic info
   dynInfo_ = std14::make_unique<DynamicInfo>(unused_fcns,
       indir_fcns, call_info);
 
   // Clear the def-use graph
   // It should already be cleared, but I'm paranoid
-  auto &cons_pass = getAnalysis<ConstraintPass>();
   cp_ = &cons_pass;
   // Our main cg is the one inhereted from cons_pass
   mainCg_ = std14::make_unique<Cg>(cons_pass.getCG());
@@ -783,12 +876,9 @@ bool SpecAnders::runOnModule(llvm::Module &m) {
 
   // Free any memory no longer needed by the graph (now that solve is done)
   graph_.cleanup();
-
-  // We do not modify code, ever!
-  return false;
 }
 
-PtstoSet *SpecAnders::ptsCacheGet(const llvm::Value *val) {
+PtstoSet *SpecAndersAnalysis::ptsCacheGet(const llvm::Value *val) {
   // Check if we've cached the value
   auto rc = ptsCache_.emplace(std::piecewise_construct,
       std::make_tuple(val), std::make_tuple());
@@ -805,83 +895,5 @@ PtstoSet *SpecAnders::ptsCacheGet(const llvm::Value *val) {
   }
 
   return &rc.first->second;
-}
-
-llvm::AliasResult SpecAnders::alias(const llvm::MemoryLocation &L1,
-                                            const llvm::MemoryLocation &L2) {
-  auto v1 = L1.Ptr;
-  auto v2 = L2.Ptr;
-
-  // If either of the pointers are a constant pointer-to-int return false
-  auto check_const = [](const llvm::Value *v) {
-    if (auto ce = dyn_cast<llvm::ConstantExpr>(v)) {
-      // if c is a constexpr
-      if (ce->getOpcode() == llvm::Instruction::IntToPtr) {
-        return true;
-      }
-    }
-    return false;
-  };
-
-  if (check_const(v1)) {
-    return llvm::AliasResult::NoAlias;
-  }
-
-  if (check_const(v2)) {
-    return llvm::AliasResult::NoAlias;
-  }
-
-  auto pv1_pts = ptsCacheGet(v1);
-  auto pv2_pts = ptsCacheGet(v2);
-
-  if (pv1_pts == nullptr) {
-    /*
-    llvm::dbgs() << "Anders couldn't find node: " << obj_id1 <<
-      << " " << FullValPrint(obj_id1, omap_) << "\n";
-    */
-    return llvm::AAResultBase<SpecAnders>::alias(L1, L2);
-  }
-
-  if (pv2_pts == nullptr) {
-    /*
-    llvm::dbgs() << "Anders couldn't find node: " << obj_id2 <<
-      << " " << FullValPrint(obj_id2, omap_) << "\n";
-    */
-    return llvm::AAResultBase<SpecAnders>::alias(L1, L2);
-  }
-
-  auto &pts1 = *pv1_pts;
-  auto &pts2 = *pv2_pts;
-
-  // llvm::dbgs() << "Anders Alias Check\n";
-
-  // If either of the sets point to nothing, no alias
-  if (pts1.empty() || pts2.empty()) {
-    return llvm::AliasResult::NoAlias;
-  }
-
-  // Check to see if the two pointers are known to not alias.  They don't alias
-  // if their points-to sets do not intersect.
-  if (!pts1.intersectsIgnoring(pts2,
-        ValueMap::NullValue)) {
-    return llvm::AliasResult::NoAlias;
-  }
-
-  return llvm::AAResultBase<SpecAnders>::alias(L1, L2);
-}
-
-llvm::ModRefInfo SpecAnders::getModRefInfo(
-    llvm::ImmutableCallSite CS, const llvm::MemoryLocation &Loc) {
-  return llvm::AAResultBase<SpecAnders>::getModRefInfo(CS, Loc);
-}
-
-llvm::ModRefInfo SpecAnders::getModRefInfo(
-    llvm::ImmutableCallSite CS1, llvm::ImmutableCallSite CS2) {
-  return llvm::AAResultBase<SpecAnders>::getModRefInfo(CS1, CS2);
-}
-
-bool SpecAnders::pointsToConstantMemory(const llvm::MemoryLocation &loc,
-    bool or_local) {
-  return llvm::AAResultBase<SpecAnders>::pointsToConstantMemory(loc, or_local);
 }
 

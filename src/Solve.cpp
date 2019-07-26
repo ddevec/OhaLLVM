@@ -191,7 +191,7 @@ class RunNuutila {
 //}}}
 
 // Anders Solve {{{
-bool SpecAnders::solve() {
+bool SpecAndersAnalysis::solve() {
   // We're initially given a graph of nodes, with constraints representing the
   //   information flow relations within the nodes.
   // Create a worklist
@@ -635,7 +635,7 @@ void AndersCons::process(AndersGraph &graph, Worklist<AndersGraph::Id> &wl,
   }
 }
 
-void SpecAnders::handleGraphChange(
+void SpecAndersAnalysis::handleGraphChange(
     size_t old_size,
     Worklist<AndersGraph::Id> &wl,
     std::vector<uint32_t> &priority) {
@@ -653,7 +653,7 @@ void SpecAnders::handleGraphChange(
 }
 
 // Handles constraints related to indirect functions
-void SpecAnders::addIndirCall(const PtstoSet &fcn_pts,
+void SpecAndersAnalysis::addIndirCall(const PtstoSet &fcn_pts,
     const CallInfo &caller_ci,
     CsFcnCFG::Id,
     Worklist<AndersGraph::Id> &wl,
@@ -703,7 +703,7 @@ void SpecAnders::addIndirCall(const PtstoSet &fcn_pts,
   }
 }
 
-void SpecAnders::addIndirEdges(const CallInfo &caller_ci,
+void SpecAndersAnalysis::addIndirEdges(const CallInfo &caller_ci,
     const CallInfo &callee_ci,
     Worklist<AndersGraph::Id> &wl,
     const std::vector<uint32_t> &priority) {

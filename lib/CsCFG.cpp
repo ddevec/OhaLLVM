@@ -10,7 +10,7 @@
 #include <vector>
 #include <unordered_set>
 
-#include "include/lib/CallDests.h"
+#include "include/LLVMHelper.h"
 #include "include/Tarjans.h"
 
 // Add Function CFG stuff here
@@ -49,7 +49,6 @@ static RegisterPass<CsCFG> cX("CsCFG",
 
 void CsCFG::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   // Analysis that handles indirect function targets...
-  usage.addRequired<CallDests>();
 
   // Unused Function Info
   usage.addRequired<UnusedFunctions>();
@@ -59,7 +58,6 @@ void CsCFG::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
 }
 
 bool CsCFG::runOnModule(llvm::Module &m) {
-  auto &call_info = getAnalysis<CallDests>();
   auto &dyn_info = getAnalysis<UnusedFunctions>();
   std::multimap<const llvm::Function *,
     const llvm::Instruction *> fcn_to_calls;
@@ -105,7 +103,8 @@ bool CsCFG::runOnModule(llvm::Module &m) {
 
 
           auto src_id = csMap_.at(ci);
-          auto dests = call_info.getDests(cs);
+          const llvm::Function *pdest_fcn =
+            LLVMHelper::getFcnFromCall(cs);
           /*
           llvm::dbgs() << "CS: " << *ci << "\n";
           for (auto &dest : dests) {
@@ -123,7 +122,11 @@ bool CsCFG::runOnModule(llvm::Module &m) {
             csGraph_.addPred(src_id, util::convert_id<SEG::NodeID>(mainNode_));
           }
 
+          // We do a --- best effort finding of call dests.
+          //   As we're used in the alias analysis, We don't yet want to over
+          //     approximate call dests
           // llvm::dbgs() << "call: " << ValPrinter(ci) << "\n";
+          /*
           for (auto pdest_fcn : dests) {
             auto pred_set = fcn_to_calls.equal_range(pdest_fcn);
             // llvm::dbgs() << "  calls: " << ValPrinter(pdest_fcn) << "\n";
@@ -133,11 +136,23 @@ bool CsCFG::runOnModule(llvm::Module &m) {
               assert(it->first == pdest_fcn);
               auto dest_id = csMap_.at(it->second);
               csGraph_.addPred(dest_id, src_id);
-              /*
-              llvm::dbgs() << "  Adding pred: " << src_id << "->" <<
-                dest_id << "\n";
-              */
+              // llvm::dbgs() << "  Adding pred: " << src_id << "->" <<
+              //   dest_id << "\n";
             }
+          }
+          */
+          auto pred_set = fcn_to_calls.equal_range(pdest_fcn);
+          // llvm::dbgs() << "  calls: " << ValPrinter(pdest_fcn) << "\n";
+
+          for (auto it = pred_set.first, en = pred_set.second;
+              it != en; ++it) {
+            assert(it->first == pdest_fcn);
+            auto dest_id = csMap_.at(it->second);
+            csGraph_.addPred(dest_id, src_id);
+            /*
+            llvm::dbgs() << "  Adding pred: " << src_id << "->" <<
+              dest_id << "\n";
+            */
           }
         } else if (auto ii = dyn_cast<llvm::InvokeInst>(pinst)) {
           llvm::dbgs() << "Unexpected invoke inst: " << *ii << "\n";
