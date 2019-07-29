@@ -1,0 +1,72 @@
+#!/bin/bash
+
+# For v2.5... which still has a malloc/free inst
+#ANALYSES=(-internalize -mem2reg -indmemrem -raiseallocs -predsimplify
+			#-mergereturn -simplify-libcalls -loopsimplify -scalarrepl -licm
+			#-instcombine -condprop -constprop -sccp -gvn -die -adce -dse
+			#-constmerge -globaldce -globalopt -tailcallelim -ipconstprop -ipsccp
+			#-deadargelim -loop-deletion -simplifycfg -mergereturn)
+
+# For v3.1, which doesn't
+#ANALYSES=(-internalize -mem2reg 
+#			-mergereturn -simplify-libcalls -loop-simplify -scalarrepl -licm
+#			-instcombine -jump-threading -constprop -sccp -gvn -die -adce -dse
+#			-constmerge -globaldce -globalopt -tailcallelim -ipconstprop -ipsccp
+#			-deadargelim -loop-deletion -simplifycfg -mergereturn)
+
+#ANALYSES=(-internalize -mem2reg 
+#			-mergereturn -simplify-libcalls -loop-simplify -scalarrepl -licm
+#			-jump-threading -constprop -sccp -gvn -die -adce -dse
+#			-constmerge -globaldce -globalopt -tailcallelim -ipconstprop -ipsccp
+#			-deadargelim -loop-deletion -simplifycfg -mergereturn)
+
+# ANALYSES=(-internalize -mem2reg 
+# 			-mergereturn -simplify-libcalls -loop-simplify -scalarrepl -licm
+# 			-jump-threading -constprop -sccp -gvn -die -adce -dse
+# 			-constmerge -globaldce -globalopt -tailcallelim -ipconstprop -ipsccp
+# 			-deadargelim -loop-deletion -simplifycfg -mergereturn)
+
+ANALYSES=(
+      -mem2reg 
+			-mergereturn -loop-simplify -scalarizer -licm
+			-jump-threading -constprop -sccp -gvn -die -adce -dse
+			-constmerge
+      -globalopt
+      -tailcallelim -ipconstprop -ipsccp
+			-deadargelim -loop-deletion -simplifycfg -mergereturn)
+
+OPT=opt
+
+if [[ "$#" -ne "2" ]]; then
+	echo "Usage: $0 <opt_file> <output_file>"
+	exit 1
+fi
+
+infile="$1"
+outfile="$2"
+
+echo "infile is: $infile"
+echo "outfile is: $outfile"
+
+next_out=$(mktemp --tmpdir=/tmp my-preopt.XXXXXXXX)
+cp $infile $next_out
+
+for analysis in ${ANALYSES[@]}; do
+	cur_in=$next_out
+
+	next_out=$(mktemp --tmpdir=/tmp my-preopt.XXXXXXXX)
+
+	echo "Running: $OPT -f -o $next_out $analysis $cur_in"
+	$OPT -f -o $next_out $analysis $cur_in || {
+		echo "Error, opt failed!"
+		exit 1
+	}
+
+	#llvm-dis $cur_in
+	rm $cur_in
+done
+
+mv $next_out $outfile
+
+exit 0
+

@@ -13,7 +13,6 @@
 
 #include "include/util.h"
 #include "include/LLVMHelper.h"
-#include "include/lib/CallDests.h"
 #include "include/lib/CsCFG.h"
 #include "include/lib/UnusedFunctions.h"
 #include "include/lib/IndirFcnTarget.h"
@@ -83,9 +82,6 @@ static RegisterPass<CallContextInst> bX("insert-callstack-profiling",
 
 
 void CallContextInst::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
-  // Analysis that handles indirect function targets...
-  usage.addRequired<CallDests>();
-
   // Analysis that handles indirect function targets...
   usage.addRequired<CsCFG>();
 

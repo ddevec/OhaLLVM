@@ -464,8 +464,6 @@ SpecSFSInstrumenter::getCheckData(llvm::Module &m,
         llvm::GlobalValue::InternalLinkage, const_array,
         "CallStackCheckData_internal");
 
-    llvm::dbgs() << "Have array: " << ValPrinter(sub_array) << "\n";
-
     std::vector<llvm::Constant *> indicies =
         { llvm::ConstantInt::get(int32Type_, 0),
           llvm::ConstantInt::get(int32Type_, 0) };
@@ -474,7 +472,6 @@ SpecSFSInstrumenter::getCheckData(llvm::Module &m,
         sub_array->getType(),
         sub_array,
         indicies);
-    llvm::dbgs() << "have gep: " << ValPrinter(gep) << "\n";
     glbl_array_data.push_back(gep);
   }
 

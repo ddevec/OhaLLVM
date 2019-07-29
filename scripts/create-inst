@@ -1,0 +1,80 @@
+#!/bin/bash
+
+if [[ "$#" -lt "1" ]]; then
+	echo "Usage: $0 <binary_name>"
+	exit 1
+fi
+
+infile="$1"
+
+flags_arr=($@)
+flags="${flags_arr[@]:1}"
+
+echo "infile is: $infile"
+echo "flags are: $flags"
+
+flags+=" -lm"
+
+echo "building ${infile}"
+clang ${infile}.bc -o ${infile} $flags
+
+#echo "building ${infile}.edge"
+#opt -insert-edge-profiling ${infile}.bc > ${infile}.edge.bc || {
+#  echo "ptsto edge failed";
+#  exit 1;
+#}
+#clang ${infile}.edge.bc -o ${infile}.edge -lprofile_rt $flags
+
+echo "building ${infile}.indir"
+echo "cmd: opt -load ${SFS_DIR}/SpecSFS.so -insert-indir-profiling ${infile}.bc > ${infile}.indir.bc"
+opt -load ${SFS_DIR}/SpecSFS.so -insert-indir-profiling ${infile}.bc > ${infile}.indir.bc || {
+  echo "indir opt failed";
+  exit 1;
+}
+clang++ ${infile}.indir.bc -o ${infile}.indir ${SFS_DIR}/libprof_indir.a  $flags
+
+#echo "building ${infile}.ptsto"
+#echo "cmd: opt -load /home/ddevec/SpecSFS/build/SpecSFS.so -insert-ptsto-profiling ${infile}.bc > ${infile}.ptsto.bc"
+#opt -load /home/ddevec/SpecSFS/build/SpecSFS.so -insert-ptsto-profiling ${infile}.bc > ${infile}.ptsto.bc || {
+#  echo "ptsto opt failed";
+#  exit 1;
+#}
+#clang ${infile}.ptsto.bc -o ${infile}.ptsto ~/SpecSFS/build/libprof_ptsto.a /usr/lib/gcc/x86_64-linux-gnu/5/libstdc++.a $flags
+
+#echo "building ${infile}.ptsto_nogep"
+#echo "cmd: opt -load /home/ddevec/SpecSFS/build/SpecSFS.so -dyn-ptsto-no-gep -insert-ptsto-profiling ${infile}.bc > ${infile}.ptsto_nogep.bc"
+#opt -load /home/ddevec/SpecSFS/build/SpecSFS.so -dyn-ptsto-no-gep -insert-ptsto-profiling ${infile}.bc > ${infile}.ptsto_nogep.bc || {
+#  echo "ptsto opt failed";
+#  exit 1;
+#}
+#clang ${infile}.ptsto_nogep.bc -o ${infile}.ptsto_nogep ~/SpecSFS/build/libprof_ptsto.a /usr/lib/gcc/x86_64-linux-gnu/5/libstdc++.a $flags
+
+echo "building ${infile}.alias"
+echo "cmd: opt -load ${SFS_DIR}/SpecSFS.so -insert-alias-profiling ${infile}.bc > ${infile}.alias.bc"
+opt -load ${SFS_DIR}/SpecSFS.so -insert-alias-profiling ${infile}.bc > ${infile}.alias.bc || {
+  echo "alias opt failed";
+  exit 1;
+}
+clang++ ${infile}.alias.bc -o ${infile}.alias ${SFS_DIR}/libprof_alias.a $flags || {
+  echo "alias link failed";
+  exit 1;
+}
+
+echo "building ${infile}.callstack"
+echo "cmd: opt -load ${SFS_DIR}/SpecSFS.so -profile-loader -insert-callstack-profiling ${infile}.bc > ${infile}.callstack"
+opt -load ${SFS_DIR}/SpecSFS.so -insert-callstack-profiling ${infile}.bc > ${infile}.callstack.bc || {
+  echo "callstack opt failed";
+  exit 1;
+}
+clang++ ${infile}.callstack.bc -o ${infile}.callstack ${SFS_DIR}/libprof_callstack.a $flags
+
+#echo "building ${infile}.giri"
+#echo "cmd: opt -load ${SFS_DIR}/SpecSFS.so -load /home/ddevec/giri/build/lib/Utility/dgutility.so -load /home/ddevec/giri/build/lib/Giri/giri.so -bbnum -lsnum -trace-giri -trace-file=${infile}.trace -remove-bbnum -remove-lsnum ${infile}.bc > ${infile}.giri.bc"
+#opt -load /home/ddevec/SpecSFS/build/SpecSFS.so -load /home/ddevec/giri/build/lib/Utility/dgutility.so -load /home/ddevec/giri/build/lib/Giri/giri.so -bbnum -lsnum -trace-giri -trace-file=${infile}.trace -remove-bbnum -remove-lsnum ${infile}.bc > ${infile}.giri.bc || {
+#  echo "giri failed";
+#  exit 1;
+#}
+#clang ${infile}.giri.bc -o ${infile}.giri /home/ddevec/giri/build/runtime/Giri/librtgiri.so $flags
+
+exit 0
+

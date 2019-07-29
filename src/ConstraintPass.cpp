@@ -60,8 +60,8 @@ void ConstraintPass::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
 }
 
 bool ConstraintPass::runOnModule(llvm::Module &m) {
-  modInfo_ = std14::make_unique<ModInfo>(m);
-  extInfo_ = std14::make_unique<ExtLibInfo>(*modInfo_);
+  modInfo_ = std::make_unique<ModInfo>(m);
+  extInfo_ = std::make_unique<ExtLibInfo>(*modInfo_);
 
   auto &unused_fcns =
       getAnalysis<UnusedFunctions>();
@@ -87,9 +87,9 @@ bool ConstraintPass::runOnModule(llvm::Module &m) {
   // Then merge them all into one cg (combinging and linking together, like in
   //    sccs)
   // This is the Cg for the whole program...
-  cgCache_ = std14::make_unique<CgCache>(m, dyn_info, fcn_cfg, *modInfo_,
+  cgCache_ = std::make_unique<CgCache>(m, dyn_info, fcn_cfg, *modInfo_,
       *extInfo_, specAssumptions_, cs_cfg);
-  callCgCache_ = std14::make_unique<CgCache>(fcn_cfg);
+  callCgCache_ = std::make_unique<CgCache>(fcn_cfg);
 
   auto main = m.getFunction("main");
   mainCg_ = &cgCache_->getCg(main);

@@ -207,13 +207,18 @@ bool InstrIndirCalls::runOnModule(llvm::Module &m) {
       auto fcn = fcn_lookup_initializer[i];
       auto fcn_void_ptr = new llvm::BitCastInst(fcn, void_ptr_type,
           "", init_entry);
-      std::vector<llvm::Constant *> gep_indicies;
-      gep_indicies.push_back(llvm::ConstantInt::get(i32_type, 0, false));
-      gep_indicies.push_back(llvm::ConstantInt::get(i64_type, i, false));
-      auto store_pos = llvm::ConstantExpr::getGetElementPtr(
-          fcn_lookup_array->getType(),
-          fcn_lookup_array,
-          gep_indicies);
+      llvm::Value* gep_indicies[] = {
+        llvm::ConstantInt::get(i32_type, 0, false),
+        llvm::ConstantInt::get(i64_type, i, false)
+      };
+      /*
+      auto array_base = new llvm::LoadInst(fcn_lookup_array, "", init_entry);
+      llvm::dbgs() << "array_base is: " << *array_base << "\n";
+      llvm::dbgs() << "  array_base type is: " << *array_base->getType()
+        << "\n";
+      */
+      auto store_pos = llvm::GetElementPtrInst::CreateInBounds(fcn_lookup_array,
+          gep_indicies, "", init_entry);
       new llvm::StoreInst(fcn_void_ptr, store_pos, false, init_entry);
     }
 

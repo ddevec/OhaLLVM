@@ -45,8 +45,7 @@ void CallDests::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
   usage.setPreservesAll();
 
   // For function numbering?
-  llvm::dbgs() << "In get analysis usage?\n";
-  usage.addRequired<llvm::AAResultsWrapperPass>();
+  usage.addRequired<ModuleAAResults>();
 
   // For DCE
   usage.addRequired<IndirFunctionInfo>();
@@ -56,7 +55,7 @@ void CallDests::getAnalysisUsage(llvm::AnalysisUsage &usage) const {
 
 bool CallDests::runOnModule(llvm::Module &m) {
   // Load all of our used analysis
-  alias_ = &getAnalysis<llvm::AAResultsWrapperPass>().getAAResults();
+  alias_ = &getAnalysis<ModuleAAResults>();
   indirInfo_ = &getAnalysis<IndirFunctionInfo>();
   auto &dyn_info = getAnalysis<UnusedFunctions>();
 

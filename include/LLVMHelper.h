@@ -198,16 +198,18 @@ class LLVMHelper {
     // This loop is essentially to handle the nested nature of
     //   GEP instructions
     // It basically says, For the outer-layer of the struct
-    llvm::dbgs() << "have gep: " << gep << "\n";
+    // llvm::dbgs() << "have gep: " << gep << "\n";
     for (auto gi = llvm::gep_type_begin(gep),
           en = llvm::gep_type_end(gep);
         gi != en; ++gi) {
       auto type = gi.getStructTypeOrNull();
+      /*
       if (type) {
         llvm::dbgs() << "type: " << *type << "\n";
       } else {
         llvm::dbgs() << "type: (null)\n";
       }
+      */
       auto struct_type = type;
       // If it isn't a struct field, don't add subfield offsets
       if (struct_type == nullptr) {
@@ -217,7 +219,7 @@ class LLVMHelper {
       auto &si = info.getStructInfo(struct_type);
 
       auto operand = gi.getOperand();
-      llvm::dbgs() << "operand: " << *operand << "\n";
+      // llvm::dbgs() << "operand: " << *operand << "\n";
 
       // Get the offset from this const value
       auto cons_op = dyn_cast<llvm::ConstantInt>(operand);
