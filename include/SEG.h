@@ -528,7 +528,7 @@ class SEG {
             --itr_;
           }
 
-          return std::move(tmp);
+          return tmp;
         }
 
         node_iterator &operator++() {
@@ -549,7 +549,7 @@ class SEG {
             ++itr_;
           }
 
-          return std::move(tmp);
+          return tmp;
         }
         //}}}
 
@@ -630,7 +630,7 @@ class SEG {
             --itr_;
           }
 
-          return std::move(tmp);
+          return tmp;
         }
 
         const_node_iterator &operator++() {
@@ -651,7 +651,7 @@ class SEG {
             ++itr_;
           }
 
-          return std::move(tmp);
+          return tmp;
         }
         //}}}
 
@@ -776,7 +776,7 @@ class SEG {
           end_ = (itr_ == std::end(*L_));
           begin_ = (itr_ == std::begin(*L_));
 
-          return std::move(tmp);
+          return tmp;
         }
 
         topo_iterator &operator++() {
@@ -793,7 +793,7 @@ class SEG {
           end_ = (itr_ == std::end(*L_));
           begin_ = (itr_ == std::begin(*L_));
 
-          return std::move(tmp);
+          return tmp;
         }
         //}}}
 
@@ -1420,7 +1420,7 @@ SEG SEG::clone() const {
     idx++;
   });
 
-  return std::move(ret);
+  return ret;
 }
 //}}}
 

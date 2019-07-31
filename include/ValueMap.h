@@ -102,7 +102,10 @@ class ValueMap {
   Id allocNamed(int32_t size, const std::string &name) {
     assert(size > 0);
     auto ret = nextId();
-    auto rc = named_.emplace(name, nextId());
+#ifndef NDEBUG
+    auto rc =
+#endif
+      named_.emplace(name, nextId());
     assert(rc.second);
     for (int32_t i = 0; i <  size; ++i) {
       createMapping(nullptr);
@@ -158,7 +161,7 @@ class ValueMap {
       }
     }
 
-    return std::move(ret);
+    return ret;
   }
 
   const llvm::Value *getValue(Id id) const {

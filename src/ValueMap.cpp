@@ -144,7 +144,7 @@ util::ObjectRemap<Id> ValueMap::import(const ValueMap &rhs) {
     allocs_.emplace_back(remap[pr.first], pr.second);
   }
 
-  return std::move(remap);
+  return remap;
 }
 
 util::ObjectRemap<Id> ValueMap::lowerAllocs() {
@@ -241,7 +241,7 @@ util::ObjectRemap<Id> ValueMap::lowerAllocs() {
     pr.first = remap_id;
   }
 
-  return std::move(remap);
+  return remap;
 }
 
 

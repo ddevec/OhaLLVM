@@ -59,7 +59,7 @@ class BasicFcnCFG {
   };
 
  public:
-  typedef util::ID<id_tag, uint32_t, -1> Id;
+  typedef util::ID<id_tag, uint32_t, std::numeric_limits<uint32_t>::max()> Id;
 
   BasicFcnCFG(llvm::Module &m, DynamicInfo &di);
 

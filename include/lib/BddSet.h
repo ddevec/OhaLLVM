@@ -47,7 +47,7 @@ class BddSet {
   static BddSet tautology() {
     BddSet ret;
     ret.ptsto_ = bddtrue;
-    return std::move(ret);
+    return ret;
   }
   //}}}
 
@@ -122,7 +122,7 @@ class BddSet {
 
     ret &= rhs;
 
-    return std::move(ret);
+    return ret;
   }
 
   BddSet operator-(const BddSet &rhs) const {
@@ -130,7 +130,7 @@ class BddSet {
 
     ret.ptsto_ -= rhs.ptsto_;
 
-    return std::move(ret);
+    return ret;
   }
 
   bool operator|=(const BddSet &rhs) {
@@ -222,7 +222,7 @@ class BddSet {
       const_iterator tmp(*this);
       ++itr_;
 
-      return std::move(tmp);
+      return tmp;
     }
     //}}}
 

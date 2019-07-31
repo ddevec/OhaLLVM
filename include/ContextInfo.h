@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <limits>
 #include <map>
 #include <set>
 #include <unordered_map>
@@ -57,8 +58,10 @@ class ContextInfo : public llvm::ModulePass {
     const StoreNumber *si_num = nullptr;
   };
 
-  typedef util::ID<cons_id_tag, uint32_t, -1> ContextId;
-  typedef util::ID<stack_id_tag, uint32_t, -1> StackId;
+  typedef util::ID<cons_id_tag, uint32_t,
+          std::numeric_limits<uint32_t>::max()> ContextId;
+  typedef util::ID<stack_id_tag, uint32_t,
+          std::numeric_limits<uint32_t>::max()> StackId;
 
   typedef BddSet<StoreNumber::Id, store_bdd_tag> StoreBddSet;
   typedef BddSet<BBNumber::Id, bb_bdd_tag> BBBddSet;
@@ -219,7 +222,7 @@ class ContextInfo : public llvm::ModulePass {
       }
     }
 
-    return std::move(ret);
+    return ret;
   }
 
   ContextId getContext(const llvm::Value *val, StackId id) const {

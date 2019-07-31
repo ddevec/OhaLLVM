@@ -1098,7 +1098,7 @@ Cg::mapIn(const Cg &rhs) {
       [&rhs_remap] (const CallInfo &ci) {
         CallInfo new_ci(ci);
         new_ci.remap(rhs_remap);
-        return std::move(new_ci);
+        return new_ci;
       });
   indirCalls_.reserve(indirCalls_.size() + rhs.indirCalls_.size());
   std::transform(std::begin(rhs.indirCalls_), std::end(rhs.indirCalls_),
@@ -1131,7 +1131,7 @@ Cg::mapIn(const Cg &rhs) {
       std::end(rhs.invalidStacks_));
 
   // Return the externally visible remapping
-  return std::move(ret);
+  return ret;
 }
 
 // Resolve an internal call
@@ -1233,7 +1233,7 @@ Cg::getCalleeStacks(llvm::ImmutableCallSite &cs,
   auto &call_info = dynInfo_.call_info;
   std::vector<std::vector<CsCFG::Id>> new_stacks;
   if (!call_info.hasDynData() || no_spec) {
-    return std::move(new_stacks);
+    return new_stacks;
   }
 
   for (auto &stack : curStacks_) {
@@ -1261,7 +1261,7 @@ Cg::getCalleeStacks(llvm::ImmutableCallSite &cs,
       new_stacks.emplace_back(std::move(new_stack));
     }
   }
-  return std::move(new_stacks);
+  return new_stacks;
 }
 
 void Cg::resolveDirCalls(CgCache &base_cgs, CgCache &full_cgs,
@@ -1290,7 +1290,8 @@ void Cg::resolveDirCalls(CgCache &base_cgs, CgCache &full_cgs,
         resolveDirCyclicCall(cs, called_fcn, caller_info, callee_info,
             callee_node_id, std::move(new_stacks));
       } else {
-        acyc_calls.emplace_back(cs.getInstruction(), called_fcn, &caller_info);
+        acyc_calls.emplace_back(cast<llvm::CallInst>(cs.getInstruction()),
+            called_fcn, &caller_info);
       }
     }
   }

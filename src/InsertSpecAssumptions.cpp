@@ -333,7 +333,7 @@ static free_location_multimap findFreeLocs(llvm::Module &m, UnusedFunctions &uf,
     }
   }
 
-  return std::move(free_locs);
+  return free_locs;
 }
 
 void SpecSFSInstrumenter::setupTypes(llvm::Module &m) {

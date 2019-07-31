@@ -396,10 +396,16 @@ void __DynPtsto_do_gep(int32_t offs, void *base_addr,
       */
       assert(new_addr.end() == max_pos);
       addr_to_objid.erase(addr_it);
-      auto pr_e = addr_to_objid.emplace(new_end_addr,
+#ifndef NDEBUG
+      auto pr_e =
+#endif
+        addr_to_objid.emplace(new_end_addr,
           AddressValue(base_ids));
       assert(pr_e.second);
-      auto new_addr_it = pr_e.first;
+#ifndef NDEBUG
+      auto new_addr_it =
+        pr_e.first;
+#endif
       assert(new_addr_it != std::end(addr_to_objid));
 
       /*

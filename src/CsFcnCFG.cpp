@@ -55,7 +55,7 @@ CsFcnCFG::findDirectPreds(Id start,
     }
   }
 
-  return std::move(ret);
+  return ret;
 }
 
 util::ObjectRemap<CsFcnCFG::Id> CsFcnCFG::copyNodes(const CsFcnCFG &callee,
@@ -91,7 +91,7 @@ util::ObjectRemap<CsFcnCFG::Id> CsFcnCFG::copyNodes(const CsFcnCFG &callee,
         });
   }
 
-  return std::move(ret);
+  return ret;
 }
 
 

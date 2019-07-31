@@ -12,6 +12,7 @@
 
 #include "include/util.h"
 #include "include/ValueMap.h"
+#include "include/ModuleAAResults.h"
 #include "include/LLVMHelper.h"
 #include "include/lib/UnusedFunctions.h"
 #include "include/lib/IndirFcnTarget.h"
@@ -79,7 +80,7 @@ class CallDests : public llvm::ModulePass {
 
   void fillCallers() const;
 
-  llvm::AliasAnalysis *alias_;
+  ModuleAAResults *alias_;
   IndirFunctionInfo *indirInfo_;
 
   llvm::Module *m_;

@@ -95,7 +95,7 @@ class CallContextLoader : public llvm::ModulePass {
           return &v;
         });
 
-    return std::move(ret);
+    return ret;
   }
 
   size_t numInvariants() const {

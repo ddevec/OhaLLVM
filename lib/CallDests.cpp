@@ -9,6 +9,7 @@
 
 #include "llvm/PassRegistry.h"
 
+#include "include/ModuleAAResults.h"
 #include "include/lib/UnusedFunctions.h"
 
 #include "include/LLVMHelper.h"

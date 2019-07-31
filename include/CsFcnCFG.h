@@ -5,6 +5,7 @@
 #ifndef INCLUDE_CSFCNCFG_H_
 #define INCLUDE_CSFCNCFG_H_
 
+#include <limits>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
@@ -22,7 +23,7 @@ class CsFcnCFG {
   struct id_tag {};
 
  public:
-  typedef util::ID<id_tag, uint32_t, -1> Id;
+  typedef util::ID<id_tag, uint32_t, std::numeric_limits<uint32_t>::max()> Id;
 
   class FcnNode {
     //{{{

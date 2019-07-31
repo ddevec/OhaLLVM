@@ -214,7 +214,10 @@ void CsCFG::findPath(const CsNode &node, Id end,
         continue;
       }
 
-      auto rc = dedup_set.emplace(pred_node.id());
+#ifndef NDEBUG
+      auto rc =
+#endif
+        dedup_set.emplace(pred_node.id());
       assert(rc.second);
 
       findPath(pred_node, end, cache);

@@ -389,7 +389,7 @@ ContextInfo::stackPush(ContextId context_id,
     }
   }
 
-  return std::move(ret);
+  return ret;
 }
 
 std::vector<ContextId>
@@ -513,7 +513,7 @@ ContextInfo::getPriorContexts(const llvm::Instruction *inst,
     }
   }
 
-  return std::move(ret);
+  return ret;
 }
 
 std::vector<ContextId>
@@ -546,7 +546,7 @@ ContextInfo::stackPop(ContextId context_id) const {
       ret.push_back(cache_.find(ci, stack_id, *this));
     }
 
-    return std::move(ret);
+    return ret;
   }
 
   auto &stack = stackCache_.getStack(stack_id);

@@ -5,6 +5,7 @@
 #ifndef INCLUDE_LIB_FCNCFG_H_
 #define INCLUDE_LIB_FCNCFG_H_
 
+#include <limits>
 #include <set>
 #include <unordered_map>
 #include <vector>
@@ -57,7 +58,7 @@ class FcnCFG : public llvm::ModulePass {
   };
 
  public:
-  typedef util::ID<id_tag, uint32_t, -1> Id;
+  typedef util::ID<id_tag, uint32_t, std::numeric_limits<uint32_t>::max()> Id;
 
   static char ID;
   FcnCFG();

@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.3.4)
 
 #set(CMAKE_CXX_COMPILER clang++-libc++)
 #set(CMAKE_CXX_COMPILER g++)
+set(CMAKE_CXX_COMPILER g++-9)
 
 function(list_prefix var prefix)
 
@@ -19,7 +20,7 @@ function(add_bc_target TARGET_NAME)
   set(target_bc "${TARGET_NAME}.bc")
   
   add_custom_target(${target_bc} ALL
-    COMMAND "$ENV{LLVM_DIR}/bin/clang++" -std=c++11 -stdlib=libstdc++ -I /usr/include/x86_64-linux-gnu/c++/4.8 -I /usr/include/c++/4.8 -O3 -g -c -emit-llvm -o ${target_bc} "${CMAKE_CURRENT_SOURCE_DIR}/${ARGN}"
+    COMMAND "$ENV{LLVM_DIR}/bin/clang++" -std=c++17 -stdlib=libstdc++ -I /usr/include/x86_64-linux-gnu/c++/4.8 -I /usr/include/c++/4.8 -O3 -g -c -emit-llvm -o ${target_bc} "${CMAKE_CURRENT_SOURCE_DIR}/${ARGN}"
     DEPENDS ${ARGN})
 
   #-L /usr/lib/gcc/x86_64-linux-gnu/4.8 
@@ -86,7 +87,6 @@ find_package(LLVM REQUIRED CONFIG)
 
 add_definitions(${LLVM_DEFINITOINS})
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
-include_directories(/home/ddevec/prefix/include)
 link_directories(${LLVM_LIBRARY_DIRS} /home/ddevec/prefix/lib)
 
 list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
@@ -102,9 +102,9 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O4 -DNDEBUG -DSPECSFS_NODEBUG")
 set(CMAKE_CXX_FLAGS_DEBUG "-Og -g")
 
 #set(CMAKE_CXX_COMPILER "g++-5")
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -flto -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -std=c++17 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -flto -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -pedantic -Werror -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -Werror -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -std=c++17 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC -fvisibility-inlines-hidden -fno-rtti -Wall -Wextra -Werror -pedantic -Wno-deprecated -Wwrite-strings -Wno-long-long -fno-exceptions")
 #set(CMAKE_CXX_LINKER_FLAGS "${CMAKE_CXX_LINKER_FLAGS} -flto")
 #set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -flto")
 
@@ -230,7 +230,7 @@ target_link_libraries(SpecSFS
   ssl
   crypto
   bdd
-  #profiler
+  profiler
   #tcmalloc
   )
 

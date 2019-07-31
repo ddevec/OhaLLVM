@@ -589,10 +589,9 @@ struct StringAlloc {
       llvm::Instruction **insert_after) const {
     std::vector<AllocInfo> ret;
 
-    auto strlen_fcn = m.getFunction("strlen");
     // I may have to create an external linkage for this in some instances...
     //   ugh
-    assert(strlen_fcn != nullptr);
+    assert(m.getFunction("strlen") != nullptr);
 
     // We have the size of the type, its returned in the return value
     auto ci = cs.getInstruction();

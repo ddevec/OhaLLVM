@@ -295,7 +295,7 @@ AndersGraph::updateGraphForCons(
   prevCons_ = cg_->constraints().size();
   prevIndirCons_ = cg_->indirCalls().size();
 
-  return std::move(ret);
+  return ret;
 }
 
 std::pair<std::vector<AndersGraph::Id>,

@@ -610,7 +610,7 @@ DeadCodeAssumption::calcDependencies(
 
   ret.emplace_back(new VisitInst(bb_));
 
-  return std::move(ret);
+  return ret;
 }
 //}}}
 
@@ -678,7 +678,7 @@ PtstoAssumption::approxDependencies(
   ret.erase(it, std::end(ret));
   */
 
-  return std::move(ret);
+  return ret;
 }
 
 std::vector<std::unique_ptr<InstrumentationSite>>
@@ -690,7 +690,7 @@ DeadCodeAssumption::approxDependencies(
 
   ret.emplace_back(new VisitInst(bb_));
 
-  return std::move(ret);
+  return ret;
 }
 //}}}
 //}}}

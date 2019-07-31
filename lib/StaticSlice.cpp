@@ -670,7 +670,7 @@ class StaticSlice : public llvm::ModulePass {
       }
     }
 
-    return std::move(ret);
+    return ret;
   }
 
   std::unordered_set<const llvm::Value *>
@@ -721,7 +721,7 @@ class StaticSlice : public llvm::ModulePass {
       }
     }
 
-    return std::move(ret);
+    return ret;
   }
 
  private:
@@ -740,7 +740,7 @@ class StaticSlice : public llvm::ModulePass {
       }
     }
 
-    return std::move(positions);
+    return positions;
   }
 
   const UnusedFunctions *dynInfo_;

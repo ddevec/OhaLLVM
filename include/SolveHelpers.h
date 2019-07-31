@@ -263,7 +263,7 @@ class BddPtstoSet {
 
     ret &= rhs;
 
-    return std::move(ret);
+    return ret;
   }
 
   BddPtstoSet operator-(const BddPtstoSet &rhs) const {
@@ -271,7 +271,7 @@ class BddPtstoSet {
 
     ret.ptsto_ -= rhs.ptsto_;
 
-    return std::move(ret);
+    return ret;
   }
 
   bool operator|=(const BddPtstoSet &rhs) {
@@ -392,7 +392,7 @@ class BddPtstoSet {
       const_iterator tmp(*this);
       ++itr_;
 
-      return std::move(tmp);
+      return tmp;
     }
     //}}}
 
@@ -860,7 +860,7 @@ class SVPtstoSet {
           iterator tmp(*this);
           ++itr_;
 
-          return std::move(tmp);
+          return tmp;
         }
         //}}}
 
@@ -912,7 +912,7 @@ class SVPtstoSet {
           const_iterator tmp(*this);
           ++itr_;
 
-          return std::move(tmp);
+          return tmp;
         }
         //}}}
 
