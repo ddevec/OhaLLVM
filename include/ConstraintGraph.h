@@ -600,6 +600,10 @@ class ConstraintGraph {
       return std::end(indirectCalls_);
     }
 
+    llvm::iterator_range<indir_iterator> indirs() {
+      return llvm::iterator_range<indir_iterator>(indirectCalls_);
+    }
+
     const_indir_iterator indir_begin() const {
       return std::begin(indirectCalls_);
     }
@@ -614,6 +618,10 @@ class ConstraintGraph {
 
     const_indir_iterator indir_cend() const {
       return std::end(indirectCalls_);
+    }
+
+    llvm::iterator_range<const_indir_iterator> indirs() const {
+      return llvm::iterator_range<const_indir_iterator>(indirectCalls_);
     }
 
     //}}}

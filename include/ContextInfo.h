@@ -326,10 +326,9 @@ class ContextInfo : public llvm::ModulePass {
       size_t operator()(const std::vector<CsCFG::Id> &stack)
             const {
         size_t hash = 0;
-        std::for_each(std::begin(stack), std::end(stack),
-            [&hash] (CsCFG::Id frame) {
+        for (CsCFG::Id frame : stack) {
           hash = stackHashCombine(hash, frame);
-        });
+        }
         return hash;
       }
     };

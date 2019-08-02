@@ -427,10 +427,9 @@ class BddPtstoSet {
   friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
       const BddPtstoSet &ps) {
     os << "{";
-    std::for_each(std::begin(ps), std::end(ps),
-        [&os] (ValueMap::Id id) {
+    for (ValueMap::Id id : ps) {
       os << " " << id;
-    });
+    }
     os << " }";
 
     return os;
@@ -951,10 +950,9 @@ class SVPtstoSet {
     friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
         const SVPtstoSet &ps) {
       os << "{";
-      std::for_each(std::begin(ps), std::end(ps),
-          [&os] (ValueMap::Id id) {
+      for (ValueMap::Id id : ps) {
         os << " " << id;
-      });
+      }
       os << " }";
 
       return os;

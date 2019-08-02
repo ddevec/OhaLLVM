@@ -388,14 +388,7 @@ class AndersGraph {
     ObjID max_id(0);
 
     // Calculate the max_id used
-    std::for_each(cg.indir_begin(), cg.indir_end(),
-        [&max_id]
-        (const std::pair<const ObjID, ConstraintGraph::IndirectCallInfo> &pr) {
-      // Create an indir call cons
-      // Populate w/ callsite info
-      auto callinst = pr.first;
-      auto &call_info = pr.second;
-
+    for (const auto &[callisnt, call_info] : cg.indirs()) {
       // Setup ret if we return a pointer
       if (call_info.isPointer()) {
         if (callinst > max_id) {
@@ -408,7 +401,7 @@ class AndersGraph {
           max_id = arg_id;
         }
       }
-    });
+    }
 
     for (auto &pcons : cg) {
       if (pcons == nullptr) {
@@ -513,14 +506,7 @@ class AndersGraph {
 
     // Add constraints for indirect function calls:
     // For each indirect callsite (in cg)
-    std::for_each(cg.indir_begin(), cg.indir_end(),
-        [this, &omap]
-        (const std::pair<const ObjID, ConstraintGraph::IndirectCallInfo> &pr) {
-      // Create an indir call cons
-      // Populate w/ callsite info
-      auto callinst = pr.first;
-      auto &call_info = pr.second;
-
+    for (const auto &[callinst, call_info] : cg.indirs()) {
       // Defaults to invalid
       ObjID ret_id;
 
@@ -539,7 +525,7 @@ class AndersGraph {
       node.addCons(
           std14::make_unique<AndersIndirCallCons>(callee, ret_id,
             arg_begin, arg_end));
-    });
+    }
 
     /*
     auto &nd = getNode(ObjID(138391));

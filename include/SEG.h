@@ -715,7 +715,7 @@ class SEG {
               itr != en; ++itr) {
             auto &node = *(*itr);
 
-            visit(graph, mark, node, reverse, true);
+            visit(graph, mark, node, reverse);
           }
 
           /* NOTE: This assertion doesn't work, because nodes can be
@@ -800,20 +800,21 @@ class SEG {
      private:
         // Private functions {{{
         void visit(const SEG &graph, std::set<NodeID> &mark,
-            const Node &node, bool reverse, bool print = false) {
+            const Node &node, bool reverse) {
           // ddevec -- TODO: Check for cycles???
           if (mark.count(node.id()) == 0) {
             // For cycles...
             mark.insert(node.id());
 
             auto &preds = node.preds();
-            std::for_each(std::begin(preds), std::end(preds),
-                [this, &graph, &mark, reverse, print](NodeID pred_id) {
-              auto pnode = graph.tryGetNode(pred_id);
+
+            // Visit each non-null node in the pred graph
+            for (auto id : preds) {
+              auto pnode = graph.tryGetNode(id);
               if (pnode != nullptr) {
                 visit(graph, mark, *pnode, reverse);
               }
-            });
+            }
 
             if (reverse) {
               L_->push_front(node.id());
@@ -969,10 +970,9 @@ class SEG {
     }
 
     void cleanGraph() {
-      std::for_each(begin(), end(),
-          [this] (node_iter_type &pnode) {
+      for (auto &pnode : *this) {
         pnode->unique(*this);
-      });
+      }
     }
 
     //}}}
@@ -1146,11 +1146,9 @@ class SEG {
       // Create our required stack of visited nodes
       std::stack<NodeID> st;
 
-      std::for_each(begin(), end(),
-          [this, &data, &index, &st]
-          (node_iter_type &pnode) {
+      for (auto &pnode : *this) {
         sccStrongconnect(data, pnode->id(), index, st, *this);
-      });
+      }
     }
     //}}}
 
@@ -1165,20 +1163,16 @@ class SEG {
       std::ofstream ofil(filename, std::ofstream::out);
 #endif
       printDotHeader(ofil);
-      std::for_each(begin(), end(),
-          [&ofil, &omap]
-          (const node_iter_type &pnode) {
+      for (const auto &pnode : *this) {
         const Node &node = *pnode;
         std::string idNode = idToString(node.id());
 
         ofil << "  " << idNode << " [label=\"";
         node.print_label(ofil, omap);
         ofil << "\"" << " shape=box" << "];\n";
-      });
+      }
 
-      std::for_each(begin(), end(),
-          [this, &ofil, &omap]
-          (const node_iter_type &pnode) {
+      for (const auto &pnode : *this) {
         if (pnode != nullptr) {
           auto dest_id = pnode->id();
           for (auto src_id : pnode->preds()) {
@@ -1192,7 +1186,7 @@ class SEG {
             ofil << "\"];\n";
           }
         }
-      });
+      }
       printDotFooter(ofil);
     }
     //}}}
@@ -1408,9 +1402,7 @@ SEG SEG::clone() const {
   // Initialize ret to nullptr
   // We don't use node itr, because we want to include nullptrs
   size_t idx = 0;
-  std::for_each(std::begin(nodes_), std::end(nodes_),
-      [this, &ret, &idx]
-      (const node_iter_type &pnode) {
+  for (auto &pnode : nodes_) {
     if (pnode != nullptr) {
       auto &my_node = cast<node_type>(*pnode);
       ret.nodes_[idx] = std::unique_ptr<node_type>(new node_type(my_node));
@@ -1418,7 +1410,7 @@ SEG SEG::clone() const {
       ret.nodes_[idx] = nullptr;
     }
     idx++;
-  });
+  }
 
   return ret;
 }

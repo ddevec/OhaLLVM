@@ -423,26 +423,19 @@ int32_t Cg::addGlobalInitializerConstraints(Id dest,
       // llvm::dbgs() << "Splitting struct constant: " << *C << "\n";
       // Need to reset to 0, because we're adding fields
       offset = 0;
-      std::for_each(cs->op_begin(), cs->op_end(),
-          [this, &offset, &dest]
-          (const llvm::Use &field) {
+      for (const llvm::Use &field : cs->operands()) {
         auto field_cons = cast<const llvm::Constant>(field);
         auto new_dest = vals().createPhonyID();
         add(ConstraintType::Copy, dest, new_dest, offset);
         offset += addGlobalInitializerConstraints(new_dest,
             field_cons);
-      });
+      }
     } else {
-      if_debug_enabled(int32_t first_offs = -1);
-
       // llvm::dbgs() << "Arraying constant: " << *C << "\n";
-      std::for_each(C->op_begin(), C->op_end(),
-          [this, &offset, &dest
-          if_debug_enabled(, &first_offs)]
-          (const llvm::Use &field) {
+      for (const auto &field : C->operands()) {
         auto field_cons = cast<const llvm::Constant>(field);
         offset = addGlobalInitializerConstraints(dest, field_cons);
-      });
+      }
     }
   } else {
     // Undef values get no ptsto
@@ -969,8 +962,7 @@ void Cg::addGlobalConstraints(const llvm::Module &m) {
 
   // Global Variables {{{
   // Okay, first create nodes for all global variables:
-  std::for_each(m.global_begin(), m.global_end(),
-      [this](const llvm::GlobalVariable &glbl) {
+  for (const llvm::GlobalVariable &glbl : m.globals()) {
     // Associate the global address with a node:
     auto type = glbl.getType()->getElementType();
 
@@ -1022,7 +1014,7 @@ void Cg::addGlobalConstraints(const llvm::Module &m) {
       // Also store the value into this
       addGlobalInit(glbl_val, getDef(&glbl));
     }
-  });
+  }
 
   // Also add ptstos for fcns
   for (auto &fcn : m) {
@@ -1426,7 +1418,8 @@ void Cg::lowerAllocs() {
   std::for_each(std::begin(indirCalls_), std::end(indirCalls_),
       indir_call_remap);
   // finally Constraints
-  std::for_each(std::begin(constraints_), std::end(constraints_), cons_remap);
+  std::for_each(std::begin(constraints_), std::end(constraints_),
+      cons_remap);
 
   localCFG_.updateNodes(remap);
 }

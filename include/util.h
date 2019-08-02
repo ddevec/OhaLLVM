@@ -95,6 +95,21 @@ class IterPrintClass {
   const T &vec_;
 };
 
+template<typename T, typename V>
+T &cast_to(V &v) {
+  return cast<T>(v);
+}
+
+template<typename T>
+bool is_null(T &t) {
+  return t == nullptr;
+}
+
+template<typename T>
+bool not_null(T &t) {
+  return t == nullptr;
+}
+
 template <typename T>
 IterPrintClass<T> print_iter(const T &itr) {
   return IterPrintClass<T>(itr);

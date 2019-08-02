@@ -21,9 +21,7 @@ class ModInfo {
     StructInfo(ModInfo &info, const llvm::StructType *type) :
         type_(type) {
       int32_t field_count = 0;
-      std::for_each(type->element_begin(), type->element_end(),
-          [this, &info, &field_count]
-          (const llvm::Type *element_type) {
+      for (const llvm::Type *element_type : type->elements()) {
         // We start by assuming structure fields are strong
         bool strong = true;
 
@@ -43,12 +41,10 @@ class ModInfo {
 
           // This field is strong if the substruct field was strong, and
           //   we're currently strong
-          std::for_each(struct_info.strong_begin(),
-              struct_info.strong_end(),
-              [this, &strong] (bool sub_strong) {
+          for (bool sub_strong : struct_info.strongs()) {
             // If we're strong, and their strong the field is strong
             fieldStrong_.push_back(strong & sub_strong);
-          });
+          }
 
           field_count += struct_info.numFields();
         } else {
@@ -56,7 +52,7 @@ class ModInfo {
           fieldStrong_.push_back(strong);
           field_count++;
         }
-      });
+      }
     }
 
     StructInfo(StructInfo &&) = default;
@@ -127,6 +123,14 @@ class ModInfo {
       return std::end(sizes_);
     }
 
+    llvm::iterator_range<size_iterator> sizes() {
+      return llvm::iterator_range<size_iterator>(sizes_);
+    }
+
+    llvm::iterator_range<const_size_iterator> sizes() const {
+      return llvm::iterator_range<const_size_iterator>(sizes_);
+    }
+
     typedef std::vector<int8_t>::iterator strong_iterator;
     typedef std::vector<int8_t>::const_iterator const_strong_iterator;
 
@@ -154,6 +158,14 @@ class ModInfo {
       return std::end(fieldStrong_);
     }
 
+    llvm::iterator_range<strong_iterator> strongs() {
+      return llvm::iterator_range<strong_iterator>(fieldStrong_);
+    }
+
+    llvm::iterator_range<const_strong_iterator> strongs() const {
+      return llvm::iterator_range<const_strong_iterator>(fieldStrong_);
+    }
+
     //}}}
 
     // Wohoo printing {{{
@@ -162,10 +174,9 @@ class ModInfo {
       // FIXME(ddevec): Cannot do getName on "literal" structs
       // os << "StructInfo( " << si.type()->getName() << ", [";
       os << "StructInfo( [";
-      std::for_each(si.sizes_begin(), si.sizes_end(),
-          [&os] (int32_t size) {
+      for (int32_t size : si.sizes()) {
         os << " " << size;
-      });
+      }
       os << " ] )";
       return os;
     }

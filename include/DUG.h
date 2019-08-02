@@ -12,6 +12,7 @@
 #include <list>
 #include <map>
 #include <queue>
+#include <ranges>
 #include <set>
 #include <string>
 #include <unordered_set>
@@ -265,27 +266,29 @@ class DUG {
 
       // Need to create a list of providers for each id, and go from there...
       // First, map all ids to sources
-      int32_t max_dest = 0;
-      int64_t edge_count = 0;
-      std::for_each(std::begin(DUG_), std::end(DUG_),
-          [this, &max_dest] (SEG::node_iter_type &upnode) {
-        auto &node = cast<DUGNode>(*upnode);
-        if (node.dest().val() > max_dest) {
-          max_dest = node.dest().val();
-        }
-      });
+      auto iter_to_dug [](SEG::node_iter_tuype &upnode) {
+        return cast<DUGNode>(*upnode);
+      };
 
+      // Figure out our max value node in the DUG
+      int32_t max_dest = std::max_element(DUG_ |
+          std::view::transform(iter_to_dug) |
+          std::view::transform([] (DUGNode &node) {
+            return node.vals();
+          })
+        );
+
+      int64_t edge_count = 0;
       std::vector<std::vector<DUGid>> dest_to_node(max_dest+1);
-      std::for_each(std::begin(DUG_), std::end(DUG_),
-          [this, &dest_to_node, &edge_count] (SEG::node_iter_type &upnode) {
-        auto &node = cast<DUGNode>(*upnode);
-        // Don't monitor the dest on store nodes... those are handled by the
-        //   partiton successors
-        if (!llvm::isa<DUG::StoreNode>(node)) {
-          dest_to_node[node.dest().val()].push_back(node.id());
-          edge_count++;
-        }
-      });
+      // Add a dest_to_node entry for each non StoreNode in the DUG
+      for(DUGNode node : DUG_ |
+          std::view::transform(iter_to_dug) |
+          std::view::filter([](DUGNode &node) {
+              return !llvm::isa<DUG::StoreNode>(node);
+            })) {
+        dest_to_node[node.dest().val()].push_back(node.id());
+        edge_count++;
+      }
       llvm::dbgs() << "Discovered " << edge_count << " linkages\n";
 
       // We add unnamed edges for top-level transitions
@@ -296,14 +299,9 @@ class DUG {
         int64_t st_edges = 0;
         int64_t node_count = 0;
         util::PerfTimerPrinter edge_addition(llvm::dbgs(), "Edge creation");
-        std::for_each(std::begin(DUG_), std::end(DUG_),
-            [this, &dest_to_node,
-              &num_edges, &st_edges, &node_count]
-            (SEG::node_iter_type &upnode) {
+        for (DUGNode &node : DUG_ |
+            std::view::transform(iter_to_dug)) {
           node_count++;
-          auto pnode = upnode.get();
-
-          auto &node = cast<DUGNode>(*pnode);
 
           // Add an incoming edge from src
           // O(log(n))

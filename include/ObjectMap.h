@@ -119,9 +119,7 @@ class ObjectMap {
     StructInfo(ObjectMap &omap, const llvm::StructType *type) :
         type_(type) {
       int32_t field_count = 0;
-      std::for_each(type->element_begin(), type->element_end(),
-          [this, &omap, &field_count]
-          (const llvm::Type *element_type) {
+      for (const llvm::Type *element_type : type->elements()) {
         // We start by assuming structure fields are strong
         bool strong = true;
 
@@ -141,12 +139,10 @@ class ObjectMap {
 
           // This field is strong if the substruct field was strong, and
           //   we're currently strong
-          std::for_each(struct_info.strong_begin(),
-              struct_info.strong_end(),
-              [this, &strong] (bool sub_strong) {
+          for (bool sub_strong : struct_info.strongs()) {
             // If we're strong, and their strong the field is strong
             fieldStrong_.push_back(strong & sub_strong);
-          });
+          }
 
           field_count += struct_info.numFields();
         } else {
@@ -154,7 +150,7 @@ class ObjectMap {
           fieldStrong_.push_back(strong);
           field_count++;
         }
-      });
+      }
     }
 
     StructInfo(StructInfo &&) = default;
@@ -248,6 +244,14 @@ class ObjectMap {
       return std::end(fieldStrong_);
     }
 
+    llvm::iterator_range<strong_iterator> strongs() {
+      return llvm::iterator_range<strong_iterator>(fieldStrong_);
+    }
+
+    llvm::iterator_range<const_strong_iterator> strongs() const {
+      return llvm::iterator_range<const_strong_iterator>(fieldStrong_);
+    }
+
     //}}}
 
     // Wohoo printing {{{
@@ -256,10 +260,9 @@ class ObjectMap {
       // FIXME(ddevec): Cannot do getName on "literal" structs
       // os << "StructInfo( " << si.type()->getName() << ", [";
       os << "StructInfo( [";
-      std::for_each(si.sizes_begin(), si.sizes_end(),
-          [&os] (int32_t size) {
+      for (int32_t size : si.sizes()) {
         os << " " << size;
-      });
+      }
       os << " ] )";
       return os;
     }
@@ -1371,9 +1374,7 @@ static const llvm::Type *findLargestType(ObjectMap &omap,
   }
 
   // now, see how each use is cast...
-  std::for_each(ins.use_begin(), ins.use_end(),
-      [&max_size, &found, &biggest_type, &omap]
-      (const llvm::User *use) {
+  for (const llvm::user *use : ins.uses()) {
     auto cast_inst = dyn_cast<llvm::CastInst>(use);
 
     if (cast_inst && llvm::isa<llvm::PointerType>(cast_inst->getType())) {
@@ -1399,7 +1400,7 @@ static const llvm::Type *findLargestType(ObjectMap &omap,
         biggest_type = cast_type;
       }
     }
-  });
+  }
 
   if (!found && max_size == 0) {
     return omap.getMaxStructInfo().type();

@@ -12,6 +12,8 @@
 #include "include/ConstraintGraph.h"
 #include "include/SEG.h"
 
+#include "llvm/ADT/iterator_range.h"
+
 class CFG {
  public:
 
@@ -636,6 +638,14 @@ class CFG {
     const_fcn_cfg_iterator function_ret_end() const {
       return std::end(cfgFunctionReturns_);
     }
+
+    llvm::iterator_range<const_fcn_cfg_iterator> function_starts() const {
+      return llvm::iterator_range<const_fcn_cfg_iterator>(cfgFunctionEntries_);
+    }
+
+    llvm::iterator_range<const_fcn_cfg_iterator> function_rets() const {
+      return llvm::iterator_range<const_fcn_cfg_iterator>(cfgFunctionReturns_);
+    }
     //}}}
 
     // Def/use/global init Iterators {{{
@@ -664,6 +674,10 @@ class CFG {
 
     const_obj_to_cfg_iterator obj_to_cfg_cend() const {
       return std::end(objToCFG_);
+    }
+
+    llvm::iterator_range<const_obj_to_cfg_iterator> obj_to_cfg() {
+      return llvm::iterator_range(objToCFG_);
     }
     //}}}
     //}}}

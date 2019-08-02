@@ -116,30 +116,6 @@ void AndersGraph::fill() {
 
   // Find the max id
   // First scan indir functions
-#if 0
-  std::for_each(cg.indir_begin(), cg.indir_end(),
-      [&max_id]
-      (const std::pair<const Id, ConstraintGraph::IndirectCallInfo> &pr) {
-    // Create an indir call cons
-    // Populate w/ callsite info
-    auto callinst = pr.first;
-    auto &call_info = pr.second;
-
-    // Setup ret if we return a pointer
-    if (call_info.isPointer()) {
-      if (callinst > max_id) {
-        max_id = callinst;
-      }
-    }
-
-    for (auto arg_id : call_info) {
-      if (arg_id > max_id) {
-        max_id = arg_id;
-      }
-    }
-  });
-#endif
-
   for (auto &cons : cg_->constraints()) {
     if (cons.dest() > max_id) {
       max_id = cons.dest();

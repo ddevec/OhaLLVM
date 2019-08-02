@@ -278,11 +278,10 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
     auto &ptsto = graph_.getNode(val_id).ptsto();
 
     llvm::dbgs() << "  ptsto[" << val_id << "]:\n";
-    std::for_each(std14::cbegin(ptsto), std14::cend(ptsto),
-        [this] (const ValueMap::Id obj_id) {
+    for (const ValueMap::Id obj_id : ptsto) {
       llvm::dbgs() << "    " << obj_id << ": " <<
           ValPrint(obj_id, graph_.cg().vals()) << "\n";
-    });
+    }
 
     /*
     llvm::dbgs() << "copySuccs: {";
@@ -455,9 +454,7 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
   if (do_anders_print_result) {
     // DEBUG {{{
     llvm::dbgs() << "Printing final ptsto set for variables in anders:\n";
-    std::for_each(pts_top_.cbegin(), pts_top_.cend(),
-        [&omap]
-        (const TopLevelPtsto::PtsPair &pr) {
+    for (const TopLevelPtsto::PtsPair &pr : pts_top_) {
       auto top_val = omap.valueAtID(pr.id());
 
       if (omap.isObject(pr.id())) {
@@ -485,8 +482,7 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
         auto &ptsto = pr.pts()[i];
 
         // Printing
-        std::for_each(ptsto.cbegin(), ptsto.cend(),
-            [&omap] (const ObjectMap::ObjID obj_id) {
+        for (const ObjectMap::ObjID obj_id : ptsto) {
           auto loc_val = omap.valueAtID(obj_id);
 
           if (loc_val == nullptr) {
@@ -500,7 +496,7 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
           }
         });
       }
-    });
+    }
     //}}}
   }
   */
@@ -732,13 +728,11 @@ bool SpecAndersCS::runOnModule(llvm::Module &m) {
     // Woot, time to walk the CFG!
     for (auto &fcn : m) {
       if (uf.isUsed(fcn)) {
-        std::for_each(fcn.arg_begin(), fcn.arg_end(),
-            [&obj_update_fcn, &omap]
-            (const llvm::Argument &arg) {
+        for (const llvm::Argument &arg : fcn.args()) {
           if (llvm::isa<llvm::PointerType>(arg.getType())) {
             obj_update_fcn(&arg);
           }
-        });
+        }
       }
       for (auto &bb : fcn) {
         if (!uf.isUsed(bb)) {
